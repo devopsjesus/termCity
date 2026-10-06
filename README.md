@@ -77,6 +77,33 @@ On Linux and macOS, use `/` in those paths and run `./rust/target/release/termci
 The Rust version supports the same command-line options and gameplay. Its saves intentionally use a distinct format
 and default location, so C# and Rust quick-saves cannot overwrite or load each other.
 
+### Experimental Godot front end
+
+For a graphical window that looks like a terminal, use the desktop prototype under [godot/](godot/).
+It reuses the C# gameplay core directly; it does not run a terminal or emulate ANSI output.
+Install **Godot 4.7.2 .NET** (not the standard build) and the **.NET 10 SDK**:
+
+```powershell
+dotnet build godot\TermCity.Godot.csproj
+godot --headless --path godot --editor --import --quit
+godot --path godot -- --seed 42 --size medium
+```
+
+Replace `godot` with the path to your downloaded Godot .NET executable if it is not on `PATH`.
+On macOS/Linux, replace the backslash in the project path with `/`.
+
+The prototype includes a map, HUD, selection, zoom, pause/speed controls, zoning, and road previews:
+arrow keys move, Shift extends selection, left-drag selects, middle-drag or wheel pans, `+`/`-` zoom,
+`P`/Space pauses, `1`/`2`/`3` changes speed, `R`/`C`/`I` zones, and `B` previews a street.
+Enter confirms, Esc cancels, and `Q` or closing the window opens the save/discard guard.
+Ctrl+wheel zooms around the pointer; Shift+wheel scrolls horizontally.
+
+This is not yet a full replacement for the terminal apps: the minimap, complete menus/reports, loading UI,
+and full control parity are deferred. It uses the C# save format but a separate `TermCityGodot` user-data
+directory, including automatic saves. Windows rendering and a desktop export are validated; macOS/Linux
+player verification remains outstanding. Build and smoke-test instructions are in
+[the development guide](docs/DEVELOPMENT.md#godot-desktop-prototype).
+
 ### Command-line options
 
 | Option | What it does | Default and range |
