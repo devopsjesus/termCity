@@ -430,8 +430,11 @@ internal sealed class MapView : View
         }
 
         bool ctrl = key.IsCtrl;
+        bool jump = ctrl;
         bool shift = key.IsShift;
         KeyCode code = key.KeyCode & ~(KeyCode.ShiftMask | KeyCode.CtrlMask | KeyCode.AltMask);
+        bool macJumpKey = PlatformKeys.IsMacOS &&
+            code is KeyCode.PageUp or KeyCode.PageDown or KeyCode.Home or KeyCode.End;
 
         if (code == KeyCode.Z && ctrl)
         {
@@ -453,7 +456,8 @@ internal sealed class MapView : View
                 return true;
             }
 
-            if (!_session.RoadToolActive && code is KeyCode.CursorUp or KeyCode.CursorDown or KeyCode.CursorLeft or KeyCode.CursorRight)
+            if (!_session.RoadToolActive &&
+                (code is KeyCode.CursorUp or KeyCode.CursorDown or KeyCode.CursorLeft or KeyCode.CursorRight || macJumpKey))
             {
                 return true;
             }
@@ -466,10 +470,14 @@ internal sealed class MapView : View
 
         switch (code)
         {
-            case KeyCode.CursorUp: Move(0, -1, ctrl, shift); return true;
-            case KeyCode.CursorDown: Move(0, 1, ctrl, shift); return true;
-            case KeyCode.CursorLeft: Move(-1, 0, ctrl, shift); return true;
-            case KeyCode.CursorRight: Move(1, 0, ctrl, shift); return true;
+            case KeyCode.CursorUp: Move(0, -1, jump, shift); return true;
+            case KeyCode.CursorDown: Move(0, 1, jump, shift); return true;
+            case KeyCode.CursorLeft: Move(-1, 0, jump, shift); return true;
+            case KeyCode.CursorRight: Move(1, 0, jump, shift); return true;
+            case KeyCode.PageUp when PlatformKeys.IsMacOS: Move(0, -1, jump: true, shift); return true;
+            case KeyCode.PageDown when PlatformKeys.IsMacOS: Move(0, 1, jump: true, shift); return true;
+            case KeyCode.Home when PlatformKeys.IsMacOS: Move(-1, 0, jump: true, shift); return true;
+            case KeyCode.End when PlatformKeys.IsMacOS: Move(1, 0, jump: true, shift); return true;
             case KeyCode.Space: _session.TogglePause(); return true;
             case KeyCode.Esc: _session.ClearSelection(); _session.SetMessage(string.Empty); return true;
             case KeyCode.Enter:

@@ -109,7 +109,7 @@ internal sealed class PlacementConfirmationView : PanelView
             preview.Quote.Cost > _session.Game.Money || preview.Quote.Cells == 0 ? Colors.Bad : Colors.PanelText);
         DrawText(3, 4, "[Yes]", _yes ? Colors.Good : Colors.PanelDim, bg);
         DrawText(11, 4, "[No]", !_yes ? Colors.Accent : Colors.PanelDim, bg);
-        DrawLine(5, "Enter selects | Esc = No", Colors.PanelDim);
+        DrawLine(5, $"{PlatformKeys.Enter} selects | {PlatformKeys.Escape} = No", Colors.PanelDim);
         return true;
     }
 

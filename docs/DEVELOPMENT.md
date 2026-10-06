@@ -323,7 +323,7 @@ Everything in `src/TermCity.App`.
 | `HelpView` | Overlay | Hidden until `F1` or `?`; any key or click dismisses |
 | `InteractionView` | Full-window overlay | City menu, file-path input, progress guards, undo confirmation, guide and reports |
 
-`PanelView` is the base for custom-drawn text panels (`ClearPanel`, `DrawText`). `PanelWidth` is 34 columns. The minimap is `MinimapHeight` = 14 rows: one title row and 13 rows of half-block "pixels" (26 pixels tall), enough for a landscape map 28 pixels wide (the panel minus a 3-column margin each side) once stretched by `VerticalStretch` (1.5). The right-click menu is a Terminal.Gui `PopoverMenu` built by `ContextMenuBuilder`.
+`PanelView` is the base for custom-drawn text panels (`ClearPanel`, `DrawText`). `PanelWidth` is 34 columns. The minimap is `MinimapHeight` = 14 rows. Windows and Linux use half-block characters for 26 vertical pixels; macOS uses 13 background-filled cells because terminal font metrics can expose seams around block glyphs. The macOS fit calculation halves `VerticalStretch` to account for each full cell being as tall as two half-block pixels, so both paths produce the same visual landscape proportions and use the panel width. The right-click menu is a Terminal.Gui `PopoverMenu` built by `ContextMenuBuilder`.
 
 ### The loop and redraw throttling
 
@@ -336,6 +336,7 @@ Everything in `src/TermCity.App`.
 ### Input quirks
 
 - Plain left-click highlights on button-down; left-drag pans the map; Shift, Ctrl or Alt + left-button selects. Right-click opens the menu (a release is followed by a synthesized click, so the menu is guarded against opening twice within 250 ms).
+- Full-screen cursor jumps use Ctrl+Arrow on Windows/Linux and Fn+Arrow on macOS. Terminals report the macOS combinations as Page Up, Page Down, Home and End; Control+Arrow is normally reserved for switching Spaces, and Option+Arrow is commonly translated into word navigation. The Control combination remains accepted when delivered.
 - Terminals often keep modifier keys for themselves (Windows Terminal reserves Shift for its own text selection). That is why sideways scrolling is Alt+wheel only, and why `+`/`-` and the zoom bar always work.
 - Terminal.Gui defines the "sideways" wheel flags as the vertical ones plus Ctrl, so Ctrl+wheel and a tilt wheel are the same event, and both zoom here. Wheel steps are `WheelStep` = 3 characters.
 - Edge scrolling is off by default and toggled with `E`. A pointer resting in the very first terminal column is dropped after `OuterEdgeStaleMs` = 1,200 ms, because terminals report nothing when the pointer leaves the window. Dragging out a selection to the edge always scrolls.

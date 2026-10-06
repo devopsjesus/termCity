@@ -20,11 +20,13 @@ internal sealed class MinimapView : PanelView
 
     private readonly GameSession _session;
     private readonly MinimapImage _image = new();
+    private readonly bool _seamlessCells;
     private bool _dragging;
 
-    public MinimapView(GameSession session)
+    public MinimapView(GameSession session, bool? seamlessCells = null)
     {
         _session = session;
+        _seamlessCells = seamlessCells ?? OperatingSystem.IsMacOS();
         CanFocus = false;
     }
 
@@ -38,10 +40,10 @@ internal sealed class MinimapView : PanelView
         }
 
         var map = _session.Game.Map;
-        int pixelRows = (height - 1) * 2;
+        int pixelRows = PixelRows(height);
 
         // The map keeps roughly the shape of its grid: it is drawn as large as fits and centred, with the panel showing around it.
-        var (left, mapWidth, mapHeight) = FitInPanel(map.Width, map.Height, width, pixelRows);
+        var (left, mapWidth, mapHeight) = FitInPanel(map.Width, map.Height, width, pixelRows, _seamlessCells);
         _image.Update(_session.Game, mapWidth, mapHeight);
         var box = CameraBox(map.Width, map.Height, _session.ViewRect, mapWidth, mapHeight);
 
@@ -62,8 +64,17 @@ internal sealed class MinimapView : PanelView
         {
             for (int cx = 0; cx < width; cx++)
             {
-                SetAttribute(Colors.Attr(Pixel(cx, (cy - 1) * 2), Pixel(cx, (cy - 1) * 2 + 1)));
-                AddStr(cx, cy, "▀");
+                if (_seamlessCells)
+                {
+                    var color = Pixel(cx, cy - 1);
+                    SetAttribute(Colors.Attr(color, color));
+                    AddStr(cx, cy, " ");
+                }
+                else
+                {
+                    SetAttribute(Colors.Attr(Pixel(cx, (cy - 1) * 2), Pixel(cx, (cy - 1) * 2 + 1)));
+                    AddStr(cx, cy, "▀");
+                }
             }
         }
 
@@ -73,10 +84,19 @@ internal sealed class MinimapView : PanelView
     /// <summary>Columns left empty on each side of the picture, so it does not run edge to edge of the panel.</summary>
     internal const int SideMargin = 3;
 
+    private int PixelRows(int viewHeight) => Math.Max(1, (viewHeight - 1) * (_seamlessCells ? 1 : 2));
+
     /// <summary>The picture of the map within a panel of the given size, inside the margin; the offset is from the panel's left edge.</summary>
     internal static (int Left, int Width, int Height) FitInPanel(int mapWidth, int mapHeight, int panelWidth, int availableHeight)
+        => FitInPanel(mapWidth, mapHeight, panelWidth, availableHeight, seamlessCells: false);
+
+    /// <summary>The picture size, accounting for full-height terminal cells when half-blocks are not used.</summary>
+    internal static (int Left, int Width, int Height) FitInPanel(
+        int mapWidth, int mapHeight, int panelWidth, int availableHeight, bool seamlessCells)
     {
-        var (left, width, height) = FitMap(mapWidth, mapHeight, Math.Max(1, panelWidth - 2 * SideMargin), availableHeight);
+        double stretch = seamlessCells ? VerticalStretch / 2 : VerticalStretch;
+        var (left, width, height) = FitMap(
+            mapWidth, mapHeight, Math.Max(1, panelWidth - 2 * SideMargin), availableHeight, stretch);
         return (left + SideMargin, width, height);
     }
 
@@ -93,8 +113,12 @@ internal sealed class MinimapView : PanelView
     /// pixels, keeping the map's shape apart from <see cref="VerticalStretch"/>.
     /// </summary>
     internal static (int Left, int Width, int Height) FitMap(int mapWidth, int mapHeight, int availableWidth, int availableHeight)
+        => FitMap(mapWidth, mapHeight, availableWidth, availableHeight, VerticalStretch);
+
+    private static (int Left, int Width, int Height) FitMap(
+        int mapWidth, int mapHeight, int availableWidth, int availableHeight, double verticalStretch)
     {
-        double tall = mapHeight * VerticalStretch;
+        double tall = mapHeight * verticalStretch;
         double scale = Math.Min(availableWidth / (double)mapWidth, availableHeight / tall);
         int w = Math.Clamp((int)Math.Round(mapWidth * scale, MidpointRounding.AwayFromZero), 1, availableWidth);
         int h = Math.Clamp((int)Math.Round(tall * scale, MidpointRounding.AwayFromZero), 1, availableHeight);
@@ -158,12 +182,12 @@ internal sealed class MinimapView : PanelView
     {
         var map = _session.Game.Map;
         int width = Math.Max(1, Viewport.Width);
-        int pixelRows = Math.Max(1, (Viewport.Height - 1) * 2);
-        var (left, mapWidth, mapHeight) = FitInPanel(map.Width, map.Height, width, pixelRows);
+        int pixelRows = PixelRows(Viewport.Height);
+        var (left, mapWidth, mapHeight) = FitInPanel(map.Width, map.Height, width, pixelRows, _seamlessCells);
 
         // Clicks beside or below the picture go to its nearest edge.
         int px = Math.Clamp(position.X - left, 0, mapWidth - 1);
-        int py = Math.Clamp((position.Y - 1) * 2 + 1, 0, mapHeight - 1);
+        int py = Math.Clamp((position.Y - 1) * (_seamlessCells ? 1 : 2) + (_seamlessCells ? 0 : 1), 0, mapHeight - 1);
         int x = (int)((long)px * map.Width / mapWidth);
         int y = (int)((long)py * map.Height / mapHeight);
         _session.CenterOn(new Pos(x, y));

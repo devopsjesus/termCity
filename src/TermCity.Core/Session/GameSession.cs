@@ -413,7 +413,7 @@ public sealed partial class GameSession
         FollowCursor();
     }
 
-    /// <summary>Ctrl+arrow: moves the cursor a full screen length in a direction.</summary>
+    /// <summary>Moves the cursor a full screen length for the platform's jump-arrow shortcut.</summary>
     public void JumpCursor(int dirX, int dirY, bool extend = false) =>
         MoveCursorCells(dirX * Math.Max(1, VisibleCellsX - 1), dirY * Math.Max(1, VisibleCellsY - 1), extend);
 

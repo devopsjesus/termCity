@@ -29,12 +29,14 @@ public sealed record PlacementPreview(PlacementKind Kind, CellRect Area, Quote Q
 
 public sealed record SessionChoice(string Label, Action Select);
 
-public sealed class SessionPrompt(string title, string text, IReadOnlyList<SessionChoice> choices, string? input = null)
+public sealed class SessionPrompt(
+    string title, string text, IReadOnlyList<SessionChoice> choices, string? input = null, string? footer = null)
 {
     public string Title { get; } = title;
     public string Text { get; } = text;
     public IReadOnlyList<SessionChoice> Choices { get; } = choices;
     public string? Input { get; set; } = input;
+    public string? Footer { get; } = footer;
 }
 
 public sealed partial class GameSession
@@ -244,9 +246,10 @@ public sealed partial class GameSession
         SetMessage("Last action undone; city restored and paused.", MessageKind.Success);
     }
 
-    public void ShowPrompt(string title, string text, IReadOnlyList<SessionChoice> choices, string? input = null)
+    public void ShowPrompt(
+        string title, string text, IReadOnlyList<SessionChoice> choices, string? input = null, string? footer = null)
     {
-        Prompt = new(title, text, choices, input);
+        Prompt = new(title, text, choices, input, footer);
         Changed?.Invoke();
     }
 
@@ -295,9 +298,13 @@ public sealed partial class GameSession
             return;
         }
 
-        ShowPrompt(title, "Save your city before continuing? Autosaves are separate from your quick-save.",
+        bool quitting = title == "Quit";
+        ShowPrompt(title,
+            quitting
+                ? "Save your city before quitting? Autosaves are separate from your quick-save."
+                : "Save your city before continuing? Autosaves are separate from your quick-save.",
         [
-            new("Save and continue", () =>
+            new(quitting ? "Save and quit" : "Save and continue", () =>
             {
                 if (QuickSave())
                 {
@@ -305,9 +312,24 @@ public sealed partial class GameSession
                     action();
                 }
             }),
-            new("Continue without saving", () => { ClosePrompt(); action(); }),
+            new(quitting ? "Quit without saving" : "Continue without saving", () => { ClosePrompt(); action(); }),
             new("Cancel", ClosePrompt),
-        ]);
+        ],
+        footer: $"Quick-save file: {DisplayPath(SavePath)}");
+    }
+
+    private static string DisplayPath(string path)
+    {
+        string fullPath = Path.GetFullPath(path);
+        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrEmpty(home) &&
+            fullPath.StartsWith(home + Path.DirectorySeparatorChar,
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+        {
+            return "~" + fullPath[home.Length..];
+        }
+
+        return fullPath;
     }
 
     public void ShowSessionMenu()
@@ -337,7 +359,9 @@ public sealed partial class GameSession
         }
 
         choices.Add(new("Enter a file path", () =>
-            ShowPrompt("Load file", "Enter a save-file path. Ctrl+A clears the field; Enter selects the highlighted button.",
+            ShowPrompt("Load file", OperatingSystem.IsMacOS()
+                    ? "Enter a save-file path. Control+A clears the field; Return selects the highlighted button."
+                    : "Enter a save-file path. Ctrl+A clears the field; Enter selects the highlighted button.",
                 [new("Load", () => RequestLoad(Prompt!.Input!)), new("Cancel", ClosePrompt)], SavePath)));
         choices.Add(new("Cancel", ClosePrompt));
         ShowPrompt("Load city", "Choose a quick-save, autosave, or file path.", choices);

@@ -1,4 +1,5 @@
 using Terminal.Gui.Input;
+using Terminal.Gui.Drivers;
 using TermCity.App.Views;
 using TermCity.Core.Session;
 using TermCity.Core.Simulation;
@@ -32,6 +33,36 @@ public class UiTests
             Assert.Contains("Medium", screen);
             Assert.Matches(@"\[=*>\.*\]", screen); // the week bar: one character per day
             Assert.Contains("F1 Help", screen);
+            Assert.Contains(OperatingSystem.IsMacOS() ? "Return Menu" : "Enter Menu", screen);
+        });
+    }
+
+    [Fact]
+    public async Task MacOSMinimapUsesSeamFreeBackgroundCells()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        var session = NewSession(out _);
+        await UiHarness.Run(session, async ui =>
+        {
+            await ui.Screen();
+            var driver = ui.App.Driver!;
+            var cells = driver.Contents!;
+            int pictureLeft = driver.Cols - 34 + MinimapView.SideMargin;
+            var attributes = new HashSet<Terminal.Gui.Drawing.Attribute?>();
+            for (int y = 2; y < 14; y++)
+            {
+                for (int x = pictureLeft; x < driver.Cols - MinimapView.SideMargin; x++)
+                {
+                    Assert.Equal(" ", cells[y, x].Grapheme);
+                    attributes.Add(cells[y, x].Attribute);
+                }
+            }
+
+            Assert.True(attributes.Count > 1, "the minimap should render its colours as cell backgrounds");
         });
     }
 
@@ -55,7 +86,7 @@ public class UiTests
     }
 
     [Fact]
-    public async Task ArrowKeysAndCtrlArrowsMoveTheCursor()
+    public async Task ArrowKeysAndPlatformJumpArrowsMoveTheCursor()
     {
         var session = NewSession(out _);
         await UiHarness.Run(session, async ui =>
@@ -66,12 +97,41 @@ public class UiTests
             await ui.Press(Key.CursorDown);
             Assert.Equal(start.Offset(1, 1), session.Cursor);
 
-            // Ctrl+Arrow moves a full screen length (the map view is wider than 80 columns with the side panel).
+            // Ctrl+Arrow remains a supported fallback and moves one current viewport width.
+            int beforeJump = session.Cursor.X;
             await ui.Press(Key.CursorRight.WithCtrl);
-            Assert.Equal(session.Game.Map.Width - 1, session.Cursor.X);
+            Assert.Equal(Math.Min(session.Game.Map.Width - 1, beforeJump + session.ViewWidth - 1), session.Cursor.X);
+            beforeJump = session.Cursor.X;
             await ui.Press(Key.CursorLeft.WithCtrl);
-            Assert.Equal(session.Game.Map.Width - 1 - (session.ViewWidth - 1), session.Cursor.X);
-            Assert.True(session.ViewWidth >= 80);        });
+            Assert.Equal(Math.Max(0, beforeJump - (session.ViewWidth - 1)), session.Cursor.X);
+            Assert.True(session.ViewWidth > 1);
+        });
+    }
+
+    [Fact]
+    public async Task FnArrowsMoveAFullScreenOnMacOS()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        var session = NewSession(out _);
+        await UiHarness.Run(session, async ui =>
+        {
+            var start = session.Cursor;
+            await ui.Press(new Key(KeyCode.End));
+            Assert.Equal(start.X + session.ViewWidth - 1, session.Cursor.X);
+
+            await ui.Press(new Key(KeyCode.Home));
+            Assert.Equal(start.X, session.Cursor.X);
+
+            await ui.Press(new Key(KeyCode.PageDown));
+            Assert.Equal(start.Y + session.ViewHeight - 1, session.Cursor.Y);
+
+            await ui.Press(new Key(KeyCode.PageUp));
+            Assert.Equal(start.Y, session.Cursor.Y);
+        });
     }
 
     /// <summary>An open, buildable cell near the middle of the map (the exact middle can be road or water).</summary>

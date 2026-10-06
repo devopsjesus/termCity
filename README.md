@@ -136,7 +136,7 @@ The clock also holds while a placement preview, city menu, report or confirmatio
 
 ### Undo
 
-`Ctrl+Z` undoes the **last successful zoning, dezoning, construction or demolition action**. It restores the **entire city** to immediately before that action, including the money, residents, calendar, scheduled removals and intervening growth—not just the cells you changed.
+`Ctrl+Z` (`Control+Z` on macOS) undoes the **last successful zoning, dezoning, construction or demolition action**. It restores the **entire city** to immediately before that action, including the money, residents, calendar, scheduled removals and intervening growth—not just the cells you changed.
 
 - While the game is running, undo is available within **7 game days** of the action.
 - While paused, the last action can be undone regardless of its age.
@@ -188,10 +188,12 @@ The zoom levels are **0.25x, 0.5x, 1x (normal) and 2x**. Zoomed out, each charac
 
 ## Controls
 
+On macOS, in-game labels use the Mac key names **Control**, **Option**, **Return**, **Escape** and **Forward Delete**. Use `Fn+Arrow` to jump a full screen: terminals report these as Page Up, Page Down, Home and End, while macOS reserves `Control+Arrow` for switching Spaces and terminals commonly translate `Option+Arrow` into word navigation. The game still accepts `Control+Arrow` when the terminal delivers it. Control and Option are used rather than Command because terminal applications do not reliably receive Command-key combinations. Function-key shortcuts may require holding `Fn`, depending on the keyboard settings. Every function-key action is also available from the city menu, context menu, side panel or another listed key. Windows and Linux retain the Ctrl, Alt, Enter and Esc labels shown below.
+
 | Action | Keyboard | Mouse |
 |---|---|---|
 | Move cursor | Arrow keys | Click a cell |
-| Jump a full screen | Ctrl+Arrow | |
+| Jump a full screen | Ctrl+Arrow (`Fn+Arrow` on macOS) | |
 | Move the map | Cursor at the screen edge | Drag with the left button; wheel scrolls up and down (Alt + wheel = sideways); click or drag the minimap; edge scrolling (off by default) |
 | Zoom | `+` / `-`, `0` = normal | Ctrl + wheel (up = in), or the `[-]` `[+]` buttons |
 | Select an area | Shift+Arrows, or `S`, arrows, `S` | Shift+click or Shift+drag (Ctrl or Alt + click work too) |

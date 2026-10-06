@@ -106,7 +106,14 @@ public class SessionFeatureUiTests
             Assert.Equal(time, session.Game.ElapsedDays);
             await ui.Press(Key.Esc);
             await ui.Press(Key.Q.WithCtrl);
-            Assert.Contains("Save your city before continuing", await ui.Screen());
+            string quitPrompt = await ui.Screen();
+            Assert.Contains("Save your city before quitting", quitPrompt);
+            Assert.Contains("1. Save and quit", quitPrompt);
+            Assert.Contains("2. Quit without saving", quitPrompt);
+            Assert.Contains("Quick-save file:", quitPrompt);
+            Assert.Contains("termcity-session-ui-", quitPrompt);
+            Assert.True(quitPrompt.IndexOf("Quick-save file:", StringComparison.Ordinal) >
+                quitPrompt.IndexOf("3. Cancel", StringComparison.Ordinal));
             await ui.Press(Key.Esc);
             Assert.Null(session.Prompt);
             await ui.Press(Key.F10);
@@ -135,7 +142,7 @@ public class SessionFeatureUiTests
             await ui.Press(Key.Esc);
             await ui.Press(Key.F1);
             Assert.Contains("F10 city menu", await ui.Screen());
-            Assert.Contains("Ctrl+Z", await ui.Screen());
+            Assert.Contains(OperatingSystem.IsMacOS() ? "Control+Z" : "Ctrl+Z", await ui.Screen());
         });
     }
 
@@ -192,7 +199,7 @@ public class SessionFeatureUiTests
                 Assert.Equal(80, ui.Window.Viewport.Width);
                 Assert.Equal(24, ui.Window.Viewport.Height);
                 Assert.Contains("9. Quit", screen);
-                Assert.Contains("Esc cancels", screen);
+                Assert.Contains(OperatingSystem.IsMacOS() ? "Escape cancels" : "Esc cancels", screen);
                 await ui.Press(Key.Esc);
                 await ui.Press(Key.F1);
                 Assert.Contains("Press any key to close", await ui.Screen());

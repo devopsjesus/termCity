@@ -15,7 +15,8 @@ namespace TermCity.App.Views;
 internal sealed class MessageBarView : PanelView
 {
     private static readonly Rgb Background = Rgb.Hex(0x1d2330);
-    private const string Hints = "F1 Help  F10 City  Enter Menu  Ctrl+Q Quit";
+    private static string Hints =>
+        $"F1 Help  F10 City  {PlatformKeys.Enter} Menu  {PlatformKeys.Control}+Q Quit";
 
     private readonly GameSession _session;
 

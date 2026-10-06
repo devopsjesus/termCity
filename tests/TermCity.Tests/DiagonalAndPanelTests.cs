@@ -372,6 +372,18 @@ public class PanelAndMinimapTests
         Assert.Equal(MinimapView.SideMargin, left);
         Assert.True(left + width <= 34 - MinimapView.SideMargin + 1);
     }
+
+    [Fact]
+    public void SeamlessCellsKeepTheSameVisualLandscapeProportionsAsHalfBlocks()
+    {
+        var halfBlocks = MinimapView.FitInPanel(160, 96, 34, 26);
+        var seamless = MinimapView.FitInPanel(160, 96, 34, 13, seamlessCells: true);
+
+        Assert.Equal(halfBlocks.Left, seamless.Left);
+        Assert.Equal(halfBlocks.Width, seamless.Width);
+        Assert.InRange(seamless.Height, (halfBlocks.Height - 1) / 2, (halfBlocks.Height + 1) / 2);
+        Assert.True(seamless.Width >= seamless.Height * 2);
+    }
     [Fact]
     public void CursorAndSelectionChangesDoNotWakeTheWholeInterface()
     {

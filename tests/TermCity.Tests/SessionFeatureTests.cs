@@ -336,6 +336,12 @@ public class SessionFeatureTests
         bool quit = false;
         session.QuitRequested += () => quit = true;
         session.RequestQuit();
+        Assert.Contains("before quitting", session.Prompt!.Text);
+        Assert.DoesNotContain("continu", session.Prompt.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Save and quit", session.Prompt.Choices[0].Label);
+        Assert.Equal("Quit without saving", session.Prompt.Choices[1].Label);
+        Assert.Contains("Quick-save file:", session.Prompt.Footer);
+        Assert.Contains(Path.GetFileName(session.SavePath), session.Prompt.Footer);
         session.SelectPrompt(2);
         Assert.False(quit);
         session.RequestQuit();

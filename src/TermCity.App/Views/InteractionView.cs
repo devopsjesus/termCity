@@ -84,7 +84,18 @@ internal sealed class InteractionView : PanelView
             _buttons.Add((new Rectangle(left, row++, width, 1), i));
         }
 
-        DrawText(left, row++, "Up/Down selects; Enter confirms; Esc cancels.", Colors.PanelDim, Colors.PanelBackground);
+        if (prompt.Footer is { } footer)
+        {
+            row++;
+            foreach (string line in Wrap(footer, width))
+            {
+                DrawText(left, row++, line, Colors.PanelDim, Colors.PanelBackground);
+            }
+        }
+
+        DrawText(left, row++,
+            $"Up/Down selects; {PlatformKeys.Enter} confirms; {PlatformKeys.Escape} cancels.",
+            Colors.PanelDim, Colors.PanelBackground);
         if (_session.MessageKind == MessageKind.Error && _session.MessageVisible)
         {
             foreach (string line in Wrap(_session.Message, width))
