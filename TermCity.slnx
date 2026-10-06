@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TermCity.App/TermCity.App.csproj" />
+    <Project Path="src/TermCity.Core/TermCity.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TermCity.Tests/TermCity.Tests.csproj" />
+  </Folder>
+</Solution>
