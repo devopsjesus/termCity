@@ -729,6 +729,33 @@ public class UiTests
     }
 
     [Fact]
+    public async Task QueuedMousePressRedrawsTheHighlightWhilePaused()
+    {
+        var session = NewSession(out _);
+        session.Game.Paused = true;
+        await UiHarness.Run(session, async ui =>
+        {
+            var map = ui.Window.SubViews.OfType<MapView>().Single();
+            var screen = map.ViewportToScreen(new System.Drawing.Point(20, 10));
+            var expected = session.ScreenToMap(20, 10);
+            Assert.NotEqual(expected, session.Cursor);
+            var previous = ui.App.Driver!.Contents![screen.Y, screen.X].Attribute;
+            var drawn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            ui.App.LayoutAndDrawComplete += (_, _) =>
+            {
+                if (session.Cursor == expected && ui.App.Driver!.Contents![screen.Y, screen.X].Attribute != previous)
+                {
+                    drawn.TrySetResult();
+                }
+            };
+            await ui.QueueMouse(MouseFlags.LeftButtonPressed, screen.X, screen.Y);
+            await drawn.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await ui.QueueMouse(MouseFlags.LeftButtonReleased, screen.X, screen.Y);
+            Assert.Equal(0, session.Game.ElapsedDays);
+        });
+    }
+
+    [Fact]
     public async Task SpaceBarPausesAndUnpausesTheGame()
     {
         var session = NewSession(out _);

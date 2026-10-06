@@ -17,6 +17,7 @@ internal sealed class UiHarness
 {
     // Direct delivery skips the terminal-input pipeline, whose queued, asynchronous processing made tests flaky.
     private static readonly InputInjectionOptions Direct = new() { Mode = InputInjectionMode.Direct };
+    private static readonly InputInjectionOptions Pipeline = new() { Mode = InputInjectionMode.Pipeline, AutoProcess = false };
 
     private readonly IApplication _app;
     private readonly IInputInjector _injector;
@@ -91,6 +92,9 @@ internal sealed class UiHarness
         await OnUi(() => _injector.InjectMouse(new Mouse { Flags = flags, ScreenPosition = new Point(x, y) }, Direct));
         await Task.Delay(40);
     }
+
+    public Task QueueMouse(MouseFlags flags, int x, int y) => OnUi(() =>
+        _injector.InjectMouse(new Mouse { Flags = flags, ScreenPosition = new Point(x, y) }, Pipeline));
 
     public Task Resize(int columns, int rows) => OnUi(() =>
     {

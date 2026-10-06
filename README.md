@@ -8,6 +8,8 @@ A city builder that lives in your terminal. Zone some land, lay some roads, and 
 
 You need the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) and a terminal that is at least **80x24** with a Unicode font and truecolor support (Windows Terminal, iTerm2, GNOME Terminal, kitty and friends are all fine).
 
+**Windows Terminal:** use **v1.25.2733.0 or newer**. Delayed highlights after scrolling and idling were reproduced on v1.24.12741.0 and confirmed resolved with [v1.25.2733.0](https://github.com/microsoft/terminal/releases/tag/v1.25.2733.0).
+
 ### 1. Install the .NET 10 SDK
 
 | OS | One way to do it |
@@ -318,11 +320,18 @@ A save keeps the map, money and calendar, clock speed, random-number state, in-p
 
 ## Troubleshooting
 
-- **Scrolling lags behind, or clicks arrive late.** Your terminal can't keep up with a full-screen redraw 30 times a second. Run with a lower `--fps` (try 15 or 20). Terminals embedded in editors are the usual culprits.
+- **Highlights arrive late after scrolling and idling in Windows Terminal.** Upgrade to [v1.25.2733.0](https://github.com/microsoft/terminal/releases/tag/v1.25.2733.0) or newer. This delay was reproduced on v1.24.12741.0 and confirmed resolved on v1.25.2733.0; changing drivers, lowering FPS, software rendering, and full repaint did not resolve it on the affected version. If the Microsoft Store says the older version is up to date, use the official GitHub release or the classic console fallback below.
+- **Scrolling continuously lags behind.** Try a real terminal or lower `--fps` (try 15 or 20) to reduce redraw output.
 - **Shift+click or Ctrl+wheel does nothing.** Your terminal is keeping the keys for itself. Use Alt+click and the `+` / `-` keys. See the mouse notes above.
 - **The map looks squashed, or the glyphs overlap.** Use a font with good Unicode box-drawing and block-element coverage (Cascadia Code / Mono, JetBrains Mono, Fira Code, DejaVu Sans Mono...).
 - **"TermCity needs an interactive terminal."** You ran it with input or output piped somewhere. Run it directly in a terminal window.
 - **Something odd with the mouse?** Press `F12`. The bottom line then shows the last event the terminal sent, and how long the game loop took between ticks. That is the first thing to include in a bug report.
+
+If upgrading Windows Terminal is not possible, run a medium map in the classic Windows console host from the repository root:
+
+```powershell
+conhost.exe powershell.exe -NoExit -Command "Set-Location '$PWD'; dotnet run --project .\src\TermCity.App -- --size medium"
+```
 
 ## Contributing and license
 

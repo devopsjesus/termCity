@@ -441,6 +441,7 @@ Two helpers make tests short:
 
 - `TestCity.Flat(seed, config)` is an empty flat map with a single road along row 20 from edge to edge, and `TestCity.Advance(game, weeks)` runs weeks deterministically.
 - `UiHarness` runs the **real** Terminal.Gui application headlessly (ANSI driver, 120x30) and injects keys and mouse input directly (`InputInjectionMode.Direct`, which avoids the flakiness of the asynchronous terminal-input pipeline), so the wiring between input, session and views is covered without a terminal.
+- A focused queued-click test injects an ANSI mouse press through the input pipeline while paused and verifies that a completed draw changes the highlight without forcing a redraw. Its three-second timeout is a test-hang guard, not a latency benchmark; it does not measure a real terminal's presentation latency.
 
 ## Diagnostics and performance
 
@@ -448,6 +449,8 @@ Two helpers make tests short:
 - **`F12`** in the game shows input events and the loop gap on the status line (about 16 ms when the loop keeps up, with the worst gap since it was turned on). A gap of hundreds of milliseconds is a stall, which is what delayed clicks after switching windows look like.
 - Terminal.Gui rewrites every cell a view draws, so a scroll step rewrites most of the map view: about 18 KB of color codes, mostly 24-bit color changes. Redrawing 60 times a second during a drag is over a megabyte a second. A terminal (or an editor's built-in terminal, which adds layers) that cannot render that fast falls further behind the longer a drag lasts. The game itself neither slows nor leaks, so it limits scroll redraws to 30 a second (about 0.55 MB/s). `--fps` changes this.
 - Moving the cursor, clicking and extending a selection redraw only the cells they change. A redraw with no scrolling skips cells that already show the right thing, keeping terminal output low for cursor movement and clock updates.
+- **Verified Windows Terminal version-specific delay:** on v1.24.12741.0, scrolling for about ten seconds and then idling for another ten seconds could make the next click's highlight appear roughly two seconds late, even while paused. The captured game-loop gaps stayed below 100 ms, and the late selection change was followed by a completed draw about 2 ms later. Lowering FPS, switching between ANSI and native Windows input, software rendering, and full repaint did not resolve the delay. The classic Windows console host and the tested Mac terminal were responsive. Running the same game in [Windows Terminal v1.25.2733.0](https://github.com/microsoft/terminal/releases/tag/v1.25.2733.0) confirmed that upgrading resolves the reproduction.
+- That release includes [microsoft/terminal#20723](https://github.com/microsoft/terminal/pull/20723), which fixes presentation, queued-frame latency, and deferred rendering issues in AtlasEngine. This is relevant upstream context, not proof that this individual change was the sole cause of the observed delay. The headless regression cannot detect terminal presentation latency; keep the real-terminal scroll/idle/click check when investigating similar reports.
 
 ## Design decisions
 

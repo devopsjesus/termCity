@@ -197,7 +197,7 @@ internal sealed class GameApp
         }
 
         // The loop ticks every 8 ms, so a little slack stops an interval of exactly one frame from missing by a hair and waiting a whole extra tick.
-        long now = Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency;
+        long now = Environment.TickCount64;
         if (now - _lastFlush < (_pending == Pending.Selection ? CursorFrameMs : _frameMs) - 2)
         {
             return;
