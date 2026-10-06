@@ -2,6 +2,13 @@
 
 The technical companion to the [README](../README.md), which covers how to install and play. This document covers how the game is put together, the numbers behind it, and how to change it.
 
+The requirements shared by the supported C# and Rust implementations are tracked in the
+[C# and Rust parity contract](RUST_PARITY.md). The candidates and acceptance gate for the Rust terminal
+library are in the [Rust terminal stack evaluation](RUST_TERMINAL_EVALUATION.md).
+
+The Rust implementation is a separate executable with the same gameplay contract. It does not replace or call into
+the C# projects.
+
 Contents
 
 - [Build, run and test](#build-run-and-test)
@@ -35,9 +42,38 @@ dotnet publish src/TermCity.App -c Release -o out     # framework-dependent buil
 
 The published executable is `out/termcity` on Linux and macOS, or `out\termcity.exe` on Windows. Use backslashes in project paths on Windows.
 
+GitHub Actions CI restores, builds the solution in Release mode, and runs tests on Windows, Linux,
+and macOS for pushes and pull requests. Tests reuse the Release build.
+
 Command-line options are parsed in [Program.cs](../src/TermCity.App/Program.cs) and are documented in the README. `--dump-map` prints a header with the seed and map dimensions, followed by the glyphs rendered through `CellRenderer`, which makes it a quick way to eyeball a generator change.
 
 Both projects target `net10.0` with nullable reference types and implicit usings on. The assembly name of the app is `termcity`. `TieredPGO` and concurrent GC are switched off in the app project: steady frame times matter more than peak throughput here.
+
+### Rust implementation
+
+The side-by-side Rust implementation is a Cargo workspace under `rust/`. Install a current stable Rust toolchain with
+[rustup](https://rustup.rs/), then run:
+
+```
+cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
+cargo test --manifest-path rust/Cargo.toml --workspace
+cargo run --manifest-path rust/Cargo.toml -p termcity-app -- --seed 42
+```
+
+The workspace contains `termcity-core` (world, simulation, rendering model, persistence, and session controller),
+`termcity-app` (CLI and Ratatui/Crossterm front end), and `termcity-test-support` (deterministic fixtures and headless
+terminal helpers). The executable is `termcity-rs`, keeping it distinct from the C# `termcity` executable.
+
+The Rust minimap viewport highlight uses a fixed-size rectangle for each zoom level and terminal size.
+Its dimensions are rounded up from the visible map extent, and its position is clamped inside the minimap
+so scrolling moves the highlight without changing its size. Zooming or resizing recalculates its dimensions.
+
+Rust saves use the `termcity-rust-save` discriminator and default to `TermCityRust/quicksave-rust.json`. They are
+deliberately incompatible with C# saves and cannot overwrite the C# quick-save by default.
+
+On Windows, Cargo needs either the Visual C++ build tools for the default MSVC Rust target or a complete GNU Rust
+toolchain plus MinGW on `PATH`. Use one toolchain consistently for build scripts and the final target.
 
 ## Architecture
 

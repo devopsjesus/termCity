@@ -1,6 +1,6 @@
 # TermCity
 
-A city builder that lives in your terminal. Zone some land, lay some roads, and watch a handful of families turn into a bustling (if slightly boxy) metropolis. Written in C# on .NET 10 with [Terminal.Gui](https://github.com/gui-cs/Terminal.Gui) v2. Runs on Windows, macOS and Linux, with keyboard and mouse.
+A city builder that lives in your terminal. Zone some land, lay some roads, and watch a handful of families turn into a bustling (if slightly boxy) metropolis. The original implementation is written in C# on .NET 10 with [Terminal.Gui](https://github.com/gui-cs/Terminal.Gui) v2; a side-by-side Rust implementation uses [Ratatui](https://ratatui.rs/) and [Crossterm](https://github.com/crossterm-rs/crossterm). Both remain in the repository. Runs on Windows, macOS and Linux, with keyboard and mouse.
 
 > **Developers:** the architecture, extension points, file formats and test setup are in **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)**. This README is for players.
 
@@ -61,6 +61,21 @@ Add options after a `--` when using `dotnet run`, or directly after the program 
 dotnet run --project src/TermCity.App -- --seed 42 --size medium
 ./out/termcity --seed 42 --size medium
 ```
+
+### Rust implementation
+
+Install a current stable Rust toolchain with [rustup](https://rustup.rs/), then build and run the side-by-side Rust version:
+
+```powershell
+cargo run --manifest-path rust\Cargo.toml -p termcity-app -- --seed 42 --size medium
+cargo build --manifest-path rust\Cargo.toml -p termcity-app --release
+.\rust\target\release\termcity-rs.exe
+```
+
+On Linux and macOS, use `/` in those paths and run `./rust/target/release/termcity-rs`.
+
+The Rust version supports the same command-line options and gameplay. Its saves intentionally use a distinct format
+and default location, so C# and Rust quick-saves cannot overwrite or load each other.
 
 ### Command-line options
 
