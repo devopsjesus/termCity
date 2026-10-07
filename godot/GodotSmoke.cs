@@ -280,7 +280,7 @@ internal static class GodotSmoke
         Require(session.Preview is null, "Preview Enter did not select the focused cancel button.");
         Require(beforeCancel == SaveGameStore.Serialize(session.Game), "Focused cancel changed the city.");
         session.ShowSessionMenu();
-        await KeyEvent(Key.Key7);
+        await KeyEvent(Key.Key9);
         Require(session.Prompt?.Title == "Weekly report and milestones", "Numbered menu shortcuts failed.");
         await KeyEvent(Key.Escape);
 
@@ -623,7 +623,80 @@ internal static class GodotSmoke
         await KeyEvent(Key.Escape);
         host.SetFontSize(Main.DefaultFontSize);
         await Frames();
+        await VerifyEffects(host, Frames, KeyEvent);
         if (File.Exists(session.SavePath)) File.Delete(session.SavePath);
+    }
+
+    /// <summary>Drives the effect pipeline through the real scene: build, demolish, toggle, drain. Draw checks only apply when the engine draws.</summary>
+    private static async Task VerifyEffects(Main host, Func<Task> frames, Func<Key, bool, uint, bool, Key, Task> key)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        session.ClosePrompt();
+        session.SetZoom(0);
+        session.CenterOn(new Pos(map.Width / 2, map.Height / 2));
+        host.Map.RefreshCells();
+        await frames();
+        Require(host.Effects.Settings.Level == TermCity.Core.Effects.EffectLevel.High && host.Map.Effects == host.Effects,
+            "Effects are not wired into the map at the default level.");
+        void Drain()
+        {
+            for (int i = 0; i < 40 && host.Effects.ActiveOneShots > 0; i++) host._Process(0.25);
+        }
+        Drain();
+        Pos Visible()
+        {
+            for (int y = 2; y < host.Map.Grid.Rows - 2; y++)
+                for (int x = 2; x < host.Map.Grid.Columns - 2; x++)
+                {
+                    var at = session.ScreenToMap(x, y);
+                    if (map.InBounds(at) && session.Game.CanBuildOn(at.X, at.Y)) return at;
+                }
+            throw new InvalidOperationException("No visible vacant cell for the effects check.");
+        }
+        var spot = Visible();
+        int spawned = host.Director.TotalSpawned;
+        Require(session.Game.BuildRoad(new CellRect(spot.X, spot.Y, 1, 1)).Success, "Effects check could not build a road.");
+        await frames();
+        Require(host.Director.TotalSpawned > spawned, "Building a road did not start an effect.");
+        Drain();
+        Require(host.Effects.ActiveOneShots == 0 && host.Effects.CellCount == 0, "Road effect left cell modifiers behind.");
+        int draws = host.Map.DrawCount;
+        Require(session.Game.Demolish(new CellRect(spot.X, spot.Y, 1, 1)).Success, "Effects check could not demolish.");
+        host.Map.RefreshCells();
+        host._Process(0.05);
+        Require(host.Effects.Effects.OfType<TermCity.Core.Effects.DemolishEffect>().Any() && host.Effects.HasVisuals,
+            "Demolishing did not start the shrink-away effect.");
+        await frames();
+        if (host.Map.DrawCount > draws)
+            Require(host.Map.EffectGlyphsDrawn > 0, "The map drew a frame without the running effect glyphs.");
+        else GD.Print("Godot did not draw during the effects check (headless); effect glyph drawing was not exercised.");
+        Drain();
+        Require(host.Effects.ActiveOneShots == 0 && host.Effects.CellCount == 0, "Demolish effect did not finish and clean up.");
+        string saved = SaveGameStore.Serialize(session.Game);
+        host._Process(0.1);
+        Require(saved == SaveGameStore.Serialize(session.Game), "Effects mutated gameplay.");
+
+        await key(Key.V, false, 0, false, Key.None);
+        Require(host.EffectsLevel == TermCity.Core.Effects.EffectLevel.Low && host.Effects.Settings.Intensity < 1, "V did not lower effects.");
+        await key(Key.V, false, 0, false, Key.None);
+        Require(host.EffectsLevel == TermCity.Core.Effects.EffectLevel.Off && !host.Effects.Settings.Active, "V did not turn effects off.");
+        spot = Visible();
+        spawned = host.Director.TotalSpawned;
+        session.Game.BuildRoad(new CellRect(spot.X, spot.Y, 1, 1));
+        session.Game.Demolish(new CellRect(spot.X, spot.Y, 1, 1));
+        await frames();
+        Require(host.Director.TotalSpawned == spawned && host.Effects.ActiveEffects == 0 && !host.Effects.HasVisuals,
+            "Effects ran while switched off.");
+        await key(Key.V, false, 0, false, Key.None);
+        Require(host.EffectsLevel == TermCity.Core.Effects.EffectLevel.High && host.Effects.Settings.Active, "V did not restore effects.");
+        await frames();
+        Require(host.Director.TotalSpawned == spawned, "Re-enabling effects replayed old changes.");
+        await key(Key.Escape, false, 0, false, Key.None);
+        Require(session.Prompt?.Choices.Any(c => c.Label.StartsWith("Effects:", StringComparison.Ordinal)) == true,
+            "The city menu has no Effects entry.");
+        await key(Key.Escape, false, 0, false, Key.None);
+        Drain();
     }
 
     public static void Run(Main host)
@@ -844,7 +917,8 @@ internal static class GodotSmoke
         Press(Key.Escape);
         session.ShowAreaMenu();
         session.SelectPrompt(2);
-        Require(session.Prompt?.Text == "No service buildings are registered.", "Empty building menu was not explained.");
+        Require(session.Prompt?.Title == "Service buildings" && (session.Prompt.Text == "Choose a building to preview." ||
+            session.Prompt.Text == "No service buildings are registered."), "Building menu was not shown or explained.");
         Press(Key.Escape);
 
         string quickSave = session.SavePath;

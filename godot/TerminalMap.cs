@@ -1,4 +1,6 @@
 using Godot;
+using TermCity.Core.Effects;
+using TermCity.Core.Rendering;
 using TermCity.Core.Session;
 using TermCity.Core.Util;
 using TermCity.Core.World;
@@ -12,6 +14,17 @@ public partial class TerminalMap : Control
     public GameSession Session { get; set; } = null!;
     public Font CellFont { get; set; } = null!;
     private bool _cellsDirty = true;
+    private readonly List<GlyphDraw> _overlays = [];
+    private Vector2 _shakeOffset;
+
+    /// <summary>Optional visual effects. Null or inactive means the map draws exactly as it always did.</summary>
+    public EffectSystem? Effects { get; set; }
+
+    /// <summary>Frames drawn so far (diagnostics and the smoke test).</summary>
+    public int DrawCount { get; private set; }
+
+    /// <summary>How many glyphs the last frame drew because of effects (modified cells, ghosts and sprites).</summary>
+    public int EffectGlyphsDrawn { get; private set; }
 
     public override void _Ready()
     {
@@ -70,10 +83,19 @@ public partial class TerminalMap : Control
     public override void _Draw()
     {
         RefreshCells();
+        DrawCount++;
         DrawRect(new Rect2(Vector2.Zero, Size), Colors.Black);
         int scale = Grid.PixelWidth / TerminalGrid.CellWidth;
         int fontSize = FontSize * scale;
-        float baseline = (Grid.PixelHeight - CellFont.GetHeight(fontSize)) / 2 + CellFont.GetAscent(fontSize);
+        int cellWidth = Grid.PixelWidth, cellHeight = Grid.PixelHeight;
+        float baseline = (cellHeight - CellFont.GetHeight(fontSize)) / 2 + CellFont.GetAscent(fontSize);
+        // Effects only exist at normal and zoomed-in views, where one screen cell is one map cell.
+        var fx = Effects is { Settings.Active: true, HasVisuals: true } && Session.Stride == 1 ? Effects : null;
+        var shake = fx is null ? (0f, 0f) : EffectDraw.ShakePixels(fx.Shake, cellWidth, cellHeight);
+        _shakeOffset = new Vector2(shake.Item1, shake.Item2);
+        int drawn = 0;
+        _overlays.Clear();
+        DrawSetTransform(_shakeOffset, 0f, Vector2.One);
         for (int y = 0; y < Grid.Rows; y++)
         {
             for (int x = 0; x < Grid.Columns; x++)
@@ -82,9 +104,17 @@ public partial class TerminalMap : Control
                 {
                     continue;
                 }
-                var position = new Vector2(x * Grid.PixelWidth, y * Grid.PixelHeight);
-                DrawRect(new Rect2(position, new Vector2(Grid.PixelWidth, Grid.PixelHeight)),
-                    ToColor(visual.Background));
+                var background = visual.Background;
+                if (fx is not null)
+                {
+                    var at = Session.ScreenToMap(x, y);
+                    if (fx.TryGetCell(at.X, at.Y, out var cellEffect) && cellEffect.BackgroundAmount > 0)
+                    {
+                        background = EffectDraw.Background(background, cellEffect);
+                    }
+                }
+                var position = new Vector2(x * cellWidth, y * cellHeight);
+                DrawRect(new Rect2(position, new Vector2(cellWidth, cellHeight)), ToColor(background));
             }
         }
         for (int y = 0; y < Grid.Rows; y++)
@@ -95,14 +125,64 @@ public partial class TerminalMap : Control
                 {
                     continue;
                 }
+                if (fx is not null)
+                {
+                    var at = Session.ScreenToMap(x, y);
+                    if (fx.TryGetCell(at.X, at.Y, out var cellEffect) && !cellEffect.IsIdentity)
+                    {
+                        EffectDraw.PlanCell(cellEffect, visual, x, y, cellWidth, cellHeight, shake, out var main, out var overlay);
+                        if (main is { } mainDraw)
+                        {
+                            DrawEffectGlyph(mainDraw, cellWidth, cellHeight, baseline, fontSize);
+                            drawn++;
+                        }
+                        if (overlay is { } ghost)
+                        {
+                            _overlays.Add(ghost);
+                        }
+                        continue;
+                    }
+                }
                 var offset = Grid.OffsetAt(Session, x, y);
-                var position = new Vector2(x * Grid.PixelWidth + offset.X * scale,
-                    y * Grid.PixelHeight + baseline + offset.Y * scale);
-                DrawString(CellFont, position, visual.Glyph,
-                    HorizontalAlignment.Center, Grid.PixelWidth, fontSize,
+                var glyphPosition = new Vector2(x * cellWidth + offset.X * scale,
+                    y * cellHeight + baseline + offset.Y * scale);
+                DrawString(CellFont, glyphPosition, visual.Glyph,
+                    HorizontalAlignment.Center, cellWidth, fontSize,
                     ToColor(visual.Foreground));
             }
         }
+        if (fx is not null)
+        {
+            // Ghosts and sprites go on top of the whole map so they can float across neighbouring cells.
+            foreach (var ghost in _overlays)
+            {
+                DrawEffectGlyph(ghost, cellWidth, cellHeight, baseline, fontSize);
+                drawn++;
+            }
+            var origin = Session.ScreenToMap(0, 0);
+            foreach (var sprite in fx.Sprites)
+            {
+                if (EffectDraw.PlanSprite(sprite, origin.X, origin.Y, cellWidth, cellHeight, shake,
+                        Grid.Columns, Grid.Rows) is { } draw)
+                {
+                    DrawEffectGlyph(draw, cellWidth, cellHeight, baseline, fontSize);
+                    drawn++;
+                }
+            }
+        }
+        DrawSetTransform(Vector2.Zero, 0f, Vector2.One);
+        EffectGlyphsDrawn = drawn;
+    }
+
+    /// <summary>Draws one effect glyph scaled about its own centre.</summary>
+    private void DrawEffectGlyph(in GlyphDraw draw, int cellWidth, int cellHeight, float baseline, int fontSize)
+    {
+        DrawSetTransform(new Vector2(draw.CentreX, draw.CentreY), 0f, new Vector2(draw.Scale, draw.Scale));
+        var (ox, oy) = EffectDraw.GlyphOrigin(cellWidth, cellHeight, baseline);
+        var colour = ToColor(draw.Color);
+        colour.A = draw.Alpha;
+        DrawString(CellFont, new Vector2(ox, oy), draw.Glyph, HorizontalAlignment.Center, cellWidth, fontSize, colour);
+        DrawSetTransform(_shakeOffset, 0f, Vector2.One);
     }
 
     private static Color ToColor(Rgb color) => new(color.R / 255f, color.G / 255f, color.B / 255f);

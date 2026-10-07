@@ -1,6 +1,7 @@
 using Godot;
 using System.Buffers.Binary;
 using System.Text;
+using TermCity.Core.Effects;
 using TermCity.Core.Rendering;
 using TermCity.Core.Session;
 using TermCity.Core.Simulation;
@@ -13,6 +14,11 @@ public partial class Main : Control
 {
     public GameSession Session { get; private set; } = null!;
     public TerminalMap Map { get; private set; } = null!;
+    public EffectSystem Effects { get; private set; } = null!;
+    public EffectDirector Director { get; private set; } = null!;
+    public EffectLevel EffectsLevel { get; private set; } = EffectLevel.High;
+    private double _effectRedrawClock;
+    private const double AmbientRedrawSeconds = 1.0 / 15;
     public CityMinimap Minimap => _panel.Minimap;
     public const int DefaultFontSize = 20, MinFontSize = 16, MaxFontSize = 28;
     public int FontSize { get; private set; } = DefaultFontSize;
@@ -122,6 +128,7 @@ public partial class Main : Control
             var font = LoadBundledFont();
             Map = new TerminalMap { Session = Session, CellFont = font };
             Map.VerifyGlyphs(Session.Game.Map.Content);
+            CreateEffects();
             CreateLayout(font);
             CreateMusic();
             Session.Changed += OnChanged;
@@ -167,6 +174,68 @@ public partial class Main : Control
         if (music.VariantType != Variant.Type.Bool)
             throw new InvalidOperationException("Saved music preference must be a boolean.");
         MusicEnabled = music.AsBool();
+        var effects = settings.GetValue("display", "effects", "high");
+        if (effects.VariantType != Variant.Type.String ||
+            !Enum.TryParse(effects.AsString(), ignoreCase: true, out EffectLevel level) || !Enum.IsDefined(level))
+            throw new InvalidOperationException("Saved effects preference must be off, low or high.");
+        EffectsLevel = level;
+    }
+
+    private void CreateEffects()
+    {
+        Effects = new EffectSystem(Session.Game.Config.Seed ^ 0x5eed1e5,
+            new EffectSettings { ReducedMotion = _options.ReducedMotion });
+        Effects.Settings.Level = EffectsLevel;
+        Director = new EffectDirector(Effects);
+        Director.Attach(Session);
+        Map.Effects = Effects;
+    }
+
+    public void SetEffectsLevel(EffectLevel level)
+    {
+        EffectsLevel = level;
+        Effects.Settings.Level = level;
+        Map.Invalidate(false);
+        SaveDisplaySettings();
+    }
+
+    private void CycleEffects()
+    {
+        if (Effects.Settings.ReducedMotion)
+        {
+            Session.SetMessage("Effects are disabled by --reduced-motion.", MessageKind.Info);
+            return;
+        }
+        SetEffectsLevel(EffectsLevel switch
+        {
+            EffectLevel.High => EffectLevel.Low,
+            EffectLevel.Low => EffectLevel.Off,
+            _ => EffectLevel.High,
+        });
+        Session.SetMessage($"Effects: {EffectsLabel()}.", MessageKind.Info);
+        if (Session.Prompt is { } prompt)
+        {
+            var choices = prompt.Choices.Select(choice => choice.Select == (Action)CycleEffects
+                ? choice with { Label = $"Effects: {EffectsLabel()}" }
+                : choice).ToArray();
+            Session.ShowPrompt(prompt.Title, prompt.Text, choices, prompt.Input, prompt.Footer);
+        }
+    }
+
+    private string EffectsLabel() => Effects.Settings.ReducedMotion ? "OFF (reduced motion)" : EffectsLevel.ToString().ToUpperInvariant();
+
+    private void UpdateEffects(double delta)
+    {
+        if (_focused) Director.Update(delta);
+        if (!Effects.NeedsRedraw) return;
+        _effectRedrawClock += delta;
+        // One-shot effects and shakes redraw every frame; ambient life alone redraws at a calmer rate to save CPU.
+        if (Effects.ActiveOneShots > 0 || Effects.Shake != default || !Effects.HasVisuals ||
+            _effectRedrawClock >= AmbientRedrawSeconds)
+        {
+            _effectRedrawClock = 0;
+            Map.QueueRedraw();
+        }
     }
 
     public void SetFontSize(int size)
@@ -189,6 +258,7 @@ public partial class Main : Control
         using var settings = new ConfigFile();
         settings.SetValue("display", "font_size", FontSize);
         settings.SetValue("audio", "music_enabled", MusicEnabled);
+        settings.SetValue("display", "effects", EffectsLevel.ToString().ToLowerInvariant());
         var error = settings.Save(DisplaySettingsPath);
         if (error != Error.Ok)
         {
@@ -542,6 +612,7 @@ public partial class Main : Control
             Session.Update(delta);
             EdgeScroll(delta);
         }
+        UpdateEffects(delta);
         Map.AdvanceAnimation(delta, _focused);
         if (_focused && Session.Game.Paused)
         {
@@ -654,6 +725,7 @@ public partial class Main : Control
             {
                 new SessionChoice("Resize sidebar", ShowSidebarDialog),
                 new SessionChoice($"Music: {(MusicEnabled ? "ON" : "OFF")}", ToggleMusic),
+                new SessionChoice($"Effects: {EffectsLabel()}", CycleEffects),
             }).ToArray(),
             footer: prompt.Footer);
     }
@@ -1074,6 +1146,7 @@ public partial class Main : Control
             case Key.U: Session.Dezone(); break;
             case Key.D or Key.Delete: Session.PreviewDemolish(); break;
             case Key.O: Session.CycleOverlay(); break;
+            case Key.V: CycleEffects(); break;
             case Key.S: Session.ToggleSelectionMode(); break;
             case Key.E: Session.ToggleEdgeScroll(); break;
             case Key.Enter or Key.M: Session.ShowAreaMenu(); break;
@@ -1311,6 +1384,7 @@ public partial class Main : Control
             Font: F3 opens the [-] size [+] dialog; OK closes it, RESET restores the default.
             Sidebar: drag the divider, or Esc > Resize sidebar; arrows select, Space/Enter activates.
             Music: Esc > Music toggles evolving Greensleeves phrases in related keys.
+            Effects: V cycles high/low/off (or Esc > Effects): buildings shrink away, grow in, burn, flood and shake; cars and birds roam. --reduced-motion forces off.
             Name editing: Delete/Backspace removes text; Ctrl/Command+A selects all.
             Sidebar sections stay open. E toggles edge scrolling. O cycles map overlays (power, water, services, pollution, land value, happiness).
             Game: Esc city menu; F5 save; F9 quick-load; Q/Ctrl+Q quit.
@@ -1375,6 +1449,7 @@ public partial class Main : Control
         Session.CameraChanged -= OnCameraChanged;
         Session.SelectionChanged -= OnSelectionChanged;
         Session.QuitRequested -= Quit;
+        Director?.Dispose();
         GetWindow().FocusEntered -= OnFocusEntered;
         GetWindow().FocusExited -= OnFocusExited;
         StopMusic();
