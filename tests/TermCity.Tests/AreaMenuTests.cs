@@ -102,11 +102,11 @@ public class AreaMenuTests
 
         var building = session.Game.Map.Content.Buildings.Register(new BuildingType
         {
-            Name = "Chapel", Glyphs = ["+"], Foreground = Rgb.Hex(0xffffff),
+            Name = "Shrine", Glyphs = ["+"], Foreground = Rgb.Hex(0xffffff),
             Cost = 1_000, PlayerPlaceable = true,
         });
         session.SelectPrompt(2);
-        Assert.Contains("Chapel", session.Prompt!.Choices[civic].Label);
+        Assert.Contains("Shrine", session.Prompt!.Choices[civic].Label);
         session.SelectPrompt(civic);
         Assert.Null(session.Prompt);
         Assert.Same(building, session.Preview!.Building);

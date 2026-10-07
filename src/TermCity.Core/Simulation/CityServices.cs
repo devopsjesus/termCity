@@ -11,7 +11,7 @@ namespace TermCity.Core.Simulation;
 /// </summary>
 public sealed class CityServices
 {
-    private readonly byte[][] _coverage = new byte[8][];
+    private readonly byte[][] _coverage = new byte[ServiceKinds.Count][];
     private readonly byte[] _pollution;
     private readonly bool _utilitiesRequired;
     private readonly int _powerThreshold;
@@ -19,7 +19,7 @@ public sealed class CityServices
 
     private CityServices(
         byte[][] coverage, byte[] pollution, bool utilitiesRequired, ServiceSupply power, ServiceSupply water,
-        int[] buildingCounts, int[] activeCounts, int upkeep)
+        int[] buildingCounts, int[] activeCounts, int upkeep, int seatRank, int granaryCapacity)
     {
         for (int i = 0; i < coverage.Length; i++)
         {
@@ -33,6 +33,8 @@ public sealed class CityServices
         BuildingCounts = buildingCounts;
         ActiveCounts = activeCounts;
         WeeklyUpkeepAtFullFunding = upkeep;
+        SeatRank = seatRank;
+        GranaryCapacity = granaryCapacity;
         _powerThreshold = (int)Math.Round(power.Ratio * 1000);
         _waterThreshold = (int)Math.Round(water.Ratio * 1000);
     }
@@ -48,6 +50,15 @@ public sealed class CityServices
     public int[] ActiveCounts { get; }
 
     public int WeeklyUpkeepAtFullFunding { get; }
+
+    /// <summary>
+    /// The highest rank of working castle in the town: 0 none, 1 motte and bailey, 2 stone keep, 3 castle. The seat of
+    /// the lord draws settlers, lets buildings grow taller and lifts the tithe.
+    /// </summary>
+    public int SeatRank { get; }
+
+    /// <summary>Measures of grain the working granaries can hold.</summary>
+    public int GranaryCapacity { get; }
 
     /// <summary>How well an area service covers a cell, 0-100. Utilities return 0 here; use <see cref="IsPowered"/>.</summary>
     public int Coverage(ServiceKind kind, int index) => _coverage[(int)kind]?[index] ?? 0;
@@ -76,16 +87,16 @@ public sealed class CityServices
         double powerDemandFactor = 1)
     {
         int count = map.Width * map.Height;
-        var coverage = new byte[8][];
+        var coverage = new byte[ServiceKinds.Count][];
         foreach (var kind in ServiceKinds.Area)
         {
             coverage[(int)kind] = new byte[count];
         }
 
         var pollution = new byte[count];
-        var buildings = new int[8];
-        var active = new int[8];
-        int powerSupply = 0, waterSupply = 0, upkeep = 0;
+        var buildings = new int[ServiceKinds.Count];
+        var active = new int[ServiceKinds.Count];
+        int powerSupply = 0, waterSupply = 0, upkeep = 0, seatRank = 0, granary = 0;
 
         foreach (int index in map.ServiceCells.Order())
         {
@@ -109,11 +120,16 @@ public sealed class CityServices
             {
                 waterSupply += type.Capacity;
             }
+            else if (kind == ServiceKind.Granary)
+            {
+                granary += type.Capacity;
+            }
             else if (type.Radius > 0)
             {
                 Splat(coverage[(int)kind], map, x, y, type.Radius, type.Strength * funding(kind), fade: 0.6);
             }
 
+            seatRank = Math.Max(seatRank, type.SeatRank);
             if (type.Pollution != 0)
             {
                 EmitPollution(pollution, map, x, y, type.Pollution);
@@ -150,7 +166,7 @@ public sealed class CityServices
 
         var power = new ServiceSupply(powerSupply, (int)Math.Round(powerDemand * powerDemandFactor));
         var water = new ServiceSupply((int)Math.Round(waterSupply * waterFactor), waterDemand);
-        return new CityServices(coverage, pollution, config.FullRules, power, water, buildings, active, upkeep);
+        return new CityServices(coverage, pollution, config.FullRules, power, water, buildings, active, upkeep, seatRank, granary);
     }
 
     // Strength falls linearly from the full value at the building to (1 - fade) of it at the edge of the radius,

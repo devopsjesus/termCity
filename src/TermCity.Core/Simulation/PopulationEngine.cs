@@ -223,7 +223,7 @@ internal static class PopulationEngine
                 double land = CityAnalysis.LandValue(game, i);
                 int level = type.Level;
 
-                if (next is not null && utilities && population >= UpgradePopulation[level] &&
+                if (next is not null && utilities && population >= UpgradePopulation[level] && services.SeatRank >= level &&
                     land >= UpgradeLandValue[level] * scale && game.Network.AccessRank(i) >= level &&
                     DemandsUpgrade(game, ind, zone, i, type))
                 {

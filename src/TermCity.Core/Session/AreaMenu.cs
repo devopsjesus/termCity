@@ -48,7 +48,8 @@ public sealed partial class GameSession
         var choices = Game.Map.Content.Buildings.Where(b => b.PlayerPlaceable).Select(building =>
         {
             var quote = Game.QuoteBuilding(building, ActiveArea);
-            return new SessionChoice($"{building.Name}: {quote.Cells} valid, {Fmt.Money(quote.Cost)}",
+            string locked = building.MinPopulation > Game.Stats.Population ? $" (needs {building.MinPopulation:N0} souls)" : string.Empty;
+            return new SessionChoice($"{building.Name}: {quote.Cells} valid, {Fmt.Money(quote.Cost)}{locked}",
                 () => { ClosePrompt(); PreviewBuilding(building); });
         }).ToList();
         bool empty = choices.Count == 0;

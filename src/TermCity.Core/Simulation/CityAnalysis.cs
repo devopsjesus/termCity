@@ -40,7 +40,7 @@ public sealed record CityIndicators
     public double LandValue { get; init; } = 40;
 
     /// <summary>How well each service covers the average resident (0-100), indexed by <see cref="ServiceKind"/>.</summary>
-    public IReadOnlyList<double> Coverage { get; init; } = new double[8];
+    public IReadOnlyList<double> Coverage { get; init; } = new double[ServiceKinds.Count];
 
     public double PowerSupplied { get; init; } = 1;
 
@@ -74,12 +74,13 @@ public sealed record CityIndicators
 
 public static class CityAnalysis
 {
-    // How many residents a city needs before it starts to want each service. A hamlet has no use for a police force;
-    // the same want grows linearly until the city is as big as the threshold and then stays at full strength.
-    internal static readonly int[] NeedPopulation = [0, 0, 0, 300, 600, 700, 450, 900];
+    // How many souls a town needs before it starts to want each service. A hamlet has no use for a sheriff; the same
+    // want grows linearly until the town is as big as the threshold and then stays at full strength. Index is the
+    // ServiceKind: none, fuel, water, fire, sheriff, physic, learning, commons, lord's garrison, faith, trade, granary.
+    internal static readonly int[] NeedPopulation = [0, 0, 0, 200, 400, 500, 900, 600, 150, 250, 350, 0];
 
     public static double Need(ServiceKind kind, int population) =>
-        Math.Clamp(population / (double)NeedPopulation[(int)kind], 0, 1);
+        NeedPopulation[(int)kind] == 0 ? 0 : Math.Clamp(population / (double)NeedPopulation[(int)kind], 0, 1);
 
     public static CityIndicators Assess(CityGame game)
     {
@@ -117,7 +118,7 @@ public static class CityAnalysis
 
         // Pass over the homes: everything a resident feels is a property of where they live.
         double weight = 0, happiness = 0, crimeSum = 0, pollutionSum = 0, landSum = 0, educationSum = 0;
-        var coverage = new double[8];
+        var coverage = new double[ServiceKinds.Count];
         var penalties = new Dictionary<string, double>();
         double crimeBase = CrimeBase(game, unemployment, stats);
         var taxHappiness = TaxPenalty(game, game.Taxes.Residential);
@@ -170,7 +171,7 @@ public static class CityAnalysis
             .Take(4)
             .ToList();
 
-        double attraction = Attraction(profile, avgHappiness, jobs + informal, workers, taxHappiness);
+        double attraction = Attraction(profile, avgHappiness, jobs + informal, workers, taxHappiness) * SeatPull(services.SeatRank);
         double climate = BusinessClimate(game, unemployment, jobsFilled, crimeSum / weight, congestion);
 
         return new CityIndicators
@@ -253,10 +254,12 @@ public static class CityAnalysis
         double health = services.Coverage(ServiceKind.Health, i);
         double education = services.Coverage(ServiceKind.Education, i);
         double recreation = services.Coverage(ServiceKind.Recreation, i);
+        double defence = services.Coverage(ServiceKind.Defence, i);
+        double faith = services.Coverage(ServiceKind.Faith, i);
         double smog = services.Pollution(i);
 
         double crime = Math.Clamp(crimeBase * (1 - 0.85 * police / 100) * (1 - 0.25 * recreation / 100) *
-            (1 - 0.3 * education / 100), 0, 100);
+            (1 - 0.3 * education / 100) * (1 - 0.3 * defence / 100) * (1 - 0.15 * faith / 100), 0, 100);
 
         double h = 66;
         void Charge(string reason, double points)
@@ -281,11 +284,13 @@ public static class CityAnalysis
         Charge("Physic", 14 * Need(ServiceKind.Health, population) * (1 - health / 100));
         Charge("Learning", 9 * Need(ServiceKind.Education, population) * (1 - education / 100));
         Charge("Commons", 8 * Need(ServiceKind.Recreation, population) * (1 - recreation / 100));
+        Charge("Unguarded", 10 * Need(ServiceKind.Defence, population) * (1 - defence / 100));
+        Charge("Solace", 6 * Need(ServiceKind.Faith, population) * (1 - faith / 100));
         Charge("Cart traffic", 18 * congestion);
         Charge("Idleness", 45 * Math.Max(0, unemployment - 0.06));
         Charge("Tithes", Math.Clamp(taxPenalty, -4, 20));
         Charge("Road access", map.Content.Roads.Count > 0 && game.Network.AccessRank(i) == 0 ? 10 : 0);
-        h += 0.05 * recreation;
+        h += 0.05 * recreation + 0.04 * faith;
 
         return new Feeling(Math.Clamp(h, 0, 100), crime, LandValue(game, i, crime));
     }
@@ -301,6 +306,9 @@ public static class CityAnalysis
             + 0.12 * services.Coverage(ServiceKind.Health, i)
             + 0.16 * services.Coverage(ServiceKind.Education, i)
             + 0.22 * services.Coverage(ServiceKind.Recreation, i)
+            + 0.18 * services.Coverage(ServiceKind.Defence, i)
+            + 0.05 * services.Coverage(ServiceKind.Faith, i)
+            + 0.10 * services.Coverage(ServiceKind.Trade, i)
             + 6.0 * game.Network.AccessRank(i)
             - 0.35 * services.Pollution(i)
             - 0.25 * crimeNow;
@@ -314,6 +322,9 @@ public static class CityAnalysis
         double work = jobRatio >= 1 ? 1 + 0.25 * Math.Min(1, jobRatio - 1) : Math.Pow(Math.Max(jobRatio, 0), 1.3);
         return Math.Clamp(comfort * work * profile.Appeal, 0, 2);
     }
+
+    /// <summary>How much more a town draws settlers for having a lord's seat: 1 with none, up to 1.5 for a castle.</summary>
+    public static double SeatPull(int seatRank) => 1 + 0.15 * Math.Clamp(seatRank, 0, 3);
 
     private static double BusinessClimate(CityGame game, double unemployment, double jobsFilled, double crime, double congestion)
     {

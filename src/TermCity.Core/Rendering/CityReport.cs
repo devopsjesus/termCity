@@ -16,6 +16,10 @@ public static class CityReport
         ServiceKind.Health => "Physic",
         ServiceKind.Education => "Learning",
         ServiceKind.Recreation => "Commons",
+        ServiceKind.Defence => "Garrison",
+        ServiceKind.Faith => "Faith",
+        ServiceKind.Trade => "Trade",
+        ServiceKind.Granary => "Granary",
         _ => kind.ToString(),
     };
 

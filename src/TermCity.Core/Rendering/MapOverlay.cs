@@ -15,6 +15,9 @@ public enum MapOverlay
     Health,
     Education,
     Parks,
+    Defence,
+    Faith,
+    Trade,
     Pollution,
     LandValue,
     Happiness,
@@ -40,6 +43,9 @@ public static class MapOverlays
         MapOverlay.Health => "Overlay: physic",
         MapOverlay.Education => "Overlay: learning",
         MapOverlay.Parks => "Overlay: commons",
+        MapOverlay.Defence => "Overlay: the lord's garrison",
+        MapOverlay.Faith => "Overlay: faith",
+        MapOverlay.Trade => "Overlay: trade",
         MapOverlay.Pollution => "Overlay: smoke",
         MapOverlay.LandValue => "Overlay: land value",
         MapOverlay.Happiness => "Overlay: contentment",
@@ -72,6 +78,9 @@ public static class MapOverlays
             case MapOverlay.Health: return Ramp(background, services.Coverage(ServiceKind.Health, i));
             case MapOverlay.Education: return Ramp(background, services.Coverage(ServiceKind.Education, i));
             case MapOverlay.Parks: return Ramp(background, services.Coverage(ServiceKind.Recreation, i));
+            case MapOverlay.Defence: return Ramp(background, services.Coverage(ServiceKind.Defence, i));
+            case MapOverlay.Faith: return Ramp(background, services.Coverage(ServiceKind.Faith, i));
+            case MapOverlay.Trade: return Ramp(background, services.Coverage(ServiceKind.Trade, i));
             case MapOverlay.Pollution:
                 return Rgb.Blend(background, Smog, Math.Clamp(services.Pollution(i) / 60.0, 0, 1) * Strength);
             case MapOverlay.LandValue: return Ramp(background, CityAnalysis.LandValue(game, i));

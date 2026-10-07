@@ -874,6 +874,11 @@ public sealed class CityGame
             return ActionResult.Fail($"{type.Name} cannot be placed by the player.");
         }
 
+        if (Stats.Population < type.MinPopulation)
+        {
+            return ActionResult.Fail($"A {type.Name} needs a town of {type.MinPopulation:N0} souls; you have {Stats.Population:N0}.");
+        }
+
         var quote = QuoteBuilding(type, area);
         var check = CheckSpend(quote, type.Name.ToLowerInvariant());
         if (check is not null)
@@ -1033,6 +1038,21 @@ public sealed class CityGame
 
     // ---- Statistics -------------------------------------------------------------------------------------------
 
+    /// <summary>
+    /// What a lord and a market add to the tithe a cell pays: land under a castle's garrison pays up to a sixth more, and
+    /// market stalls and workshops near a market cross or guildhall pay tolls and dues on a bigger trade.
+    /// </summary>
+    private double TitheFactor(CityServices services, ZoneType zone, int i)
+    {
+        if (!Config.FullRules)
+        {
+            return 1;
+        }
+
+        double factor = 1 + 0.15 * services.Coverage(ServiceKind.Defence, i) / 100;
+        return zone == ZoneType.Residential ? factor : factor * (1 + 0.25 * services.Coverage(ServiceKind.Trade, i) / 100);
+    }
+
     private CityStats ComputeStats()
     {
         var network = Network;
@@ -1062,7 +1082,7 @@ public sealed class CityGame
                     filled[z]++;
                     if (services.IsPowered(Map, i) && services.IsWatered(Map, i))
                     {
-                        value[z] += Map.Content.Buildings[id].ValueMultiplier;
+                        value[z] += Map.Content.Buildings[id].ValueMultiplier * TitheFactor(services, zone, i);
                     }
 
                     if (zone == ZoneType.Residential)

@@ -14,7 +14,7 @@ public sealed class Budget
     /// <summary>The most a city may owe, in units of its weekly income (a bank lends against what you earn).</summary>
     public const int LoanWeeksOfIncome = 40;
 
-    private readonly double[] _funding = [1, 1, 1, 1, 1, 1, 1, 1];
+    private readonly double[] _funding = Enumerable.Repeat(1.0, ServiceKinds.Count).ToArray();
 
     /// <summary>Funding for road upkeep; the "service" slot of a road is <see cref="ServiceKind.None"/>.</summary>
     public double Roads

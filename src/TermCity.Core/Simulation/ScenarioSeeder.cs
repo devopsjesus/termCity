@@ -14,6 +14,7 @@ internal static class ScenarioSeeder
     [
         ("Fire Watch", 24), ("Sheriff's Hall", 28), ("Apothecary", 22), ("Infirmary", 64),
         ("Chantry School", 22), ("Monastery", 84), ("Village Green", 15),
+        ("Chapel", 17), ("Market Cross", 20), ("Motte and Bailey", 34),
     ];
 
     /// <summary>How well each scenario's real-world counterpart is provided for: above 1 is generous, below 1 is thin.</summary>
@@ -47,6 +48,10 @@ internal static class ScenarioSeeder
             var type = game.Map.Content.Buildings.Get(name);
             PlaceLattice(game, type, Math.Max(8, (int)Math.Round(spacing / provision)), offset += 7);
         }
+
+        // The lord's seat and the town's grain store stand near the middle of the settlement.
+        PlaceCentral(game, "Stone Keep", Centroid(game.Map, ZoneType.Residential));
+        PlaceCentral(game, "Granary", Centroid(game.Map, ZoneType.Commercial));
 
         game.Touch();
         game.Money = Math.Max(game.Money, 8 * game.Finance.Expenses);
@@ -149,6 +154,34 @@ internal static class ScenarioSeeder
                     map.SetBuilding(x, y, type);
                 }
             }
+        }
+    }
+
+    /// <summary>Puts one building on the served, vacant, zoned cell nearest <paramref name="centre"/>.</summary>
+    private static void PlaceCentral(CityGame game, string name, (int X, int Y) centre)
+    {
+        var map = game.Map;
+        int best = -1;
+        long bestD = long.MaxValue;
+        for (int i = 0; i < map.Width * map.Height; i++)
+        {
+            if (map.ZoneAt(i % map.Width, i / map.Width) == ZoneType.None || map.BuildingLayer[i] != 0 || !game.Network.IsServed(i))
+            {
+                continue;
+            }
+
+            long d = Distance2(map, i, centre);
+            if (d < bestD)
+            {
+                best = i;
+                bestD = d;
+            }
+        }
+
+        if (best >= 0)
+        {
+            map.ClearCell(best % map.Width, best / map.Width);
+            map.SetBuilding(best % map.Width, best / map.Width, map.Content.Buildings.Get(name));
         }
     }
 

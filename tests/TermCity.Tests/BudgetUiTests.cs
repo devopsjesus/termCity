@@ -72,8 +72,8 @@ public class OverlayTests
         }
 
         Assert.True(tinted);
-        for (int i = 0; i < 19; i++) session.CycleOverlay();
-        Assert.Equal(MapOverlay.Off, session.Overlay); // 3 + 19 steps is two full laps of the 11 modes
+        for (int i = 0; i < 25; i++) session.CycleOverlay();
+        Assert.Equal(MapOverlay.Off, session.Overlay); // 3 + 25 steps is two full laps of the 14 modes
         var classic = new GameSession(TestCity.Flat());
         classic.CycleOverlay();
         Assert.Equal(MapOverlay.Off, classic.Overlay);
