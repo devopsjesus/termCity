@@ -2,7 +2,7 @@ using TermCity.Core.Simulation;
 using TermCity.Core.Util;
 using TermCity.Core.World;
 
-namespace TermCity.App.Views;
+namespace TermCity.Core.Rendering;
 
 /// <summary>
 /// Low-resolution colour image of the whole map for the minimap. It is deliberately simple: water, hills and open
@@ -10,7 +10,7 @@ namespace TermCity.App.Views;
 /// The terrain layer is sampled once per map and size; roads and zones are re-applied only when the map changes,
 /// from the sparse road/zone indexes, so a redraw never walks every cell of a large map.
 /// </summary>
-internal sealed class MinimapImage
+public sealed class MinimapImage
 {
     private static readonly Rgb Water = Rgb.Hex(0x3c86dc);
     private static readonly Rgb HillTint = Rgb.Hex(0x7a6840);
@@ -26,6 +26,8 @@ internal sealed class MinimapImage
     private int _overlayVersion = -1;
     private Rgb[] _terrain = [];
     private Rgb[] _pixels = [];
+    private int[] _roadCounts = [];
+    private bool[] _filled = [];
 
     public int Width => _width;
 
@@ -34,6 +36,11 @@ internal sealed class MinimapImage
     /// <summary>Brings the image up to date for the given game and pixel dimensions.</summary>
     public void Update(CityGame game, int width, int height)
     {
+        if (width <= 0 || height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(width), "Minimap dimensions must be positive.");
+        }
+
         if (!ReferenceEquals(game, _game) || width != _width || height != _height)
         {
             _game = game;
@@ -97,31 +104,33 @@ internal sealed class MinimapImage
         }
 
         _pixels = new Rgb[count];
+        _roadCounts = new int[count];
+        _filled = new bool[count];
     }
 
     private void BuildOverlay(GameMap map)
     {
         Array.Copy(_terrain, _pixels, _terrain.Length);
+        Array.Clear(_roadCounts);
+        Array.Clear(_filled);
 
         // A pixel counts as road only if enough road cells fall in it for a line to be running through, so a stray
         // corner or stub does not smear into the image.
-        var count = new int[_pixels.Length];
         foreach (int index in map.RoadCells)
         {
-            count[PixelOf(map, index)]++;
+            _roadCounts[PixelOf(map, index)]++;
         }
 
         int cellsX = (map.Width + _width - 1) / _width, cellsY = (map.Height + _height - 1) / _height;
         int needed = Math.Max(1, (int)Math.Round(Math.Min(cellsX, cellsY) * 0.6));
-        for (int p = 0; p < count.Length; p++)
+        for (int p = 0; p < _roadCounts.Length; p++)
         {
-            if (count[p] >= needed)
+            if (_roadCounts[p] >= needed)
             {
                 _pixels[p] = Rgb.Blend(_terrain[p], RoadTint, RoadStrength);
             }
         }
         // Zones win over roads; a pixel counts as built-up if any zone cell in it is filled.
-        var filled = new bool[_pixels.Length];
         foreach (var zone in Zones.Placeable)
         {
             var info = Zones.Get(zone);
@@ -130,10 +139,10 @@ internal sealed class MinimapImage
                 int p = PixelOf(map, index);
                 var cell = map.PosOf(index);
                 bool built = map.IsFilled(cell.X, cell.Y);
-                if (built || !filled[p])
+                if (built || !_filled[p])
                 {
                     _pixels[p] = built ? info.Foreground : info.Foreground.Scale(0.55);
-                    filled[p] |= built;
+                    _filled[p] |= built;
                 }
             }
         }

@@ -10,12 +10,25 @@ public enum GameSpeed
 /// <summary>All tunable rules and starting values. Serialized into save files so a loaded game keeps its rules.</summary>
 public sealed record GameConfig
 {
-    /// <summary>The default map is a 2x4 grid of 80x24 terminal screens: 160x96 characters.</summary>
+    /// <summary>The default map is 160x96 logical cells.</summary>
     public int MapWidth { get; init; } = 160;
 
     public int MapHeight { get; init; } = 96;
 
     public int Seed { get; init; } = 1;
+    public CityScenario Scenario { get; init; }
+    // Retains compatibility with saves created before the other city presets existed.
+    public bool SanFrancisco
+    {
+        get => Scenario == CityScenario.SanFrancisco;
+        init
+        {
+            if (value) Scenario = CityScenario.SanFrancisco;
+            else if (Scenario == CityScenario.SanFrancisco) Scenario = CityScenario.Random;
+        }
+    }
+
+    public int? StartingYear { get; init; }
 
     /// <summary>Enough for about 100 street cells: an access road plus a small neighbourhood grid before any tax comes in.</summary>
     public int StartingMoney { get; init; } = 50_000;

@@ -1,4 +1,3 @@
-using TermCity.App.Views;
 using TermCity.Core.Rendering;
 using TermCity.Core.Session;
 using TermCity.Core.Simulation;
@@ -108,32 +107,13 @@ public class DiagonalHighwayTests
         }
     }
 }
-public class PanelAndMinimapTests
+public class MinimapAndSessionTests
 {
     private static GameSession NewSession()
     {
         var s = new GameSession(TestCity.Flat(), Path.Combine(Path.GetTempPath(), "tc-" + Guid.NewGuid().ToString("N") + ".json"));
         s.SetViewport(80, 24);
         return s;
-    }
-
-    [Fact]
-    public void SectionsStartExpandedAndToggle()
-    {
-        var s = NewSession();
-        foreach (var section in Enum.GetValues<PanelSection>())
-        {
-            Assert.False(s.IsCollapsed(section));
-        }
-
-        int changes = 0;
-        s.Changed += () => changes++;
-        s.ToggleSection(PanelSection.City);
-        Assert.True(s.IsCollapsed(PanelSection.City));
-        Assert.False(s.IsCollapsed(PanelSection.Demand));
-        s.ToggleSection(PanelSection.City);
-        Assert.False(s.IsCollapsed(PanelSection.City));
-        Assert.Equal(2, changes);
     }
 
     [Fact]
@@ -268,54 +248,6 @@ public class PanelAndMinimapTests
     }
 
     [Fact]
-    public void TheMinimapBoxNeverChangesSizeWhileScrolling()
-    {
-        var game = CityGame.New(new GameConfig { Seed = 1, MapWidth = 640, MapHeight = 192 });
-        var s = new GameSession(game, Path.Combine(Path.GetTempPath(), "tc-" + Guid.NewGuid().ToString("N") + ".json"));
-        s.SetViewport(86, 28);
-
-        foreach (int zoom in new[] { 0, -1, -2, 1 })
-        {
-            s.SetZoom(zoom);
-            s.ScrollCamera(-10_000, -10_000);
-            var first = MinimapView.CameraBox(640, 192, s.ViewRect, 34, 20);
-            for (int step = 0; step < 700; step++)
-            {
-                s.ScrollCamera(1, step % 3 == 0 ? 1 : 0);
-                var box = MinimapView.CameraBox(640, 192, s.ViewRect, 34, 20);
-                Assert.Equal((first.Width, first.Height), (box.Width, box.Height));
-                Assert.InRange(box.Left, 0, 34 - box.Width);
-                Assert.InRange(box.Top, 0, 20 - box.Height);
-            }
-        }
-    }
-
-    [Fact]
-    public void TheMinimapBoxIsFlushWithTheEdgesAtTheEndsOfTheMapAndMovesWithTheCamera()
-    {
-        var game = CityGame.New(new GameConfig { Seed = 1, MapWidth = 640, MapHeight = 192 });
-        var s = new GameSession(game, Path.Combine(Path.GetTempPath(), "tc-" + Guid.NewGuid().ToString("N") + ".json"));
-        s.SetViewport(86, 28);
-
-        s.ScrollCamera(-10_000, -10_000);
-        var topLeft = MinimapView.CameraBox(640, 192, s.ViewRect, 34, 20);
-        Assert.Equal((0, 0), (topLeft.Left, topLeft.Top));
-
-        s.ScrollCamera(10_000, 10_000);
-        var bottomRight = MinimapView.CameraBox(640, 192, s.ViewRect, 34, 20);
-        Assert.Equal(34, bottomRight.Left + bottomRight.Width);
-        Assert.Equal(20, bottomRight.Top + bottomRight.Height);
-        Assert.True(bottomRight.Left > topLeft.Left);
-    }
-
-    [Fact]
-    public void ABoxForAMapThatFitsOnScreenFillsTheMinimap()
-    {
-        var box = MinimapView.CameraBox(160, 48, new CellRect(0, 0, 300, 100), 34, 20);
-        Assert.Equal(new MinimapView.PixelBox(0, 0, 34, 20), box);
-    }
-
-    [Fact]
     public void ThePersistedGameKeepsItsDayAndPlaysAtTheCurrentSpeeds()
     {
         var game = TestCity.Flat();
@@ -340,50 +272,6 @@ public class PanelAndMinimapTests
         Assert.Equal(new GameConfig().FastSecondsPerWeek, loaded.Config.FastSecondsPerWeek);
     }
 
-    [Theory]
-    [InlineData(160, 96)]
-    [InlineData(320, 192)]
-    [InlineData(640, 384)]
-    [InlineData(300, 100)]
-    [InlineData(100, 300)]
-    public void TheMinimapPictureKeepsTheMapsShapeApartFromTheVerticalStretch(int mapWidth, int mapHeight)
-    {
-        var (left, width, height) = MinimapView.FitMap(mapWidth, mapHeight, 34, 26);
-
-        // One pixel stands for as many cells across as down, apart from the deliberate stretch.
-        double mapAspect = mapWidth / (mapHeight * MinimapView.VerticalStretch);
-        double pictureAspect = width / (double)height;
-        Assert.InRange(pictureAspect / mapAspect, 0.85, 1.18);
-        Assert.InRange(width, 1, 34);
-        Assert.InRange(height, 1, 26);
-        Assert.Equal((34 - width) / 2, left);
-
-        // It uses the whole of the dimension that limits it.
-        Assert.True(width == 34 || height == 26);
-    }
-
-    [Fact]
-    public void ThePresetMapsAreALandscapePictureWithAMarginEachSideOfThePanel()
-    {
-        var (left, width, height) = MinimapView.FitInPanel(160, 96, 34, 26);
-        Assert.InRange(height, 24, 26);
-        Assert.InRange(width, 27, 28);
-        Assert.True(width > height);
-        Assert.Equal(MinimapView.SideMargin, left);
-        Assert.True(left + width <= 34 - MinimapView.SideMargin + 1);
-    }
-
-    [Fact]
-    public void SeamlessCellsKeepTheSameVisualLandscapeProportionsAsHalfBlocks()
-    {
-        var halfBlocks = MinimapView.FitInPanel(160, 96, 34, 26);
-        var seamless = MinimapView.FitInPanel(160, 96, 34, 13, seamlessCells: true);
-
-        Assert.Equal(halfBlocks.Left, seamless.Left);
-        Assert.Equal(halfBlocks.Width, seamless.Width);
-        Assert.InRange(seamless.Height, (halfBlocks.Height - 1) / 2, (halfBlocks.Height + 1) / 2);
-        Assert.True(seamless.Width >= seamless.Height * 2);
-    }
     [Fact]
     public void CursorAndSelectionChangesDoNotWakeTheWholeInterface()
     {

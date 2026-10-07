@@ -13,8 +13,11 @@ public sealed class TerminalGrid
     public const double CycleSeconds = BeatSeconds * 4;
     private CellVisual?[] _cells = [];
     private AnimationKind[] _animations = [];
+    private float _width, _height;
+    public int PixelWidth { get; private set; } = CellWidth;
+    public int PixelHeight { get; private set; } = CellHeight;
 
-    public enum AnimationKind { None, Hill, Tree }
+    public enum AnimationKind { None, Hill, Tree, Water }
 
     public int Columns { get; private set; }
     public int Rows { get; private set; }
@@ -56,15 +59,20 @@ public sealed class TerminalGrid
         return kind == AnimationKind.Hill ? (0, -step * direction) : (-step * direction, 0);
     }
 
-    public void Resize(float width, float height)
+    public void Resize(float width, float height, int scale = 1)
     {
         if (!float.IsFinite(width) || !float.IsFinite(height) || width < 0 || height < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(width), "Grid size must be finite and non-negative.");
         }
 
-        int columns = Math.Max(1, (int)(width / CellWidth));
-        int rows = Math.Max(1, (int)(height / CellHeight));
+        if (scale is not (1 or 2)) throw new ArgumentOutOfRangeException(nameof(scale));
+        _width = width;
+        _height = height;
+        PixelWidth = CellWidth * scale;
+        PixelHeight = CellHeight * scale;
+        int columns = Math.Max(1, (int)(width / PixelWidth));
+        int rows = Math.Max(1, (int)(height / PixelHeight));
         if (columns == Columns && rows == Rows)
         {
             return;
@@ -80,21 +88,25 @@ public sealed class TerminalGrid
     {
         cell = default;
         if (!float.IsFinite(x) || !float.IsFinite(y) || x < 0 || y < 0 ||
-            x >= Columns * CellWidth || y >= Rows * CellHeight)
+            x >= Columns * PixelWidth || y >= Rows * PixelHeight)
         {
             return false;
         }
 
-        cell = new((int)(x / CellWidth), (int)(y / CellHeight));
+        cell = new((int)(x / PixelWidth), (int)(y / PixelHeight));
         return true;
     }
 
     public void Fill(GameSession session)
     {
+        Resize(_width, _height, session.ZoomLevel > 0 ? 2 : 1);
         session.SetViewport(Columns, Rows);
         var sampler = new BlockSampler(session.Game);
         var hillGlyphs = session.Game.Map.Content.Terrains
             .Where(terrain => terrain.Generator is HillGenerator)
+            .SelectMany(terrain => terrain.Glyphs).ToHashSet();
+        var waterGlyphs = session.Game.Map.Content.Terrains
+            .Where(terrain => terrain.Generator is WaterGenerator)
             .SelectMany(terrain => terrain.Glyphs).ToHashSet();
         var tree = session.Game.Map.Content.Features.Find("Tree");
         for (int y = 0; y < Rows; y++)
@@ -113,6 +125,9 @@ public sealed class TerminalGrid
                     : hillGlyphs.Contains(visual.Value.Glyph) &&
                         (session.Stride > 1 || session.Game.Map.TerrainAt(position.X, position.Y).Generator is HillGenerator)
                         ? AnimationKind.Hill
+                        : waterGlyphs.Contains(visual.Value.Glyph) &&
+                            (session.Stride > 1 || session.Game.Map.TerrainAt(position.X, position.Y).Generator is WaterGenerator)
+                            ? AnimationKind.Water
                         : tree?.Glyphs.Contains(visual.Value.Glyph) == true
                             ? AnimationKind.Tree
                             : AnimationKind.None;

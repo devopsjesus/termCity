@@ -1,6 +1,8 @@
 <Solution>
+  <Folder Name="/godot/">
+    <Project Path="godot/TermCity.Godot.csproj" />
+  </Folder>
   <Folder Name="/src/">
-    <Project Path="src/TermCity.App/TermCity.App.csproj" />
     <Project Path="src/TermCity.Core/TermCity.Core.csproj" />
   </Folder>
   <Folder Name="/tests/">

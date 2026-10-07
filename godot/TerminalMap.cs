@@ -43,21 +43,37 @@ public partial class TerminalMap : Control
         {
             return;
         }
+
         Grid.Fill(Session);
         _cellsDirty = false;
     }
 
+    public void ZoomBy(int delta, Vector2? pointer = null)
+    {
+        if (delta == 0) return;
+        RefreshCells();
+        var anchor = pointer ?? Size / 2;
+        if (!Grid.TryCell(anchor.X, anchor.Y, out var before)) return;
+        var world = Session.ScreenToMap(before.X, before.Y);
+        Session.ZoomBy(delta, before.X, before.Y);
+        RefreshCells();
+        if (Grid.TryCell(anchor.X, anchor.Y, out var after))
+            Session.PanCamera(world, after.X, after.Y);
+    }
+
     private void ResizeGrid()
     {
-        Grid.Resize(Size.X, Size.Y);
+        Grid.Resize(Size.X, Size.Y, Session.ZoomLevel > 0 ? 2 : 1);
         Invalidate(true);
     }
 
     public override void _Draw()
     {
         RefreshCells();
-        DrawRect(new Rect2(Vector2.Zero, Size), new Color("#101014"));
-        float baseline = (TerminalGrid.CellHeight - CellFont.GetHeight(FontSize)) / 2 + CellFont.GetAscent(FontSize);
+        DrawRect(new Rect2(Vector2.Zero, Size), Colors.Black);
+        int scale = Grid.PixelWidth / TerminalGrid.CellWidth;
+        int fontSize = FontSize * scale;
+        float baseline = (Grid.PixelHeight - CellFont.GetHeight(fontSize)) / 2 + CellFont.GetAscent(fontSize);
         for (int y = 0; y < Grid.Rows; y++)
         {
             for (int x = 0; x < Grid.Columns; x++)
@@ -66,8 +82,8 @@ public partial class TerminalMap : Control
                 {
                     continue;
                 }
-                var position = new Vector2(x * TerminalGrid.CellWidth, y * TerminalGrid.CellHeight);
-                DrawRect(new Rect2(position, new Vector2(TerminalGrid.CellWidth, TerminalGrid.CellHeight)),
+                var position = new Vector2(x * Grid.PixelWidth, y * Grid.PixelHeight);
+                DrawRect(new Rect2(position, new Vector2(Grid.PixelWidth, Grid.PixelHeight)),
                     ToColor(visual.Background));
             }
         }
@@ -80,10 +96,10 @@ public partial class TerminalMap : Control
                     continue;
                 }
                 var offset = Grid.OffsetAt(Session, x, y);
-                var position = new Vector2(x * TerminalGrid.CellWidth + offset.X,
-                    y * TerminalGrid.CellHeight + baseline + offset.Y);
+                var position = new Vector2(x * Grid.PixelWidth + offset.X * scale,
+                    y * Grid.PixelHeight + baseline + offset.Y * scale);
                 DrawString(CellFont, position, visual.Glyph,
-                    HorizontalAlignment.Center, TerminalGrid.CellWidth, FontSize,
+                    HorizontalAlignment.Center, Grid.PixelWidth, fontSize,
                     ToColor(visual.Foreground));
             }
         }

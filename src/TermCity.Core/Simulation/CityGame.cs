@@ -1,4 +1,5 @@
 using TermCity.Core.Buildings;
+using System.Text;
 using TermCity.Core.Roads;
 using TermCity.Core.Util;
 using TermCity.Core.World;
@@ -53,7 +54,7 @@ public sealed class TaxRates
 public sealed class CityGame
 {
     // Real time is never allowed to jump the simulation forward by more than this in one update, so a stall (the
-    // window in the background, a slow terminal) does not fast-forward the game when it comes back.
+    // window in the background, a slow frame) does not fast-forward the game when it comes back.
     private const double MaxSecondsPerUpdate = 0.5;
 
     private double _dayProgress;
@@ -83,8 +84,20 @@ public sealed class CityGame
 
     public static CityGame New(GameConfig config, GameContent? content = null)
     {
-        var map = MapGenerator.Generate(config.MapWidth, config.MapHeight, config.Seed, content ?? new GameContent());
-        return new CityGame(config, map, GameRandom.ForStage(config.Seed, "simulation"));
+        config = config with { StartingYear = config.StartingYear ?? DateTime.Now.Year };
+        if (config.Scenario != CityScenario.Random)
+            config = config with { MapWidth = MapSize.MaxWidth, MapHeight = MapSize.MaxHeight };
+        content ??= new GameContent();
+        var map = config.Scenario != CityScenario.Random ? CityScenarioMap.Generate(config, content)
+            : MapGenerator.Generate(config.MapWidth, config.MapHeight, config.Seed, content);
+        var names = GameRandom.ForStage(config.Seed, "city-name");
+        string[] prefixes = ["Oak", "Cedar", "Maple", "Willow", "Pine", "Silver", "Clear", "River"];
+        string[] suffixes = ["haven", " Falls", " Ridge", " Creek", "brook", "wood", "view", " Harbor"];
+        return new CityGame(config, map, GameRandom.ForStage(config.Seed, "simulation"))
+        {
+            CityName = config.Scenario != CityScenario.Random ? CityScenarioMap.Name(config.Scenario)
+                : prefixes[names.Next(prefixes.Length)] + suffixes[names.Next(suffixes.Length)],
+        };
     }
 
     public GameConfig Config { get; }
@@ -94,6 +107,35 @@ public sealed class CityGame
     public GameRandom Rng { get; }
 
     public int Money { get; internal set; }
+    public const int MaxCityNameLength = 16;
+    public string CityName { get; internal set; } = "New City";
+
+    public static bool IsValidCityName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return false;
+        int length = 0;
+        var remaining = name.AsSpan();
+        while (!remaining.IsEmpty)
+        {
+            if (Rune.DecodeFromUtf16(remaining, out var rune, out int consumed) != System.Buffers.OperationStatus.Done ||
+                Rune.IsControl(rune) || ++length > MaxCityNameLength) return false;
+            remaining = remaining[consumed..];
+        }
+        return true;
+    }
+
+    public ActionResult RenameCity(string name)
+    {
+        if (!IsValidCityName(name))
+            return ActionResult.Fail("City name must contain 1-16 characters without control characters.");
+        name = name.Trim();
+        if (CityName != name)
+        {
+            CityName = name;
+            Notify(roadsChanged: false, mapChanged: false);
+        }
+        return ActionResult.Ok($"City named {CityName}.");
+    }
 
     /// <summary>Weeks elapsed since the game began.</summary>
     public int Week { get; internal set; }
@@ -163,7 +205,7 @@ public sealed class CityGame
     /// <summary>Fraction (0-1) of the current week that has elapsed.</summary>
     public double WeekProgress => Math.Clamp((Day + Math.Clamp(_dayProgress / SecondsPerDay, 0, 1)) / Config.DaysPerWeek, 0, 1);
 
-    public int Year => Week / Config.WeeksPerYear + 1;
+    public int Year => Week / Config.WeeksPerYear + (Config.StartingYear ?? 1);
 
     public int WeekOfYear => Week % Config.WeeksPerYear + 1;
 
@@ -316,8 +358,20 @@ public sealed class CityGame
 
     private int RemoveDezonedBuildings(double elapsedDays)
     {
-        var due = Map.ZoneRemovals.Where(entry => entry.Value.RemoveAtDay <= elapsedDays)
-            .Select(entry => entry.Key).ToArray();
+        List<int>? due = null;
+        foreach (var (index, removal) in Map.ZoneRemovals)
+        {
+            if (removal.RemoveAtDay <= elapsedDays)
+            {
+                (due ??= []).Add(index);
+            }
+        }
+
+        if (due is null)
+        {
+            return 0;
+        }
+
         foreach (int i in due)
         {
             var p = Map.PosOf(i);
@@ -325,12 +379,8 @@ public sealed class CityGame
             Map.SetHousehold(p.X, p.Y, default);
         }
 
-        if (due.Length > 0)
-        {
-            Invalidate();
-        }
-
-        return due.Length;
+        Invalidate();
+        return due.Count;
     }
 
     /// <summary>Decides how many cells may fill this week, from the size of the city as the week begins.</summary>
@@ -484,8 +534,13 @@ public sealed class CityGame
             return check;
         }
 
-        foreach (var p in area.Cells().Where(p => CanPlaceRoad(p.X, p.Y, type)))
+        foreach (var p in area.Cells())
         {
+            if (!CanPlaceRoad(p.X, p.Y, type))
+            {
+                continue;
+            }
+
             Map.SetFeature(p.X, p.Y, null);
             Map.SetRoad(p.X, p.Y, type);
         }
@@ -509,8 +564,13 @@ public sealed class CityGame
             return check;
         }
 
-        foreach (var p in area.Cells().Where(p => CanBuildOn(p.X, p.Y)))
+        foreach (var p in area.Cells())
         {
+            if (!CanBuildOn(p.X, p.Y))
+            {
+                continue;
+            }
+
             Map.SetFeature(p.X, p.Y, null);
             Map.SetBuilding(p.X, p.Y, type);
         }
@@ -660,10 +720,10 @@ public sealed class CityGame
     {
         var network = Network;
         int adults = 0, children = 0, seniors = 0, households = 0;
-        var zoned = new int[4];
-        var filled = new int[4];
-        var served = new int[4];
-        var awaitingRemoval = new int[4];
+        Span<int> zoned = stackalloc int[4];
+        Span<int> filled = stackalloc int[4];
+        Span<int> served = stackalloc int[4];
+        Span<int> awaitingRemoval = stackalloc int[4];
 
         // Visit only zone indexes and the sparse removal queue, not the whole map.
         foreach (var zone in Zones.Placeable)
@@ -711,11 +771,22 @@ public sealed class CityGame
             income += (filled[(int)zone] + awaitingRemoval[(int)zone]) * Zones.Get(zone).WeeklyValue * Taxes.Get(zone);
         }
 
-        ZoneCount Count(ZoneType z) => new(zoned[(int)z], filled[(int)z], served[(int)z], awaitingRemoval[(int)z]);
-
         return new CityStats(
             adults + children + seniors, adults, children, seniors, households,
-            Count(ZoneType.Residential), Count(ZoneType.Commercial), Count(ZoneType.Industrial),
+            Count(ZoneType.Residential, zoned, filled, served, awaitingRemoval),
+            Count(ZoneType.Commercial, zoned, filled, served, awaitingRemoval),
+            Count(ZoneType.Industrial, zoned, filled, served, awaitingRemoval),
             Map.RoadCount, network.ConnectedRoadCount, (int)Math.Round(income, MidpointRounding.AwayFromZero));
+
+        static ZoneCount Count(
+            ZoneType zone,
+            ReadOnlySpan<int> zoned,
+            ReadOnlySpan<int> filled,
+            ReadOnlySpan<int> served,
+            ReadOnlySpan<int> awaitingRemoval)
+        {
+            int index = (int)zone;
+            return new ZoneCount(zoned[index], filled[index], served[index], awaitingRemoval[index]);
+        }
     }
 }

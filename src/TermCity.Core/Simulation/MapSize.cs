@@ -5,17 +5,24 @@ namespace TermCity.Core.Simulation;
 /// <summary>Map dimensions in cells, with named presets for the <c>--size</c> option.</summary>
 public readonly record struct MapSize(int Width, int Height)
 {
+    public CityScenario Scenario { get; init; }
+    public bool SanFrancisco => Scenario == CityScenario.SanFrancisco;
     public const int MinWidth = 80;
     public const int MinHeight = 24;
     public const int MaxWidth = 640;
     public const int MaxHeight = 384;
 
-    /// <summary>Named presets, in screens of 80x24: small = 2x4, medium = 4x8, large = 8x16. Characters are about twice as tall as wide, so these are roughly square on screen.</summary>
+    /// <summary>Random map sizes and large, prepopulated regional city scenarios.</summary>
     public static readonly IReadOnlyDictionary<string, MapSize> Presets = new Dictionary<string, MapSize>(StringComparer.OrdinalIgnoreCase)
     {
         ["small"] = new(160, 96),
         ["medium"] = new(320, 192),
         ["large"] = new(640, 384),
+        ["SF"] = new(640, 384) { Scenario = CityScenario.SanFrancisco },
+        ["LA"] = new(640, 384) { Scenario = CityScenario.LosAngeles },
+        ["SD"] = new(640, 384) { Scenario = CityScenario.SanDiego },
+        ["CHI"] = new(640, 384) { Scenario = CityScenario.Chicago },
+        ["STL"] = new(640, 384) { Scenario = CityScenario.StLouis },
     };
 
     public static string Describe() =>

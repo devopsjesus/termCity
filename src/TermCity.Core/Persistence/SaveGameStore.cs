@@ -51,6 +51,7 @@ public static class SaveGameStore
             Version = CurrentVersion,
             Config = game.Config,
             Money = game.Money,
+            CityName = game.CityName,
             Week = game.Week,
             Day = game.Day,
             DayProgressSeconds = game.DayProgressSeconds,
@@ -94,6 +95,7 @@ public static class SaveGameStore
 
         content ??= new GameContent();
         var config = data.Config ?? throw new InvalidDataException("Save file has no configuration.");
+        config = config with { StartingYear = config.StartingYear ?? 1 };
 
         // Game speeds are a property of the game, not of the saved city: a save made with older, faster speeds
         // plays at the current ones.
@@ -144,9 +146,12 @@ public static class SaveGameStore
             }
         }
 
+        if (data.CityName is not null && !CityGame.IsValidCityName(data.CityName))
+            throw new InvalidDataException("Invalid city name: expected 1-16 characters.");
         var game = new CityGame(config, map, new GameRandom(data.RngState))
         {
             Money = data.Money,
+            CityName = data.CityName ?? "New City",
             Week = data.Week,
             Day = Math.Clamp(data.Day, 0, Math.Max(0, config.DaysPerWeek - 1)),
             DayProgressSeconds = data.DayProgressSeconds,
@@ -341,6 +346,7 @@ public static class SaveGameStore
         public GameConfig? Config { get; set; }
 
         public int Money { get; set; }
+        public string? CityName { get; set; }
 
         public int Week { get; set; }
 

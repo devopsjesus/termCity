@@ -8,6 +8,28 @@ namespace TermCity.Tests;
 public class PersistenceTests
 {
     [Fact]
+    public void OldSavesHaveAFallbackNameAndInvalidNamesAreRejected()
+    {
+        var json = System.Text.Json.Nodes.JsonNode.Parse(SaveGameStore.Serialize(TestCity.Flat()))!;
+        json.AsObject().Remove("CityName");
+        Assert.Equal("New City", SaveGameStore.Deserialize(json.ToJsonString()).CityName);
+        json["CityName"] = new string('X', 17);
+        Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(json.ToJsonString()));
+    }
+
+    [Fact]
+    public void StartingYearIsPreservedAndOldSavesKeepTheirCalendar()
+    {
+        var game = TestCity.Flat(config: new GameConfig { StartingYear = 2040 });
+        TestCity.Advance(game, 52);
+        string json = SaveGameStore.Serialize(game);
+        Assert.Equal(2041, SaveGameStore.Deserialize(json).Year);
+        var legacy = System.Text.Json.Nodes.JsonNode.Parse(json)!;
+        legacy["Config"]!.AsObject().Remove("StartingYear");
+        Assert.Equal(2, SaveGameStore.Deserialize(legacy.ToJsonString()).Year);
+    }
+
+    [Fact]
     public void SaveAndLoadRoundTripsTheWholeGame()
     {
         var game = TestCity.Flat(seed: 77);
