@@ -88,6 +88,9 @@ public sealed record GameConfig
     /// <summary>Jobs that exist without a building: self-employed, home businesses, odd jobs, as a share of workers.</summary>
     public double InformalJobShare { get; init; } = 0.15;
 
+    /// <summary>Odd jobs and farm work any settlement offers, so a hamlet of a few families is not "unemployed" before its first shop opens.</summary>
+    public int InformalJobsBase { get; init; } = 30;
+
     /// <summary>Trips each resident makes on the road network in a week, before the place's car dependence.</summary>
     public double TripsPerResident { get; init; } = 0.9;
 

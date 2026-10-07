@@ -108,7 +108,7 @@ public static class CityAnalysis
         }
 
         int workers = (int)Math.Round(stats.Adults * config.AdultParticipation + stats.Seniors * config.SeniorParticipation);
-        int informal = (int)Math.Round(workers * config.InformalJobShare);
+        int informal = (int)Math.Round(workers * config.InformalJobShare) + config.InformalJobsBase;
         double unemployment = workers == 0 ? 0 : Math.Clamp(1 - (jobs + informal) / (double)workers, 0, 1);
         double jobsFilled = jobs + informal == 0 ? 1 : Math.Clamp(workers / (double)(jobs + informal), 0, 1);
 
