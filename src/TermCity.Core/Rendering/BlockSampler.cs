@@ -12,6 +12,8 @@ public sealed class BlockSampler
 {
     private readonly CityGame _game;
     private readonly GameMap _map;
+    public MapOverlay Overlay { get; set; }
+
     private readonly int[] _terrainPriority = new int[256];
 
     public BlockSampler(CityGame game)
@@ -66,6 +68,6 @@ public sealed class BlockSampler
             }
         }
 
-        return CellRenderer.Render(_game, bestX, bestY);
+        return CellRenderer.Render(_game, bestX, bestY, Overlay);
     }
 }

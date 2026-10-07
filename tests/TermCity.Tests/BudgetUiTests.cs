@@ -51,3 +51,31 @@ public class BudgetUiTests
         Assert.DoesNotContain("Mood", CityReport.Overview(Session(CityRules.Classic).Game));
     }
 }
+
+public class OverlayTests
+{
+    [Fact]
+    public void OverlaysCycleAndTintOnlyUnderFullRules()
+    {
+        var game = CityGame.New(new GameConfig { Scenario = CityScenario.Chicago, MapWidth = 640, MapHeight = 384 });
+        var session = new GameSession(game);
+        for (int i = 0; i < 3; i++) session.CycleOverlay();
+
+        Assert.Equal(MapOverlay.Fire, session.Overlay);
+        bool tinted = false;
+        for (int y = 100; y < 160 && !tinted; y++)
+        {
+            for (int x = 200; x < 260 && !tinted; x++)
+            {
+                tinted = CellRenderer.Render(game, x, y, MapOverlay.Fire).Background != CellRenderer.Render(game, x, y).Background;
+            }
+        }
+
+        Assert.True(tinted);
+        for (int i = 0; i < 19; i++) session.CycleOverlay();
+        Assert.Equal(MapOverlay.Off, session.Overlay); // 3 + 19 steps is two full laps of the 11 modes
+        var classic = new GameSession(TestCity.Flat());
+        classic.CycleOverlay();
+        Assert.Equal(MapOverlay.Off, classic.Overlay);
+    }
+}

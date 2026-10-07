@@ -12,7 +12,7 @@ public static class CellRenderer
     private static readonly Rgb BuildingBackground = Rgb.Hex(0x2b2b30);
     private static readonly Rgb DisconnectedRoad = Rgb.Hex(0xe8a33d);
 
-    public static CellVisual Render(CityGame game, int x, int y)
+    public static CellVisual Render(CityGame game, int x, int y, MapOverlay overlay = MapOverlay.Off)
     {
         var map = game.Map;
         var terrain = map.TerrainAt(x, y);
@@ -52,6 +52,11 @@ public static class CellRenderer
             glyph = road.GlyphFor(RoadMask(map, x, y));
             fg = game.Network.IsConnected(map, x, y) ? road.Foreground : DisconnectedRoad;
             bg = terrain.Buildable ? road.Background : terrain.Background;
+        }
+
+        if (overlay != MapOverlay.Off && MapOverlays.Tint(game, overlay, x, y, bg) is { } tint)
+        {
+            bg = tint;
         }
 
         return new CellVisual(glyph, fg, bg);

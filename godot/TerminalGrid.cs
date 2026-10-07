@@ -101,7 +101,7 @@ public sealed class TerminalGrid
     {
         Resize(_width, _height, session.ZoomLevel > 0 ? 2 : 1);
         session.SetViewport(Columns, Rows);
-        var sampler = new BlockSampler(session.Game);
+        var sampler = new BlockSampler(session.Game) { Overlay = session.Overlay };
         var hillGlyphs = session.Game.Map.Content.Terrains
             .Where(terrain => terrain.Generator is HillGenerator)
             .SelectMany(terrain => terrain.Glyphs).ToHashSet();
@@ -117,7 +117,7 @@ public sealed class TerminalGrid
                 _cells[y * Columns + x] = session.Game.Map.InBounds(position)
                     ? session.ZoomLevel < 0
                         ? sampler.Sample(position.X, position.Y, session.Stride)
-                        : CellRenderer.Render(session.Game, position.X, position.Y)
+                        : CellRenderer.Render(session.Game, position.X, position.Y, session.Overlay)
                     : null;
                 var visual = _cells[y * Columns + x];
                 _animations[y * Columns + x] = visual is null || !ShouldAnimate(position)

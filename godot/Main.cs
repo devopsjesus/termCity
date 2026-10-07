@@ -1073,6 +1073,7 @@ public partial class Main : Control
             case Key.T: Session.BeginRoadLine(); break;
             case Key.U: Session.Dezone(); break;
             case Key.D or Key.Delete: Session.PreviewDemolish(); break;
+            case Key.O: Session.CycleOverlay(); break;
             case Key.S: Session.ToggleSelectionMode(); break;
             case Key.E: Session.ToggleEdgeScroll(); break;
             case Key.Enter or Key.M: Session.ShowAreaMenu(); break;
@@ -1311,7 +1312,7 @@ public partial class Main : Control
             Sidebar: drag the divider, or Esc > Resize sidebar; arrows select, Space/Enter activates.
             Music: Esc > Music toggles evolving Greensleeves phrases in related keys.
             Name editing: Delete/Backspace removes text; Ctrl/Command+A selects all.
-            Sidebar sections stay open. E toggles edge scrolling.
+            Sidebar sections stay open. E toggles edge scrolling. O cycles map overlays (power, water, services, pollution, land value, happiness).
             Game: Esc city menu; F5 save; F9 quick-load; Q/Ctrl+Q quit.
             Reports: F7 weekly report/milestones; F8 growth/road access.
             Guide: F6 shows/dismisses. F12 input and loop diagnostics.

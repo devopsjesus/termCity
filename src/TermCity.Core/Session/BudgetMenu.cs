@@ -64,6 +64,15 @@ public sealed partial class GameSession
         return 1.0;
     }
 
+    public MapOverlay Overlay { get; private set; }
+
+    public void CycleOverlay()
+    {
+        Overlay = Game.Config.FullRules ? MapOverlays.Next(Overlay) : MapOverlay.Off;
+        SetMessage(Game.Config.FullRules ? MapOverlays.Label(Overlay) : "Overlays need the full rules.");
+        Changed?.Invoke();
+    }
+
     public void ShowHealthReport() =>
         ShowPrompt("City health", CityReport.Health(Game), [new("Close", ClosePrompt)]);
 }
