@@ -33,6 +33,7 @@ Game options follow Godot's `--` separator:
 | `--size <size>` | `small`, `medium`, `large`, `SF`, `LA`, `SD`, `CHI`, `STL`, or `WIDTHxHEIGHT`; default `small` |
 | `--load [file]` | Load a city; without a path, use the quick-save |
 | `--fps <n>` | Render frame cap, 5-60; default 30 |
+| `--reduced-motion` | Disable all terminal effects (sprites, shakes, ambient life) |
 | `--dump-map` | Print the generated/loaded map as text and exit; works headlessly |
 | `-h`, `--help` | Print game options and exit; works headlessly |
 
@@ -179,6 +180,7 @@ city saves. No external recording, audio asset, or audio package is required.
 | Minimap navigation | Click/drag |
 | Edge scrolling | `E` toggles hover scrolling; selection drags always edge-scroll |
 | Help / font settings | F1 or `?` / F3 |
+| Terminal effects high / low / off | `V` (or Esc > Effects) |
 | Quick-save / quick-load | F5 / F9 |
 | First-city guide | F6 |
 | Weekly report / growth report | F7 / F8 |

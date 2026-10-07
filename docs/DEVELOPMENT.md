@@ -195,6 +195,9 @@ The raw bundled DejaVu Sans Mono bytes load directly, without depending on an im
 Startup verifies registered map glyph coverage. Export presets include the font and
 [DejaVu license](../godot/Assets/DejaVu-LICENSE.txt).
 
+Terminal effects (glyphs that shrink, grow, burn and roam) are a separate engine-independent layer; see
+[EFFECTS.md](EFFECTS.md).
+
 ## Persistence
 
 `SaveGameStore` writes JSON version 1, atomically via `<path>.tmp` followed by replacement.
