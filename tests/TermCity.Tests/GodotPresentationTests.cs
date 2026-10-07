@@ -135,6 +135,14 @@ public class GodotPresentationTests
     }
 
     [Fact]
+    public void GodotOptionsParseReducedMotion()
+    {
+        Assert.False(GodotOptions.Parse([]).ReducedMotion);
+        Assert.True(GodotOptions.Parse(["--reduced-motion"]).ReducedMotion);
+        Assert.Contains("--reduced-motion", GodotOptions.Usage);
+    }
+
+    [Fact]
     public void GodotOptionsReuseMapSizeValidation()
     {
         var options = GodotOptions.Parse(["--seed", "-42", "--size", "large", "--smoke-test"]);
