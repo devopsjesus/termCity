@@ -13,7 +13,7 @@ public sealed partial class GameSession
     {
         if (!Game.Config.FullRules)
         {
-            ShowPrompt("Budget", "Classic rules have one flat tax and no running costs.", [new("Back", ShowSessionMenu)]);
+            ShowPrompt("Treasury", "Classic rules have one flat tithe and no running costs.", [new("Back", ShowSessionMenu)]);
             return;
         }
 
@@ -33,7 +33,7 @@ public sealed partial class GameSession
         foreach (var zone in Zones.Placeable)
         {
             var z = zone;
-            choices.Add(new($"{Zones.Get(z).Name} tax {Game.Taxes.Get(z):P0} (select to raise, wraps at 20%)", () =>
+            choices.Add(new($"{TaxName(z)} {Game.Taxes.Get(z):P0} (select to raise, wraps at 20%)", () =>
             {
                 double next = Game.Taxes.Get(z) + 0.01;
                 Game.SetTax(z, next > 0.2001 ? 0.01 : next);
@@ -41,15 +41,24 @@ public sealed partial class GameSession
             }));
         }
 
-        choices.Add(new($"Borrow {Fmt.Money(10_000)} (owed {Fmt.Money(Game.Budget.Loan)}, limit {Fmt.Money(Game.MaxLoan)})",
+        choices.Add(new($"Borrow from the moneylenders {Fmt.Money(10_000)} (owed {Fmt.Money(Game.Budget.Loan)}, limit {Fmt.Money(Game.MaxLoan)})",
             () => { SetMessage(Game.TakeLoan(10_000).Message); ShowBudgetMenu(); }));
         choices.Add(new($"Repay {Fmt.Money(10_000)}", () => { SetMessage(Game.RepayLoan(10_000).Message); ShowBudgetMenu(); }));
         choices.Add(new("Back", ShowSessionMenu));
-        ShowPrompt("Budget and taxes",
-            $"Tax {Fmt.Money(finance.Income)}/wk, services {Fmt.Money(finance.ServiceUpkeep)}, roads {Fmt.Money(finance.RoadUpkeep)}, " +
-            $"interest {Fmt.Money(finance.Interest)}, net {Fmt.Money(finance.Net)}/wk. Power and water are always paid in full.",
+        ShowPrompt("Treasury, tithes and loans",
+            $"Tithes and rents {Fmt.Money(finance.Income)}/wk, services {Fmt.Money(finance.ServiceUpkeep)}, roads {Fmt.Money(finance.RoadUpkeep)}, " +
+            $"usury {Fmt.Money(finance.Interest)}, net {Fmt.Money(finance.Net)}/wk. Fuel and water are always paid in full.",
             choices);
     }
+
+    /// <summary>What the levy on each kind of plot is called: the rent and tithe of homes, market tolls and guild dues.</summary>
+    public static string TaxName(ZoneType zone) => zone switch
+    {
+        ZoneType.Residential => "Hearth tithe and rents",
+        ZoneType.Commercial => "Market tolls",
+        ZoneType.Industrial => "Guild dues",
+        _ => Zones.Get(zone).Name,
+    };
 
     private static double NextFunding(double current)
     {

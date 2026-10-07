@@ -15,11 +15,11 @@ public class BudgetUiTests
     {
         var session = Session();
         session.ShowBudgetMenu();
-        var fire = session.Prompt!.Choices.First(c => c.Label.StartsWith("Fire funding"));
+        var fire = session.Prompt!.Choices.First(c => c.Label.StartsWith("Fire watch funding"));
         fire.Select();
         Assert.Equal(0.75, session.Game.Budget.Funding(TermCity.Core.Buildings.ServiceKind.Fire), 3);
         Assert.NotNull(session.Prompt);
-        Assert.Contains(session.Prompt!.Choices, c => c.Label.StartsWith("Fire funding 75%"));
+        Assert.Contains(session.Prompt!.Choices, c => c.Label.StartsWith("Fire watch funding 75%"));
     }
 
     [Fact]
@@ -28,7 +28,7 @@ public class BudgetUiTests
         var session = Session();
         session.ShowBudgetMenu();
         double before = session.Game.Taxes.Residential;
-        session.Prompt!.Choices.First(c => c.Label.StartsWith("Residential tax")).Select();
+        session.Prompt!.Choices.First(c => c.Label.StartsWith("Hearth tithe and rents")).Select();
         Assert.True(session.Game.Taxes.Residential > before);
         session.Game.SetTax(ZoneType.Commercial, 5);
         Assert.Equal(0.3, session.Game.Taxes.Commercial, 3);
@@ -57,7 +57,7 @@ public class OverlayTests
     [Fact]
     public void OverlaysCycleAndTintOnlyUnderFullRules()
     {
-        var game = CityGame.New(new GameConfig { Scenario = CityScenario.Chicago, MapWidth = 640, MapHeight = 384 });
+        var game = CityGame.New(new GameConfig { Scenario = CityScenario.Lubeck, MapWidth = 640, MapHeight = 384 });
         var session = new GameSession(game);
         for (int i = 0; i < 3; i++) session.CycleOverlay();
 

@@ -273,17 +273,17 @@ public static class CityAnalysis
             }
         }
 
-        Charge("No power", services.IsPowered(map, i) ? 0 : 30);
+        Charge("No fuel", services.IsPowered(map, i) ? 0 : 30);
         Charge("No water", services.IsWatered(map, i) ? 0 : 25);
-        Charge("Smog", 0.32 * smog * profile.SmogSensitivity);
-        Charge("Crime", 0.28 * crime);
-        Charge("Fire protection", 12 * Need(ServiceKind.Fire, population) * (1 - fire / 100));
-        Charge("Health care", 14 * Need(ServiceKind.Health, population) * (1 - health / 100));
-        Charge("Schools", 9 * Need(ServiceKind.Education, population) * (1 - education / 100));
-        Charge("Parks", 8 * Need(ServiceKind.Recreation, population) * (1 - recreation / 100));
-        Charge("Traffic", 18 * congestion);
-        Charge("Unemployment", 45 * Math.Max(0, unemployment - 0.06));
-        Charge("Taxes", Math.Clamp(taxPenalty, -4, 20));
+        Charge("Smoke", 0.32 * smog * profile.SmogSensitivity);
+        Charge("Lawlessness", 0.28 * crime);
+        Charge("Fire watch", 12 * Need(ServiceKind.Fire, population) * (1 - fire / 100));
+        Charge("Physic", 14 * Need(ServiceKind.Health, population) * (1 - health / 100));
+        Charge("Learning", 9 * Need(ServiceKind.Education, population) * (1 - education / 100));
+        Charge("Commons", 8 * Need(ServiceKind.Recreation, population) * (1 - recreation / 100));
+        Charge("Cart traffic", 18 * congestion);
+        Charge("Idleness", 45 * Math.Max(0, unemployment - 0.06));
+        Charge("Tithes", Math.Clamp(taxPenalty, -4, 20));
         Charge("Road access", map.Content.Roads.Count > 0 && game.Network.AccessRank(i) == 0 ? 10 : 0);
         h += 0.05 * recreation;
 

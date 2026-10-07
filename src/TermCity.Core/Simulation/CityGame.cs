@@ -446,7 +446,7 @@ public sealed class CityGame
         amount = Math.Min(amount, Math.Min(Budget.Loan, Math.Max(0, Money)));
         if (amount <= 0)
         {
-            return ActionResult.Fail(Budget.Loan == 0 ? "There is no loan to repay." : "There is no spare money to repay with.");
+            return ActionResult.Fail(Budget.Loan == 0 ? "There is no loan to repay." : "There is no spare gold to repay with.");
         }
 
         Budget.Loan -= amount;
@@ -651,7 +651,7 @@ public sealed class CityGame
     }
 
     /// <summary>
-    /// Full rules: families move in, first into homes with room (the more desirable the street, the likelier) and then
+    /// Full rules: families move in, first into homes with room (the more desirable the lane, the likelier) and then
     /// into newly built homes. Returns the number of families that arrived.
     /// </summary>
     private int MoveIn(int families)
@@ -901,7 +901,7 @@ public sealed class CityGame
     {
         if (Money <= 0)
         {
-            return ActionResult.Fail(Config.FullRules ? "You are out of money: take out a loan or wait for taxes before building." : "You are out of money: no more roads or buildings can be placed.");
+            return ActionResult.Fail(Config.FullRules ? "You are out of gold: borrow from the moneylenders or wait for the tithes before building." : "You are out of gold: no more roads or buildings can be placed.");
         }
 
         if (quote.Cells == 0)
@@ -911,7 +911,7 @@ public sealed class CityGame
 
         if (quote.Cost > Money)
         {
-            return ActionResult.Fail($"Not enough money: {quote.Cells} {what} cell(s) cost {Fmt.Money(quote.Cost)} but you have {Fmt.Money(Money)}.");
+            return ActionResult.Fail($"Not enough gold: {quote.Cells} {what} cell(s) cost {Fmt.Money(quote.Cost)} but you have {Fmt.Money(Money)}.");
         }
 
         return null;

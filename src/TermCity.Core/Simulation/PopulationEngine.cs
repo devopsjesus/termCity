@@ -165,7 +165,7 @@ internal static class PopulationEngine
         if (lost.Count > 0)
         {
             game.Report(new CityEvent(game.Week, EventKind.Abandonment,
-                $"{lost.Count} empty homes were abandoned: people are leaving a city they do not like.", lost));
+                $"{lost.Count} empty homes were abandoned: people are leaving a town they do not like.", lost));
         }
     }
 
@@ -192,7 +192,7 @@ internal static class PopulationEngine
         if (closed.Count > 0)
         {
             game.Report(new CityEvent(game.Week, EventKind.Closure,
-                $"{closed.Count} businesses closed: no power or water, cut off from roads, or too costly to run.", closed));
+                $"{closed.Count} businesses closed: no fuel or water, cut off from the roads, or too costly to run.", closed));
         }
     }
 

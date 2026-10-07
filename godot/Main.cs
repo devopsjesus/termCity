@@ -592,9 +592,9 @@ public partial class Main : Control
         _hudClock.AddThemeConstantOverride("shadow_outline_size", game.Paused ? 4 : 0);
         UpdatePauseGlow();
         _hudPopulation.Text = $"POP {game.Stats.Population:N0}";
-        _hudStats.Text = $"BUDGET ${game.Money:N0}" +
-            (game.Config.FullRules ? $" ({(game.Finance.Net >= 0 ? "+" : "-")}${Math.Abs(game.Finance.Net):N0}/wk)" : "") +
-            (game.Money <= 0 ? " | OUT OF MONEY" : "");
+        _hudStats.Text = $"TREASURY {Fmt.Money(game.Money)}" +
+            (game.Config.FullRules ? $" ({(game.Finance.Net >= 0 ? "+" : "-")}{Fmt.Money(Math.Abs(game.Finance.Net))}/wk)" : "") +
+            (game.Money <= 0 ? " | COFFERS EMPTY" : "");
         _hudStats.Modulate = game.Money <= 0 ? new Color("#ff7777") : new Color("#88ee99");
         FitHeaderFonts();
         if (_sidebarSizeLabel is not null) _sidebarSizeLabel.Text = $"{_split.SidebarWidth:0} px";
@@ -1300,8 +1300,8 @@ public partial class Main : Control
             Pan: left-drag, middle-drag, wheel, two-finger trackpad scroll, or minimap click/drag.
             Select: Shift/Ctrl/Alt+left-drag; Shift+arrows; S, arrows, S.
             Area menu: right-click or Enter/M. Esc cancels selection.
-            Zone: R homes, C shops, I factories; U dezone.
-            Roads: B street preview; T straight-line tool. Menus offer every road type.
+            Zone: R homesteads, C marketplace, I craftworks; U dezone.
+            Roads: B track preview; T straight-line tool. Menus offer every road type.
             Demolish: D/Delete (free, no refund). Enter/Y confirms; Esc/N cancels.
             Undo: Ctrl+Z (Command+Z also works); full-city rollback with confirmation.
             Clock: Space/P pause; 1 slow, 2 medium, 3 fast.
@@ -1312,12 +1312,12 @@ public partial class Main : Control
             Sidebar: drag the divider, or Esc > Resize sidebar; arrows select, Space/Enter activates.
             Music: Esc > Music toggles evolving Greensleeves phrases in related keys.
             Name editing: Delete/Backspace removes text; Ctrl/Command+A selects all.
-            Sidebar sections stay open. E toggles edge scrolling. O cycles map overlays (power, water, services, pollution, land value, happiness).
+            Sidebar sections stay open. E toggles edge scrolling. O cycles map overlays (fuel, water, services, smoke, land value, contentment).
             Game: Esc city menu; F5 save; F9 quick-load; Q/Ctrl+Q quit.
             Reports: F7 weekly report/milestones; F8 growth/road access.
             Guide: F6 shows/dismisses. F12 input and loop diagnostics.
             Dezoned buildings leave in 2-3 weeks; restore their zone to keep them.
-            Zones are free. Connect roads to the map edge for growth.
+            Zones are free. Join your tracks to the King's Road at the map edge for growth.
             """, [new("Close", () => { _helpVisible = false; Session.ClosePrompt(); })]);
     }
 

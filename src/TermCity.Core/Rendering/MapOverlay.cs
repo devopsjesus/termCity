@@ -34,7 +34,15 @@ public static class MapOverlays
     public static string Label(MapOverlay overlay) => overlay switch
     {
         MapOverlay.Off => "Overlay off",
+        MapOverlay.Power => "Overlay: fuel",
+        MapOverlay.Fire => "Overlay: fire watch",
+        MapOverlay.Police => "Overlay: sheriff's reach",
+        MapOverlay.Health => "Overlay: physic",
+        MapOverlay.Education => "Overlay: learning",
+        MapOverlay.Parks => "Overlay: commons",
+        MapOverlay.Pollution => "Overlay: smoke",
         MapOverlay.LandValue => "Overlay: land value",
+        MapOverlay.Happiness => "Overlay: contentment",
         _ => "Overlay: " + overlay.ToString().ToLowerInvariant(),
     };
 

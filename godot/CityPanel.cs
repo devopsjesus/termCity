@@ -110,7 +110,7 @@ public partial class CityPanel : VBoxContainer
                 (count.Zoned > count.Served ? $" ({count.Zoned - count.Served} no road)" : "") +
                 (count.AwaitingRemoval > 0 ? $" +{count.AwaitingRemoval} leaving" : "");
         }
-        _city.Text = CityReport.Overview(game) + $"\nTax R {game.Taxes.Residential:P0} C {game.Taxes.Commercial:P0} I {game.Taxes.Industrial:P0}";
+        _city.Text = CityReport.Overview(game) + $"\nTithe {game.Taxes.Residential:P0}  Tolls {game.Taxes.Commercial:P0}  Dues {game.Taxes.Industrial:P0}";
         _guideFrame.Visible = Session.GuideVisible;
         _guide.Text = Session.GuideText;
         _zoom.Text = Session.ZoomLabel;

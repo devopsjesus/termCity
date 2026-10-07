@@ -11,7 +11,7 @@ public static class Fmt
         return "[" + new string('=', day) + ">" + new string('.', daysPerWeek - day - 1) + "]";
     }
 
-    /// <summary>Formats a dollar amount such as <c>$15,000</c> regardless of the machine's culture.</summary>
+    /// <summary>The one place gold is formatted: an amount such as <c>15,000g</c> regardless of the machine's culture.</summary>
     public static string Money(int amount) =>
-        (amount < 0 ? "-$" : "$") + Math.Abs((long)amount).ToString("N0", CultureInfo.InvariantCulture);
+        (amount < 0 ? "-" : string.Empty) + Math.Abs((long)amount).ToString("N0", CultureInfo.InvariantCulture) + "g";
 }

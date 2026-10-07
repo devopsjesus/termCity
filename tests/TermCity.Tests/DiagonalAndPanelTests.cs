@@ -1,3 +1,4 @@
+using TermCity.Core.Roads;
 using TermCity.Core.Rendering;
 using TermCity.Core.Session;
 using TermCity.Core.Simulation;
@@ -15,7 +16,7 @@ public class DiagonalHighwayTests
     public void ADiagonalIsADoubleLineStaircaseOfOrdinaryRoadCells()
     {
         var game = TestCity.Flat();
-        var highway = game.Map.Content.Roads.Get("Highway");
+        var highway = game.Map.Content.Roads.Get(DefaultRoads.KingsRoadName);
         (int X, int Y)[] path = [(0, 10), (1, 10), (1, 11), (2, 11), (2, 12), (3, 12)];
         foreach (var (x, y) in path)
         {
@@ -139,22 +140,22 @@ public class MinimapAndSessionTests
     public void CellSummaryIsOneLineWithCoordinatesTerrainAndRoadType()
     {
         var game = TestCity.Flat();
-        game.Map.SetRoad(30, 10, game.Map.Content.Roads.Get("Highway"));
+        game.Map.SetRoad(30, 10, game.Map.Content.Roads.Get(DefaultRoads.KingsRoadName));
         game.Touch();
         string road = CellInspector.Summary(game, new Pos(30, 10));
-        Assert.StartsWith("(30,10) Grass", road);
-        Assert.Contains("Highway (NOT connected)", road);
+        Assert.StartsWith("(30,10) Meadow", road);
+        Assert.Contains("King's Road (NOT connected)", road);
         Assert.DoesNotContain('\n', road);
 
         game.Designate(new CellRect(5, 21, 1, 1), ZoneType.Residential);
-        Assert.Contains("Residential zone", CellInspector.Summary(game, new Pos(5, 21)));
+        Assert.Contains("Homesteads plot", CellInspector.Summary(game, new Pos(5, 21)));
     }
 
     [Fact]
     public void MinimapDrawsHighwaysFaintlyAndTheCityBrightly()
     {
         var game = TestCity.Flat();
-        var highway = game.Map.Content.Roads.Get("Highway");
+        var highway = game.Map.Content.Roads.Get(DefaultRoads.KingsRoadName);
         for (int x = 0; x < game.Map.Width; x++)
         {
             game.Map.SetRoad(x, 10, highway);

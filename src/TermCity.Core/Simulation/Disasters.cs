@@ -39,7 +39,7 @@ internal static class Disasters
                 continue;
             }
 
-            Ignite(game, tally, start, "A fire broke out");
+            Ignite(game, tally, start, "A fire broke out in the thatch");
         }
     }
 
@@ -108,7 +108,7 @@ internal static class Disasters
             game.OutbreakWeeksLeft--;
             if (game.OutbreakWeeksLeft == 0)
             {
-                game.Report(new CityEvent(game.Week, EventKind.Outbreak, "The outbreak has run its course.", [], Bad: false));
+                game.Report(new CityEvent(game.Week, EventKind.Outbreak, "The pestilence has run its course.", [], Bad: false));
             }
 
             return;
@@ -126,7 +126,7 @@ internal static class Disasters
         {
             game.OutbreakWeeksLeft = game.Rng.Next(4, 9);
             game.Report(new CityEvent(game.Week, EventKind.Outbreak,
-                "An outbreak of disease is spreading. Clinics and hospitals save lives.", []));
+                "The pestilence is spreading. Apothecaries and infirmaries save lives.", []));
         }
     }
 
@@ -235,7 +235,7 @@ internal static class Disasters
             int spark = occupied[game.Rng.Next(occupied.Length)];
             if (map.BuildingLayer[spark] != 0)
             {
-                Ignite(game, tally, spark, "Gas mains ruptured and a fire started");
+                Ignite(game, tally, spark, "Overturned hearths and lamps set the ruins alight");
             }
         }
     }

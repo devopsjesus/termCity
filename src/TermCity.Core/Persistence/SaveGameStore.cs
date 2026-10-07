@@ -24,7 +24,7 @@ public static class SaveGameStore
     private static readonly JsonSerializerOptions Options = new()
     {
         WriteIndented = true,
-        Converters = { new JsonStringEnumConverter() },
+        Converters = { new CityScenarioConverter(), new JsonStringEnumConverter() },
     };
 
     public static string DefaultPath { get; } = Path.Combine(

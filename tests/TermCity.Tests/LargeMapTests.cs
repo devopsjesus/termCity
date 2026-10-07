@@ -46,7 +46,7 @@ public class MapSizeTests
     [Fact]
     public void StandardSizesAndCityScenariosArePresets()
     {
-        Assert.Equal(["CHI", "LA", "large", "medium", "SD", "SF", "small", "STL"],
+        Assert.Equal(["CON", "GEN", "large", "LUB", "medium", "NAP", "small", "YRK"],
             MapSize.Presets.Keys.OrderBy(k => k).ToArray());
         Assert.Equal(new MapSize(MapSize.MaxWidth, MapSize.MaxHeight), MapSize.Presets["large"]);
         Assert.DoesNotContain("huge", MapSize.Describe());

@@ -5,7 +5,7 @@ namespace TermCity.Core.Roads;
 
 /// <summary>
 /// A kind of road. Roads share one layer on the map; each cell remembers which type it is.
-/// To add a type (boulevard, dirt track, rail...) register another <see cref="RoadType"/>.
+/// To add a type (a paved causeway, a drove road, a canal towpath...) register another <see cref="RoadType"/>.
 /// </summary>
 public sealed class RoadType : RegisteredType
 {
@@ -50,18 +50,23 @@ public sealed class RoadRegistry : TypeRegistry<RoadType>
     public static RoadRegistry CreateDefault()
     {
         var registry = new RoadRegistry();
-        registry.Register(DefaultRoads.Street());
-        registry.Register(DefaultRoads.Avenue());
-        registry.Register(DefaultRoads.Highway());
+        registry.Register(DefaultRoads.Track());
+        registry.Register(DefaultRoads.CobbledRoad());
+        registry.Register(DefaultRoads.KingsRoad());
+
+        // Saves from before the medieval setting named these Street, Avenue and Highway.
+        registry.Alias("Street", DefaultRoads.TrackName);
+        registry.Alias("Avenue", DefaultRoads.CobbledName);
+        registry.Alias("Highway", DefaultRoads.KingsRoadName);
         return registry;
     }
 }
 
 public static class DefaultRoads
 {
-    public const string StreetName = "Street";
-    public const string AvenueName = "Avenue";
-    public const string HighwayName = "Highway";
+    public const string TrackName = "Dirt Track";
+    public const string CobbledName = "Cobbled Road";
+    public const string KingsRoadName = "King's Road";
 
     // Index = neighbour mask (N=1, E=2, S=4, W=8). Dead ends and lone cells use the straight piece.
     private static readonly string[] Light =
@@ -73,9 +78,9 @@ public static class DefaultRoads
     private static readonly string[] Double =
         ["•", "║", "═", "╚", "║", "║", "╔", "╠", "═", "╝", "═", "╩", "╗", "╣", "╦", "╬"];
 
-    public static RoadType Street() => new()
+    public static RoadType Track() => new()
     {
-        Name = StreetName,
+        Name = TrackName,
         Glyphs = Light,
         Foreground = Rgb.Hex(0xd6d6d6),
         Background = Rgb.Hex(0x2b2b30),
@@ -83,12 +88,12 @@ public static class DefaultRoads
         Rank = 1,
         TrafficCapacity = 6,
         WeeklyUpkeep = 1,
-        Description = "Local street",
+        Description = "Rutted dirt track between homes and fields",
     };
 
-    public static RoadType Avenue() => new()
+    public static RoadType CobbledRoad() => new()
     {
-        Name = AvenueName,
+        Name = CobbledName,
         Glyphs = Heavy,
         Foreground = Rgb.Hex(0xa9d4ff),
         Background = Rgb.Hex(0x2b2f3a),
@@ -96,12 +101,12 @@ public static class DefaultRoads
         Rank = 2,
         TrafficCapacity = 20,
         WeeklyUpkeep = 2,
-        Description = "Wide avenue",
+        Description = "Cobbled market road: carts and drovers pass freely",
     };
 
-    public static RoadType Highway() => new()
+    public static RoadType KingsRoad() => new()
     {
-        Name = HighwayName,
+        Name = KingsRoadName,
         Glyphs = Double,
         Foreground = Rgb.Hex(0xffd166),
         Background = Rgb.Hex(0x33302a),
@@ -109,6 +114,6 @@ public static class DefaultRoads
         Rank = 3,
         TrafficCapacity = 60,
         WeeklyUpkeep = 4,
-        Description = "Highway",
+        Description = "The King's Road: a paved, patrolled highway between towns",
     };
 }

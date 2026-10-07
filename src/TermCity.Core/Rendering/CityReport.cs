@@ -9,7 +9,13 @@ public static class CityReport
     public static string ServiceName(ServiceKind kind) => kind switch
     {
         ServiceKind.None => "Roads",
-        ServiceKind.Recreation => "Parks",
+        ServiceKind.Power => "Fuel",
+        ServiceKind.Water => "Water",
+        ServiceKind.Fire => "Fire watch",
+        ServiceKind.Police => "Sheriff",
+        ServiceKind.Health => "Physic",
+        ServiceKind.Education => "Learning",
+        ServiceKind.Recreation => "Commons",
         _ => kind.ToString(),
     };
 
@@ -17,8 +23,8 @@ public static class CityReport
     public static string Overview(CityGame game)
     {
         var stats = game.Stats;
-        string text = $"Population {stats.Population:N0}\nAdults {stats.Adults}  Kids {stats.Children}\n" +
-            $"Seniors {stats.Seniors}  Homes {stats.Households}\nTax income {Fmt.Money(stats.WeeklyIncome)}/wk";
+        string text = $"Souls {stats.Population:N0}\nAdults {stats.Adults}  Children {stats.Children}\n" +
+            $"Elders {stats.Seniors}  Hearths {stats.Households}\nTithes and rents {Fmt.Money(stats.WeeklyIncome)}/wk";
         if (!game.Config.FullRules)
         {
             return text;
@@ -28,11 +34,11 @@ public static class CityReport
         var finance = game.Finance;
         text += $"\nNet {Fmt.Money(finance.Net)}/wk (costs {Fmt.Money(finance.Expenses)})" +
             $"\nMood {ind.Mood} ({ind.Happiness:0})" +
-            $"\nJobs {ind.Jobs:N0}  Unemployed {ind.Unemployment:P0}" +
-            $"\nPower {ind.PowerSupplied:P0}  Water {ind.WaterSupplied:P0}";
+            $"\nWork {ind.Jobs:N0}  Idle {ind.Unemployment:P0}" +
+            $"\nFuel {ind.PowerSupplied:P0}  Water {ind.WaterSupplied:P0}";
         if (game.Insolvent)
         {
-            text += "\nBROKE: services run at half strength";
+            text += "\nCOFFERS EMPTY: services run at half strength";
         }
 
         if (ind.Complaints.Count > 0)
@@ -55,12 +61,12 @@ public static class CityReport
         var f = game.Finance;
         var lines = new List<string>
         {
-            $"{game.CityName}: mood {ind.Mood} ({ind.Happiness:0}/100), attraction {ind.Attraction:0.00}x, business climate {ind.BusinessClimate:0.00}",
-            $"Jobs {ind.Jobs:N0} for {ind.Workers:N0} workers, unemployment {ind.Unemployment:P0}",
-            $"Crime {ind.Crime:0}  Pollution {ind.Pollution:0}  Traffic {ind.Congestion:0}  Land value {ind.LandValue:0}",
-            $"Power {ind.PowerSupplied:P0}  Water {ind.WaterSupplied:P0}",
+            $"{game.CityName}: mood of the people: {ind.Mood} ({ind.Happiness:0}/100), attraction {ind.Attraction:0.00}x, trade climate {ind.BusinessClimate:0.00}",
+            $"Work for {ind.Jobs:N0} of {ind.Workers:N0} workers, idle {ind.Unemployment:P0}",
+            $"Lawlessness {ind.Crime:0}  Smoke {ind.Pollution:0}  Cart traffic {ind.Congestion:0}  Land value {ind.LandValue:0}",
+            $"Fuel {ind.PowerSupplied:P0}  Water {ind.WaterSupplied:P0}",
             "Coverage: " + string.Join("  ", ServiceKinds.Area.Select(k => $"{ServiceName(k)} {ind.CoverageOf(k):0}%")),
-            $"Weekly: tax {Fmt.Money(f.Income)}, services {Fmt.Money(f.ServiceUpkeep)}, roads {Fmt.Money(f.RoadUpkeep)}, administration {Fmt.Money(f.Administration)}, interest {Fmt.Money(f.Interest)}, net {Fmt.Money(f.Net)}",
+            $"Weekly: tithes and rents {Fmt.Money(f.Income)}, services {Fmt.Money(f.ServiceUpkeep)}, roads {Fmt.Money(f.RoadUpkeep)}, stewards and household {Fmt.Money(f.Administration)}, usury {Fmt.Money(f.Interest)}, net {Fmt.Money(f.Net)}",
         };
         if (ind.Complaints.Count > 0)
         {

@@ -6,8 +6,8 @@ namespace TermCity.Core.Buildings;
 
 /// <summary>
 /// A structure on the building layer. Growth buildings appear automatically in a zone and come in density
-/// <see cref="Level"/>s (house, apartments, tower); <see cref="PlayerPlaceable"/> civic buildings (power, water, fire,
-/// police, health, schools, parks) are placed by the player, cost money to build and a little every week to run.
+/// <see cref="Level"/>s (cottage, burgage house, tenement); <see cref="PlayerPlaceable"/> civic buildings (fuel, water, fire watch,
+/// sheriff, apothecary, schools, commons) are placed by the player, cost gold to build and a little every week to run.
 /// </summary>
 public sealed class BuildingType : RegisteredType
 {
@@ -22,7 +22,7 @@ public sealed class BuildingType : RegisteredType
     public int Level { get; init; } = 1;
 
     /// <summary>
-    /// Residential: residents the building holds. Commercial/industrial: jobs. Power/water: units of supply.
+    /// Residential: residents the building holds. Commercial/industrial: jobs. Fuel/water: units of supply.
     /// Other services: unused.
     /// </summary>
     public int Capacity { get; init; }
@@ -48,13 +48,13 @@ public sealed class BuildingType : RegisteredType
     /// <summary>Weekly running cost at full funding.</summary>
     public int WeeklyUpkeep { get; init; }
 
-    /// <summary>Pollution emitted (cells of reach scale with it). Heavy industry and coal plants pollute; parks clean.</summary>
+    /// <summary>Smoke emitted (cells of reach scale with it). Forges and charcoal burners foul the air; village greens clean it.</summary>
     public int Pollution { get; init; }
 
-    /// <summary>Wells and pumps must be placed next to open water.</summary>
+    /// <summary>Aqueducts must be placed next to open water.</summary>
     public bool RequiresWaterNearby { get; init; }
 
-    /// <summary>Power units a working building draws each week.</summary>
+    /// <summary>Fuel units (firewood, charcoal) a working building draws each week.</summary>
     public int PowerUse { get; init; }
 
     /// <summary>Water units a working building draws each week.</summary>
@@ -91,29 +91,29 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         var registry = new BuildingRegistry();
         registry.Register(new BuildingType
         {
-            Name = "House",
+            Name = "Cottage",
             PowerUse = 2,
             WaterUse = 2,
             Glyphs = ["⌂", "⌂", "⌂", "▟"],
             Foreground = Rgb.Hex(0x9dff9d),
             Zone = ZoneType.Residential,
             Capacity = 6,
-            Description = "A family home",
+            Description = "A thatched family cottage",
         });
         registry.Register(new BuildingType
         {
-            Name = "Shop",
+            Name = "Market Stall",
             PowerUse = 3,
             WaterUse = 2,
             Glyphs = ["▣", "▦", "▣"],
             Foreground = Rgb.Hex(0x9fd0ff),
             Zone = ZoneType.Commercial,
             Capacity = 14,
-            Description = "Stores and offices",
+            Description = "A trader's stall and storeroom",
         });
         registry.Register(new BuildingType
         {
-            Name = "Factory",
+            Name = "Workshop",
             PowerUse = 6,
             WaterUse = 4,
             Glyphs = ["▤", "▩", "▤"],
@@ -121,12 +121,12 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             Zone = ZoneType.Industrial,
             Capacity = 14,
             Pollution = 2,
-            Description = "Workshops and plants",
+            Description = "Smiths, tanners, weavers and coopers",
         });
 
         registry.Register(new BuildingType
         {
-            Name = "Apartments",
+            Name = "Burgage House",
             PowerUse = 6,
             WaterUse = 6,
             Glyphs = ["▥", "▥", "▧"],
@@ -135,11 +135,11 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             Level = 2,
             Capacity = 18,
             ValueMultiplier = 2.5,
-            Description = "A mid-rise block of flats",
+            Description = "A timber-framed townhouse on a narrow burgage plot",
         });
         registry.Register(new BuildingType
         {
-            Name = "Office",
+            Name = "Merchant House",
             PowerUse = 9,
             WaterUse = 5,
             Glyphs = ["▥", "▧", "▥"],
@@ -148,11 +148,11 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             Level = 2,
             Capacity = 40,
             ValueMultiplier = 2.6,
-            Description = "Offices and department stores",
+            Description = "A merchant's shop, counting room and warehouse",
         });
         registry.Register(new BuildingType
         {
-            Name = "Plant",
+            Name = "Mill",
             PowerUse = 14,
             WaterUse = 10,
             Glyphs = ["▥", "▨", "▥"],
@@ -162,12 +162,12 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             Capacity = 40,
             ValueMultiplier = 2.6,
             Pollution = 4,
-            Description = "A large manufacturing plant",
+            Description = "A watermill, fulling mill or brewery",
         });
 
         registry.Register(new BuildingType
         {
-            Name = "Tower",
+            Name = "Tenement",
             PowerUse = 14,
             WaterUse = 14,
             Glyphs = ["█", "▐", "█"],
@@ -176,11 +176,11 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             Level = 3,
             Capacity = 48,
             ValueMultiplier = 5.5,
-            Description = "A high-rise residential tower",
+            Description = "A tall jettied tenement packed with families",
         });
         registry.Register(new BuildingType
         {
-            Name = "Skyscraper",
+            Name = "Market Hall",
             PowerUse = 28,
             WaterUse = 12,
             Glyphs = ["█", "▐", "▌"],
@@ -189,11 +189,11 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             Level = 3,
             Capacity = 110,
             ValueMultiplier = 6.0,
-            Description = "A downtown skyscraper",
+            Description = "A great market hall with chambers above",
         });
         registry.Register(new BuildingType
         {
-            Name = "Complex",
+            Name = "Great Forge",
             PowerUse = 30,
             WaterUse = 20,
             Glyphs = ["▓", "▒", "▓"],
@@ -203,38 +203,56 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             Capacity = 80,
             ValueMultiplier = 6.0,
             Pollution = 6,
-            Description = "A heavy industrial complex",
+            Description = "Foundry, kilns and forges; smoky and dear",
         });
 
         RegisterServices(registry);
+        RegisterOldNames(registry);
         return registry;
+    }
+
+    // Saves from before the medieval setting used these names.
+    private static void RegisterOldNames(BuildingRegistry registry)
+    {
+        foreach (var (old, current) in new[]
+        {
+            ("House", "Cottage"), ("Shop", "Market Stall"), ("Factory", "Workshop"), ("Apartments", "Burgage House"),
+            ("Office", "Merchant House"), ("Plant", "Mill"), ("Tower", "Tenement"), ("Skyscraper", "Market Hall"),
+            ("Complex", "Great Forge"), ("Coal Plant", "Charcoal Burners"), ("Solar Farm", "Woodlot"),
+            ("Water Pump", "Aqueduct"), ("Water Tower", "Town Well"), ("Fire Station", "Fire Watch"),
+            ("Police Station", "Sheriff's Hall"), ("Clinic", "Apothecary"), ("Hospital", "Infirmary"),
+            ("School", "Chantry School"), ("University", "Monastery"), ("Park", "Village Green"),
+        })
+        {
+            registry.Alias(old, current);
+        }
     }
 
     private static void RegisterServices(BuildingRegistry registry)
     {
-        registry.Register(Civic("Coal Plant", ServiceKind.Power, "Ψ", 0xff8c5a, cost: 60_000, upkeep: 400,
-            capacity: 1_200, pollution: 8, text: "Cheap, plentiful power; fouls the air for a long way around"));
-        registry.Register(Civic("Solar Farm", ServiceKind.Power, "☼", 0xffe066, cost: 45_000, upkeep: 90,
-            capacity: 300, text: "Clean power, but each farm supplies far less"));
-        registry.Register(Civic("Water Pump", ServiceKind.Water, "◍", 0x66c7ff, cost: 22_000, upkeep: 120,
-            capacity: 900, water: true, text: "Draws from a lake, river or sea; must stand on the shore"));
-        registry.Register(Civic("Water Tower", ServiceKind.Water, "♜", 0x8fd8ff, cost: 12_000, upkeep: 60,
-            capacity: 260, text: "A well and tank; works anywhere, supplies little"));
+        registry.Register(Civic("Charcoal Burners", ServiceKind.Power, "Ψ", 0xff8c5a, cost: 60_000, upkeep: 400,
+            capacity: 1_200, pollution: 8, text: "Cheap, plentiful fuel for hearths and forges; the smoke carries a long way"));
+        registry.Register(Civic("Woodlot", ServiceKind.Power, "☼", 0xffe066, cost: 45_000, upkeep: 90,
+            capacity: 300, text: "Coppiced wood: clean fuel, but each lot supplies far less"));
+        registry.Register(Civic("Aqueduct", ServiceKind.Water, "◍", 0x66c7ff, cost: 22_000, upkeep: 120,
+            capacity: 900, water: true, text: "Channels water from a river, mere or the sea; must stand on the shore"));
+        registry.Register(Civic("Town Well", ServiceKind.Water, "♜", 0x8fd8ff, cost: 12_000, upkeep: 60,
+            capacity: 260, text: "A stone well and trough; works anywhere, supplies little"));
 
-        registry.Register(Civic("Fire Station", ServiceKind.Fire, "♨", 0xff6b4a, cost: 9_000, upkeep: 160,
-            radius: 14, text: "Puts out fires and makes them rare; needs road access"));
-        registry.Register(Civic("Police Station", ServiceKind.Police, "★", 0x6d8dff, cost: 9_000, upkeep: 160,
-            radius: 16, text: "Deters crime around it; needs road access"));
-        registry.Register(Civic("Clinic", ServiceKind.Health, "✚", 0xff7aa8, cost: 8_000, upkeep: 130,
-            radius: 12, strength: 70, text: "Basic care: lowers mortality and the risk of outbreaks"));
-        registry.Register(Civic("Hospital", ServiceKind.Health, "⊕", 0xff4d8d, cost: 40_000, upkeep: 520,
-            radius: 24, text: "Wide, strong medical cover; expensive to run"));
-        registry.Register(Civic("School", ServiceKind.Education, "✎", 0xc59bff, cost: 8_000, upkeep: 120,
-            radius: 12, strength: 70, text: "Educates children; educated workers earn and build more"));
-        registry.Register(Civic("University", ServiceKind.Education, "⌘", 0xa56cff, cost: 45_000, upkeep: 560,
-            radius: 28, text: "Higher learning with a wide reach"));
-        registry.Register(Civic("Park", ServiceKind.Recreation, "♣", 0x4ddf6b, cost: 2_500, upkeep: 25,
-            radius: 8, strength: 80, pollution: -2, text: "Green space: land value, happiness, less crime and smog"));
+        registry.Register(Civic("Fire Watch", ServiceKind.Fire, "♨", 0xff6b4a, cost: 9_000, upkeep: 160,
+            radius: 14, text: "A bucket brigade and watchman: fires are rarer and burn less; needs road access"));
+        registry.Register(Civic("Sheriff's Hall", ServiceKind.Police, "★", 0x6d8dff, cost: 9_000, upkeep: 160,
+            radius: 16, text: "The sheriff, his men and a lock-up: deters crime around it; needs road access"));
+        registry.Register(Civic("Apothecary", ServiceKind.Health, "✚", 0xff7aa8, cost: 8_000, upkeep: 130,
+            radius: 12, strength: 70, text: "Herbs and leeches: lowers mortality and the risk of plague"));
+        registry.Register(Civic("Infirmary", ServiceKind.Health, "⊕", 0xff4d8d, cost: 40_000, upkeep: 520,
+            radius: 24, text: "A monastic infirmary with wide, strong care; expensive to run"));
+        registry.Register(Civic("Chantry School", ServiceKind.Education, "✎", 0xc59bff, cost: 8_000, upkeep: 120,
+            radius: 12, strength: 70, text: "A priest teaches letters and sums; lettered workers earn and build more"));
+        registry.Register(Civic("Monastery", ServiceKind.Education, "⌘", 0xa56cff, cost: 45_000, upkeep: 560,
+            radius: 28, text: "A scriptorium and cloister: learning with a wide reach"));
+        registry.Register(Civic("Village Green", ServiceKind.Recreation, "♣", 0x4ddf6b, cost: 2_500, upkeep: 25,
+            radius: 8, strength: 80, pollution: -2, text: "Common land and a maypole: land value, happiness, less crime and smoke"));
     }
 
     private static BuildingType Civic(

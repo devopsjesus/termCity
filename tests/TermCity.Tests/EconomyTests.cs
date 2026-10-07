@@ -61,7 +61,7 @@ public class EconomyTests
 
         var blocked = game.BuildRoad(new CellRect(0, 2, 1, 1));
         Assert.False(blocked.Success);
-        Assert.Contains("out of money", blocked.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("out of gold", blocked.Message, StringComparison.OrdinalIgnoreCase);
         Assert.False(game.Map.HasRoad(0, 2));
     }
 

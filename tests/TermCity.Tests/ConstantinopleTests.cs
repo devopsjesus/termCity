@@ -9,7 +9,7 @@ using TermCity.GodotApp;
 
 namespace TermCity.Tests;
 
-public class SanFranciscoTests
+public class ConstantinopleTests
 {
     [Fact]
     public void StartingLoadingAndRestartingSfDoesNotShowTheFirstCityGuide()
@@ -24,7 +24,7 @@ public class SanFranciscoTests
             Assert.Null(session.Prompt);
             session.RequestNewCity(restart: true);
             session.SelectPrompt(1); // Discard the unsaved initial city if guarded.
-            Assert.True(session.Game.Config.SanFrancisco);
+            Assert.True(session.Game.Config.Constantinople);
             Assert.True(session.Game.Paused);
             Assert.False(session.GuideVisible);
             Assert.Null(session.Prompt);
@@ -47,30 +47,30 @@ public class SanFranciscoTests
     }
 
     private static CityGame City(int seed = 42) => CityGame.New(
-        GodotOptions.Parse(["--size", "SF", "--seed", seed.ToString()]).Config);
+        GodotOptions.Parse(["--size", "CON", "--seed", seed.ToString()]).Config);
 
     private static Pos At(GameMap map, int x, int y) =>
         new(x * (map.Width - 1) / 100, y * (map.Height - 1) / 100);
 
     [Theory]
-    [InlineData("SF")]
-    [InlineData("sf")]
-    [InlineData(" Sf ")]
+    [InlineData("CON")]
+    [InlineData("con")]
+    [InlineData(" Con ")]
     public void PresetUsesLargeDimensionsAndBothParsersRecognizeIt(string name)
     {
         Assert.True(MapSize.TryParse(name, out var size, out _));
         Assert.Equal(640, size.Width);
         Assert.Equal(384, size.Height);
-        Assert.True(size.SanFrancisco);
-        Assert.True(GodotOptions.Parse(["--size", name]).Config.SanFrancisco);
-        Assert.False(GodotOptions.Parse(["--size", "SF", "--size", "medium"]).Config.SanFrancisco);
-        Assert.False(GodotOptions.Parse(["--size", "SF", "--size", "320x192"]).Config.SanFrancisco);
+        Assert.True(size.Constantinople);
+        Assert.True(GodotOptions.Parse(["--size", name]).Config.Constantinople);
+        Assert.False(GodotOptions.Parse(["--size", "CON", "--size", "medium"]).Config.Constantinople);
+        Assert.False(GodotOptions.Parse(["--size", "CON", "--size", "320x192"]).Config.Constantinople);
     }
 
     [Fact]
     public void NewScenarioNormalizesDimensionsToLarge()
     {
-        var game = CityGame.New(new GameConfig { SanFrancisco = true });
+        var game = CityGame.New(new GameConfig { Constantinople = true });
         Assert.Equal(640, game.Map.Width);
         Assert.Equal(384, game.Map.Height);
     }
@@ -80,7 +80,7 @@ public class SanFranciscoTests
     {
         var game = City();
         var map = game.Map;
-        Assert.Equal("San Francisco", game.CityName);
+        Assert.Equal("Constantinople", game.CityName);
         Assert.Equal(640, map.Width);
         Assert.Equal(384, map.Height);
         foreach (var (x, y) in new[] { (10, 60), (70, 70), (52, 33), (52, 39), (28, 90) })
@@ -164,14 +164,14 @@ public class SanFranciscoTests
         Assert.Equal(game.Map.BuildingLayer, differentSeed.Map.BuildingLayer);
         Assert.Equal(game.Map.HouseholdLayer, again.Map.HouseholdLayer);
         var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
-        Assert.True(loaded.Config.SanFrancisco);
+        Assert.True(loaded.Config.Constantinople);
         Assert.Equal(game.CityName, loaded.CityName);
         Assert.Equal(game.Stats, loaded.Stats);
         Assert.Equal(game.Map.RoadLayer, loaded.Map.RoadLayer);
         var session = new GameSession(game);
         session.NewGame(loaded.Config);
-        Assert.True(session.Game.Config.SanFrancisco);
-        Assert.Equal("San Francisco", session.Game.CityName);
+        Assert.True(session.Game.Config.Constantinople);
+        Assert.Equal("Constantinople", session.Game.CityName);
         Assert.Equal(game.Map.ZoneLayer, session.Game.Map.ZoneLayer);
     }
 }

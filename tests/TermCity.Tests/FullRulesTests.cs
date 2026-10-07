@@ -23,9 +23,9 @@ public class FullRulesTests
 
     private static void Power(CityGame game)
     {
-        Assert.True(game.PlaceBuilding(Civic(game, "Coal Plant"), new CellRect(80, 19, 1, 1)).Success);
-        Assert.True(game.PlaceBuilding(Civic(game, "Water Tower"), new CellRect(82, 19, 1, 1)).Success);
-        Assert.True(game.PlaceBuilding(Civic(game, "Water Tower"), new CellRect(84, 19, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(Civic(game, "Charcoal Burners"), new CellRect(80, 19, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(Civic(game, "Town Well"), new CellRect(82, 19, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(Civic(game, "Town Well"), new CellRect(84, 19, 1, 1)).Success);
     }
 
     [Fact]
@@ -73,7 +73,7 @@ public class FullRulesTests
     public void PumpsMustStandOnTheShore()
     {
         var game = Town();
-        var pump = Civic(game, "Water Pump");
+        var pump = Civic(game, "Aqueduct");
         Assert.False(game.CanPlaceBuilding(pump, 40, 40));
         var water = game.Map.Content.Terrains.Get("Water");
         game.Map.SetTerrain(41, 40, water);
@@ -87,7 +87,7 @@ public class FullRulesTests
         Power(game);
         TestCity.Advance(game, 40);
         double before = game.Indicators.Crime;
-        Assert.True(game.PlaceBuilding(Civic(game, "Police Station"), new CellRect(70, 19, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(Civic(game, "Sheriff's Hall"), new CellRect(70, 19, 1, 1)).Success);
         Assert.True(game.Indicators.Crime <= before);
         Assert.True(game.Services.Coverage(ServiceKind.Police, game.Map.Index(66, 18)) > 50);
     }
@@ -96,7 +96,7 @@ public class FullRulesTests
     public void FundingScalesCostAndStrength()
     {
         var game = Town();
-        Assert.True(game.PlaceBuilding(Civic(game, "Fire Station"), new CellRect(70, 19, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(Civic(game, "Fire Watch"), new CellRect(70, 19, 1, 1)).Success);
         int full = game.Finance.ServiceUpkeep;
         int cover = game.Services.Coverage(ServiceKind.Fire, game.Map.Index(66, 18));
         game.SetFunding(ServiceKind.Fire, 0.5);

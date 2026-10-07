@@ -17,9 +17,9 @@ public class RoadTypeTests
     public void StreetsAvenuesAndHighwaysCostMoreInThatOrder()
     {
         var game = TestCity.Flat();
-        Assert.Equal(500, game.RoadCostAt(1, 1, Type(game, "Street")));
-        Assert.Equal(900, game.RoadCostAt(1, 1, Type(game, "Avenue")));
-        Assert.Equal(1500, game.RoadCostAt(1, 1, Type(game, "Highway")));
+        Assert.Equal(500, game.RoadCostAt(1, 1, Type(game, DefaultRoads.TrackName)));
+        Assert.Equal(900, game.RoadCostAt(1, 1, Type(game, DefaultRoads.CobbledName)));
+        Assert.Equal(1500, game.RoadCostAt(1, 1, Type(game, DefaultRoads.KingsRoadName)));
         Assert.Equal(500, game.RoadCostAt(1, 1));
     }
 
@@ -27,7 +27,7 @@ public class RoadTypeTests
     public void BuildingARoadStoresItsType()
     {
         var game = TestCity.Flat();
-        var avenue = Type(game, "Avenue");
+        var avenue = Type(game, DefaultRoads.CobbledName);
         var result = game.BuildRoad(new CellRect(5, 5, 3, 1), avenue);
         Assert.True(result.Success, result.Message);
         Assert.Equal(3 * 900, result.Cost);
@@ -39,8 +39,8 @@ public class RoadTypeTests
     public void UpgradingPaysOnlyTheDifferenceAndNeverDowngrades()
     {
         var game = TestCity.Flat();
-        var street = Type(game, "Street");
-        var highway = Type(game, "Highway");
+        var street = Type(game, DefaultRoads.TrackName);
+        var highway = Type(game, DefaultRoads.KingsRoadName);
 
         // Row 20 is a street already: a highway over it costs 1500 - 500 per cell.
         var quote = game.QuoteRoad(new CellRect(10, 20, 4, 1), highway);
@@ -60,7 +60,7 @@ public class RoadTypeTests
     {
         var game = TestCity.Flat();
         game.Map.SetRoad(7, 7, true);
-        Assert.Equal(DefaultRoads.StreetName, game.Map.RoadTypeAt(7, 7)!.Name);
+        Assert.Equal(DefaultRoads.TrackName, game.Map.RoadTypeAt(7, 7)!.Name);
         game.Map.SetRoad(7, 7, false);
         Assert.Null(game.Map.RoadTypeAt(7, 7));
     }
@@ -70,8 +70,8 @@ public class RoadTypeTests
     {
         var game = TestCity.Flat();
         var map = game.Map;
-        var highway = Type(game, "Highway");
-        var avenue = Type(game, "Avenue");
+        var highway = Type(game, DefaultRoads.KingsRoadName);
+        var avenue = Type(game, DefaultRoads.CobbledName);
 
         // A plus-shaped highway junction, and an avenue stretch.
         foreach (var (x, y) in new[] { (30, 10), (29, 10), (31, 10), (30, 9), (30, 11) })
@@ -108,26 +108,26 @@ public class RoadTypeTests
     public void RoadTypesRoundTripThroughSaves()
     {
         var game = TestCity.Flat();
-        game.BuildRoad(new CellRect(5, 5, 4, 1), Type(game, "Avenue"));
-        game.BuildRoad(new CellRect(5, 6, 4, 1), Type(game, "Highway"));
+        game.BuildRoad(new CellRect(5, 5, 4, 1), Type(game, DefaultRoads.CobbledName));
+        game.BuildRoad(new CellRect(5, 6, 4, 1), Type(game, DefaultRoads.KingsRoadName));
         var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
         Assert.Equal(game.Map.RoadTypeLayer, loaded.Map.RoadTypeLayer);
-        Assert.Equal("Avenue", loaded.Map.RoadTypeAt(6, 5)!.Name);
-        Assert.Equal("Highway", loaded.Map.RoadTypeAt(6, 6)!.Name);
-        Assert.Equal("Street", loaded.Map.RoadTypeAt(6, 20)!.Name);
+        Assert.Equal(DefaultRoads.CobbledName, loaded.Map.RoadTypeAt(6, 5)!.Name);
+        Assert.Equal(DefaultRoads.KingsRoadName, loaded.Map.RoadTypeAt(6, 6)!.Name);
+        Assert.Equal(DefaultRoads.TrackName, loaded.Map.RoadTypeAt(6, 20)!.Name);
     }
 
     [Fact]
     public void SavesFromBeforeRoadTypesLoadWithEveryRoadAStreet()
     {
         var game = TestCity.Flat();
-        game.BuildRoad(new CellRect(5, 5, 4, 1), Type(game, "Highway"));
+        game.BuildRoad(new CellRect(5, 5, 4, 1), Type(game, DefaultRoads.KingsRoadName));
         var root = JsonNode.Parse(SaveGameStore.Serialize(game))!.AsObject();
         root.Remove("RoadTypes");
 
         var loaded = SaveGameStore.Deserialize(root.ToJsonString());
         Assert.Equal(game.Map.RoadCount, loaded.Map.RoadCount);
-        Assert.All(loaded.Map.RoadCells, i => Assert.Equal("Street", loaded.Map.RoadTypeAt(i % loaded.Map.Width, i / loaded.Map.Width)!.Name));
+        Assert.All(loaded.Map.RoadCells, i => Assert.Equal(DefaultRoads.TrackName, loaded.Map.RoadTypeAt(i % loaded.Map.Width, i / loaded.Map.Width)!.Name));
     }
 }
 
@@ -157,8 +157,8 @@ public class HighwayGenerationTests
         foreach (var (seed, w, h) in Cases())
         {
             var map = Generate(w, h, seed).Map;
-            int highways = map.RoadCells.Count(i => map.RoadTypeAt(i % w, i / w)!.Name == "Highway");
-            int streets = map.RoadCells.Count(i => map.RoadTypeAt(i % w, i / w)!.Name == "Street");
+            int highways = map.RoadCells.Count(i => map.RoadTypeAt(i % w, i / w)!.Name == DefaultRoads.KingsRoadName);
+            int streets = map.RoadCells.Count(i => map.RoadTypeAt(i % w, i / w)!.Name == DefaultRoads.TrackName);
             Assert.True(highways > w / 2, $"seed {seed} {w}x{h}: only {highways} highway cells");
             Assert.True(highways > streets, $"seed {seed} {w}x{h}: {highways} highway vs {streets} street");
             if (w >= 160)
@@ -286,7 +286,7 @@ public class HighwayGenerationTests
         foreach (var (seed, w, h) in Cases())
         {
             var map = Generate(w, h, seed).Map;
-            bool Highway(int x, int y) => map.RoadTypeAt(x, y)?.Name == "Highway";
+            bool Highway(int x, int y) => map.RoadTypeAt(x, y)?.Name == DefaultRoads.KingsRoadName;
 
             // Horizontal runs: while a highway runs along a row, nothing else runs along the rows just above or below it,
             // except near its ends (where it meets an interchange and its own arms leave in other directions).
@@ -363,7 +363,7 @@ public class HighwayGenerationTests
             foreach (int i in map.RoadCells)
             {
                 int x = i % w, y = i / w;
-                if (map.RoadTypeAt(x, y)!.Name == "Highway" &&
+                if (map.RoadTypeAt(x, y)!.Name == DefaultRoads.KingsRoadName &&
                     new[] { (0, -1), (1, 0), (0, 1), (-1, 0) }.Count(d => map.HasRoad(x + d.Item1, y + d.Item2)) >= 3)
                 {
                     junctions.Add(new Pos(x, y));

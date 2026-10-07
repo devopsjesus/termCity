@@ -12,18 +12,18 @@ internal static class ScenarioSeeder
     // Lattice spacing in cells for one station of each kind at "normal" provision; larger spacing is thinner cover.
     private static readonly (string Building, int Spacing)[] Network =
     [
-        ("Fire Station", 24), ("Police Station", 28), ("Clinic", 22), ("Hospital", 64),
-        ("School", 22), ("University", 84), ("Park", 15),
+        ("Fire Watch", 24), ("Sheriff's Hall", 28), ("Apothecary", 22), ("Infirmary", 64),
+        ("Chantry School", 22), ("Monastery", 84), ("Village Green", 15),
     ];
 
     /// <summary>How well each scenario's real-world counterpart is provided for: above 1 is generous, below 1 is thin.</summary>
     private static double Provision(CityScenario scenario) => scenario switch
     {
-        CityScenario.SanFrancisco => 1.2,
-        CityScenario.Chicago => 1.0,
-        CityScenario.SanDiego => 0.95,
-        CityScenario.LosAngeles => 0.8,
-        CityScenario.StLouis => 0.65,
+        CityScenario.Constantinople => 1.2,
+        CityScenario.Lubeck => 1.0,
+        CityScenario.Genoa => 0.95,
+        CityScenario.Naples => 0.8,
+        CityScenario.York => 0.65,
         _ => 1.0,
     };
 
@@ -60,8 +60,8 @@ internal static class ScenarioSeeder
         var supply = kind == ServiceKind.Power ? game.Services.Power : game.Services.Water;
         var buildings = map.Content.Buildings;
         BuildingType[] options = kind == ServiceKind.Power
-            ? [buildings.Get("Coal Plant")]
-            : [buildings.Get("Water Pump"), buildings.Get("Water Tower")];
+            ? [buildings.Get("Charcoal Burners")]
+            : [buildings.Get("Aqueduct"), buildings.Get("Town Well")];
 
         // Power goes in the industrial district; water at the shore, then anywhere vacant once the shore is used up.
         var centre = Centroid(map, kind == ServiceKind.Power ? ZoneType.Industrial : ZoneType.Residential);

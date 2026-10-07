@@ -23,13 +23,13 @@ public sealed record ZoneInfo(
 public static class Zones
 {
     public static readonly ZoneInfo Residential = new(
-        ZoneType.Residential, "Residential", 'R', "░", Rgb.Hex(0x58d068), Rgb.Hex(0x1f4a28), 200);
+        ZoneType.Residential, "Homesteads", 'R', "░", Rgb.Hex(0x58d068), Rgb.Hex(0x1f4a28), 200);
 
     public static readonly ZoneInfo Commercial = new(
-        ZoneType.Commercial, "Commercial", 'C', "░", Rgb.Hex(0x58a6ff), Rgb.Hex(0x1b3a66), 350);
+        ZoneType.Commercial, "Marketplace", 'C', "░", Rgb.Hex(0x58a6ff), Rgb.Hex(0x1b3a66), 350);
 
     public static readonly ZoneInfo Industrial = new(
-        ZoneType.Industrial, "Industrial", 'I', "░", Rgb.Hex(0xf2c94c), Rgb.Hex(0x57481a), 500);
+        ZoneType.Industrial, "Craftworks", 'I', "░", Rgb.Hex(0xf2c94c), Rgb.Hex(0x57481a), 500);
 
     public static readonly IReadOnlyList<ZoneType> Placeable = [ZoneType.Residential, ZoneType.Commercial, ZoneType.Industrial];
 
