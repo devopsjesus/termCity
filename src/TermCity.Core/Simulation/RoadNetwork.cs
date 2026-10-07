@@ -11,15 +11,24 @@ public sealed class RoadNetwork
 {
     private readonly bool[] _connected;
     private readonly bool[] _served;
+    private readonly byte[] _access;
 
-    private RoadNetwork(bool[] connected, bool[] served, int connectedCount)
+    private RoadNetwork(bool[] connected, bool[] served, byte[] access, int connectedCount, int trafficCapacity)
     {
         _connected = connected;
         _served = served;
+        _access = access;
         ConnectedRoadCount = connectedCount;
+        TrafficCapacity = trafficCapacity;
     }
 
     public int ConnectedRoadCount { get; }
+
+    /// <summary>Total trip capacity of every connected road (bigger road types carry more).</summary>
+    public int TrafficCapacity { get; }
+
+    /// <summary>Rank (1 street, 2 avenue, 3 highway...) of the best connected road reaching a cell; 0 when unserved.</summary>
+    public int AccessRank(int index) => _access[index];
 
     public bool IsConnected(GameMap map, int x, int y) => map.InBounds(x, y) && _connected[map.Index(x, y)];
 
@@ -91,6 +100,64 @@ public sealed class RoadNetwork
             served[i] = true;
         }
 
+        var ranks = new int[256];
+        var capacities = new int[256];
+        foreach (var road in map.Content.Roads)
+        {
+            ranks[road.Id] = road.Rank;
+            capacities[road.Id] = road.TrafficCapacity;
+        }
+
+        int trafficCapacity = 0;
+        int maxRank = 0;
+        foreach (int i in connectedCells)
+        {
+            int id = map.RoadTypeLayer[i];
+            trafficCapacity += capacities[id];
+            maxRank = Math.Max(maxRank, ranks[id]);
+        }
+
+        var access = new byte[width * height];
+        for (int rank = maxRank; rank >= 1; rank--)
+        {
+            var ring = new List<int>();
+            foreach (int i in connectedCells)
+            {
+                if (ranks[map.RoadTypeLayer[i]] == rank && access[i] == 0)
+                {
+                    access[i] = (byte)rank;
+                    ring.Add(i);
+                }
+            }
+
+            var after = new List<int>();
+            for (int step = 0; step < serviceReach && ring.Count > 0; step++)
+            {
+                after.Clear();
+                foreach (int index in ring)
+                {
+                    int x = index % width, y = index / width;
+                    foreach (var (dx, dy) in Neighbors)
+                    {
+                        int nx = x + dx, ny = y + dy;
+                        if (nx < 0 || ny < 0 || nx >= width || ny >= height)
+                        {
+                            continue;
+                        }
+
+                        int ni = ny * width + nx;
+                        if (access[ni] == 0 && buildable[map.TerrainLayer[ni]])
+                        {
+                            access[ni] = (byte)rank;
+                            after.Add(ni);
+                        }
+                    }
+                }
+
+                (ring, after) = (after, ring);
+            }
+        }
+
         var frontier = connectedCells;
         var next = new List<int>();
         for (int step = 0; step < serviceReach && frontier.Count > 0; step++)
@@ -119,7 +186,7 @@ public sealed class RoadNetwork
             (frontier, next) = (next, frontier);
         }
 
-        return new RoadNetwork(connected, served, connectedCount);
+        return new RoadNetwork(connected, served, access, connectedCount, trafficCapacity);
     }
 
     public static readonly (int Dx, int Dy)[] Neighbors = [(0, -1), (1, 0), (0, 1), (-1, 0)];

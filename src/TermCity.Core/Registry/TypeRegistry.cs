@@ -43,6 +43,16 @@ public class TypeRegistry<T> : IEnumerable<T> where T : RegisteredType
         return item;
     }
 
+    /// <summary>
+    /// Lets an old name keep resolving to a renamed type, so saves and callers from before a rename still work.
+    /// The alias is never written back out: saves always store the current name.
+    /// </summary>
+    public void Alias(string oldName, string currentName)
+    {
+        var target = Get(currentName);
+        _byName[oldName] = target;
+    }
+
     public T this[byte id]
     {
         get

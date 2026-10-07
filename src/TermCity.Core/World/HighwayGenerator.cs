@@ -90,7 +90,7 @@ public static class HighwayGenerator
             _refs = new byte[_width * _height];
             _zone = new int[_width * _height];
             Array.Fill(_zone, -1);
-            _highway = _map.Content.Roads.Find(DefaultRoads.HighwayName) ?? _map.Content.Roads.OrderBy(r => r.Rank).Last();
+            _highway = _map.Content.Roads.Find(DefaultRoads.KingsRoadName) ?? _map.Content.Roads.OrderBy(r => r.Rank).Last();
             _street = _map.Content.Roads.Default;
         }
 

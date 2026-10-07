@@ -71,12 +71,12 @@ public sealed partial class GameSession
     }
 
     public string GuideText => Game.Stats.Residential.Zoned == 0
-        ? "First city: connect a street (T), zone nearby homes (R), then resume (P). F6 dismisses the guide."
+        ? "First city: cut a track (T), mark out homesteads (R), then resume (P). F6 dismisses the guide."
         : Game.Stats.Residential.Occupied >= Game.Config.MinResidentialCells
-            ? "Shops and factories unlocked: zone with C and I. F6 dismisses the guide."
+            ? "Markets and workshops unlocked: zone with C and I. F6 dismisses the guide."
         : Game.Paused
-            ? "Homes zoned. Check road access, then press P to resume. Shops and factories unlock at 10 occupied homes."
-            : $"Grow to {Game.Config.MinResidentialCells} occupied homes to unlock shops and factories. F6 dismisses the guide.";
+            ? "Homes zoned. Check road access, then press P to resume. Markets and workshops unlock at 10 occupied homes."
+            : $"Grow to {Game.Config.MinResidentialCells} occupied homes to unlock markets and workshops. F6 dismisses the guide.";
 
     public string AutosavePath(int slot)
     {
@@ -228,7 +228,7 @@ public sealed partial class GameSession
         Game.Paused = true;
         CancelPreview();
         ShowPrompt("Undo last action",
-            "Undo restores the entire city to immediately before the last successful action, including money, residents and time. The game will remain paused.",
+            "Undo restores the entire city to immediately before the last successful action, including gold, residents and time. The game will remain paused.",
             [new("Undo", Undo), new("Cancel", ClosePrompt)]);
     }
 
@@ -343,6 +343,8 @@ public sealed partial class GameSession
             new("New city (same map size)", () => RequestNewCity(restart: false)),
             new("Restart this seed", () => RequestNewCity(restart: true)),
             new("Undo last action", RequestUndo),
+            new("Budget, taxes and loans", ShowBudgetMenu),
+            new("City health report", ShowHealthReport),
             new("Weekly report / milestones", ShowReport),
             new("First-city guide", ShowGuide),
             new("Quit", RequestQuit),
@@ -371,7 +373,7 @@ public sealed partial class GameSession
     {
         GuideVisible = true;
         ShowPrompt("Your first city",
-            $"1. Connect a street to the highways (T draws a line).\n2. Zone nearby homes with R.\n3. Press P to resume. At {Game.Config.MinResidentialCells} occupied homes, shops and factories unlock.",
+            $"1. Join a track to the King's Road (T draws a line).\n2. Mark out homesteads nearby with R.\n3. Press P to resume. At {Game.Config.MinResidentialCells} occupied homes, markets and workshops unlock.",
         [
             new("Start building / keep guide", ClosePrompt),
             new("Dismiss guide", DismissGuide),
@@ -390,7 +392,7 @@ public sealed partial class GameSession
     {
         var report = Game.LastReport;
         string text = report is null ? "No completed week yet." :
-            $"Week {report.Week}: income {Fmt.Money(report.Income)}\nNew homes {report.NewHouseholds}, shops {report.NewCommercial}, factories {report.NewIndustrial}";
+            $"Week {report.Week}: income {Fmt.Money(report.Income)}\nNew homes {report.NewHouseholds}, stalls {report.NewCommercial}, workshops {report.NewIndustrial}";
         text += $"\nPopulation: {Game.Stats.Population:N0}\nHighest milestone: {Game.HighestMilestone:N0}";
         text += NextMilestone is { } next ? $"\nNext milestone: {next:N0} people" : "\nAll population milestones reached.";
         ShowPrompt("Weekly report and milestones", text, [new("Close", ClosePrompt)]);
@@ -436,7 +438,7 @@ public sealed partial class GameSession
         }
         else if (_observedHomes < Game.Config.MinResidentialCells && homes >= Game.Config.MinResidentialCells)
         {
-            SetMessage($"{Game.Config.MinResidentialCells} occupied homes: shops and factories unlocked. Zone with C and I.", MessageKind.Success);
+            SetMessage($"{Game.Config.MinResidentialCells} occupied homes: markets and workshops unlocked. Zone with C and I.", MessageKind.Success);
         }
         else if (_observedWeek != Game.Week && Game.LastReport is { } report && !MessageVisible)
         {

@@ -73,13 +73,14 @@ public sealed class TerrainRegistry : TypeRegistry<TerrainType>
         registry.Register(DefaultTerrains.Grass());
         registry.Register(DefaultTerrains.Hill());
         registry.Register(DefaultTerrains.Water());
+        registry.Alias("Grass", DefaultTerrains.GrassName);
         return registry;
     }
 }
 
 public static class DefaultTerrains
 {
-    public const string GrassName = "Grass";
+    public const string GrassName = "Meadow";
     public const string HillName = "Hill";
     public const string WaterName = "Water";
 
@@ -90,7 +91,7 @@ public static class DefaultTerrains
         Glyphs = [.. Enumerable.Repeat("·", 33), ",", "'", "\""],
         Foreground = Rgb.Hex(0x4f8f4a),
         Background = Rgb.Hex(0x16301a),
-        Description = "Open grassland",
+        Description = "Open meadow and common pasture",
     };
 
     public static TerrainType Hill() => new()
@@ -102,7 +103,7 @@ public static class DefaultTerrains
         BuildCostModifier = 1.5,
         FeatureDensity = new Dictionary<string, double> { ["Tree"] = 0.5, ["Rock"] = 3.0 },
         Generator = new HillGenerator(),
-        Description = "Rolling hills (buildings cost 1.5x)",
+        Description = "Rolling downs (building costs 1.5x)",
     };
 
     public static TerrainType Water() => new()
@@ -114,6 +115,6 @@ public static class DefaultTerrains
         Buildable = false,
         AllowsFeatures = false,
         Generator = new WaterGenerator(),
-        Description = "Rivers, lakes and the sea (cannot be built on; existing roads use bridges)",
+        Description = "Rivers, meres and the sea (cannot be built on; existing roads cross by ford and bridge)",
     };
 }

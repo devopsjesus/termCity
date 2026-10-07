@@ -1,3 +1,4 @@
+using TermCity.Core.Roads;
 using Godot;
 using TermCity.Core.Rendering;
 using System.Diagnostics;
@@ -482,7 +483,7 @@ internal static class GodotSmoke
         await Frames();
         var finances = Descendants(host).OfType<Label>().Single(l => l.Name == "Budget");
         Require(finances.HorizontalAlignment == HorizontalAlignment.Right &&
-            finances.Text.Contains($"BUDGET ${session.Game.Money:N0}", StringComparison.Ordinal) &&
+            finances.Text.Contains($"TREASURY {Fmt.Money(session.Game.Money)}", StringComparison.Ordinal) &&
             finances.GlobalPosition.X >= host.Size.X / 2 &&
             finances.GlobalPosition.X + finances.Size.X <= host.Size.X,
             "Budget must remain visible on the right side of the HUD at minimum window size.");
@@ -836,9 +837,9 @@ internal static class GodotSmoke
         Require(session.Prompt?.Title == "Area menu", "Area menu was not opened.");
         session.SelectPrompt(1);
         Require(session.Prompt?.Title == "Roads", "Road menu was not opened.");
-        var avenue = session.Game.Map.Content.Roads.Get("Avenue");
-        int avenueChoice = session.Prompt!.Choices.ToList().FindIndex(c => c.Label.StartsWith("Avenue:", StringComparison.Ordinal));
-        Require(avenueChoice >= 0, "Avenue was missing from the road menu.");
+        var avenue = session.Game.Map.Content.Roads.Get(DefaultRoads.CobbledName);
+        int avenueChoice = session.Prompt!.Choices.ToList().FindIndex(c => c.Label.StartsWith(DefaultRoads.CobbledName + ":", StringComparison.Ordinal));
+        Require(avenueChoice >= 0, "Cobbled Road was missing from the road menu.");
         session.SelectPrompt(avenueChoice);
         Require(session.Preview?.Road == avenue, "Road menu did not preview the selected type.");
         Press(Key.Escape);

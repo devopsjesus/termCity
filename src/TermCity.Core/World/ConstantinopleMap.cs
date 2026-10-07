@@ -8,7 +8,7 @@ using static TermCity.Core.World.CityMapGeometry;
 namespace TermCity.Core.World;
 
 /// <summary>A north-up, hand-shaped Bay Area scenario; coordinates are percentages of the large map.</summary>
-public static class SanFranciscoMap
+public static class ConstantinopleMap
 {
     private static readonly (double X, double Y)[] Peninsula =
     [
@@ -67,9 +67,9 @@ public static class SanFranciscoMap
             }
         }
 
-        var street = content.Roads.Get(DefaultRoads.StreetName);
-        var avenue = content.Roads.Get(DefaultRoads.AvenueName);
-        var highway = content.Roads.Get(DefaultRoads.HighwayName);
+        var street = content.Roads.Get(DefaultRoads.TrackName);
+        var avenue = content.Roads.Get(DefaultRoads.CobbledName);
+        var highway = content.Roads.Get(DefaultRoads.KingsRoadName);
         for (int y = 0; y < map.Height; y++)
         {
             for (int x = 0; x < map.Width; x++)

@@ -1,3 +1,4 @@
+using TermCity.Core.Roads;
 using TermCity.Core.Persistence;
 using TermCity.Core.Buildings;
 using TermCity.Core.Rendering;
@@ -92,7 +93,7 @@ public class SessionFeatureTests
         Assert.False(session.ConfirmPreview().Success);
         Assert.NotNull(session.Preview);
         Assert.Equal(MessageKind.Error, session.MessageKind);
-        Assert.Contains("Not enough money", session.Message);
+        Assert.Contains("Not enough gold", session.Message);
         Assert.False(session.CanUndo);
     }
 
@@ -103,7 +104,7 @@ public class SessionFeatureTests
         var game = session.Game;
         var building = game.Map.Content.Buildings.Register(new BuildingType
         {
-            Name = "Clinic",
+            Name = "Shrine",
             Glyphs = ["X"],
             Foreground = Rgb.Hex(0xffffff),
             Cost = 1_000,
@@ -154,7 +155,7 @@ public class SessionFeatureTests
         game.Map.SetRoad(12, 18, game.DefaultRoad);
         game.Touch();
         session.PlaceCursor(new Pos(10, 18));
-        session.BeginRoadLine(game.Map.Content.Roads.Get("Avenue"));
+        session.BeginRoadLine(game.Map.Content.Roads.Get(DefaultRoads.CobbledName));
         session.UpdateDrag(new Pos(12, 18));
         Assert.Equal(new Quote(2, 1_300, 1), session.Preview!.Quote);
         Assert.Contains("gaps", session.Preview.Name);
@@ -484,7 +485,7 @@ public class SessionFeatureTests
         FillHomes(session.Game, 9, people: 2);
         session.SetMessage("");
         FillHomes(session.Game, 10, people: 2);
-        Assert.Contains("shops and factories unlocked", session.Message);
+        Assert.Contains("markets and workshops unlocked", session.Message);
         session.Game.Designate(new CellRect(10, 21, 20, 1), ZoneType.Residential);
         session.Game.AdvanceWeek();
         session.ShowReport();

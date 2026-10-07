@@ -116,7 +116,7 @@ public static class DefaultFeatures
             ClusterCoverage = 0.22,
             ClusterDensity = 0.55,
         },
-        Description = "Trees (cleared when built over)",
+        Description = "Woodland (cleared when built over)",
     };
 
     public static FeatureType Rock() => new()
@@ -129,6 +129,6 @@ public static class DefaultFeatures
             Order = 20,
             BaseDensity = 0.012,
         },
-        Description = "Boulders (cleared when built over)",
+        Description = "Boulders and standing stones (cleared when built over)",
     };
 }

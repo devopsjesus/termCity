@@ -35,15 +35,17 @@ public static class CellInspector
         if (zone != ZoneType.None)
         {
             bool served = game.Network.IsServed(map, pos.X, pos.Y);
-            lines.Add($"{Zones.Get(zone).Name} zone" + (served ? string.Empty : " (no road access)"));
+            lines.Add($"{Zones.Get(zone).Name} plot" + (served ? string.Empty : " (no road to it)"));
             if (map.BuildingAt(pos.X, pos.Y) is { } building)
             {
                 lines.Add(building.Name);
                 var h = map.HouseholdAt(pos.X, pos.Y);
                 if (!h.IsEmpty)
                 {
-                    lines.Add($"{h.Total} residents: {h.Adults}A {h.Children}C {h.Seniors}S");
+                    lines.Add($"{h.Total} souls: {h.Adults}A {h.Children}C {h.Seniors}S");
                 }
+
+                AddFullRulesLines(game, pos, zone, lines);
             }
             else
             {
@@ -65,11 +67,30 @@ public static class CellInspector
                 var h = map.HouseholdAt(pos.X, pos.Y);
                 if (!h.IsEmpty)
                 {
-                    lines.Add($"{h.Total} residents: {h.Adults}A {h.Children}C {h.Seniors}S");
+                    lines.Add($"{h.Total} souls: {h.Adults}A {h.Children}C {h.Seniors}S");
                 }
             }
         }
 
         return lines;
+    }
+
+    private static void AddFullRulesLines(CityGame game, Pos pos, ZoneType zone, List<string> lines)
+    {
+        if (!game.Config.FullRules)
+        {
+            return;
+        }
+
+        int i = game.Map.Index(pos.X, pos.Y);
+        var services = game.Services;
+        if (!services.IsPowered(game.Map, i)) lines.Add("No fuel");
+        if (!services.IsWatered(game.Map, i)) lines.Add("No water");
+        if (zone == ZoneType.Residential && !game.Map.HouseholdAt(pos.X, pos.Y).IsEmpty)
+        {
+            lines.Add($"Contentment {CityAnalysis.CellHappiness(game, i):0}");
+        }
+
+        lines.Add($"Land value {CityAnalysis.LandValue(game, i):0}");
     }
 }

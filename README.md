@@ -1,7 +1,8 @@
 # TermCity
 
-A DOS-terminal-styled city builder built with **Godot .NET and C# on .NET 10**.
-Zone land, connect streets, and grow a city in a desktop window on Windows, macOS, or Linux.
+A DOS-terminal-styled city builder built with **Godot .NET and C# on .NET 10**, set in the **Middle Ages**.
+Raise a hamlet into a chartered city: lay out tracks and burgage plots, build a lord's castle, feed your people through
+the farming year, and keep the crown's reeve paid. It runs in a desktop window on Windows, macOS, or Linux.
 Godot is the game's only frontend; no interactive console is required.
 
 For architecture, extension points, builds, exports, and tests, see the
@@ -30,16 +31,16 @@ Game options follow Godot's `--` separator:
 | Option | Behavior |
 |---|---|
 | `--seed <n>` | Reproducible signed 32-bit seed; random by default |
-| `--size <size>` | `small`, `medium`, `large`, `SF`, `LA`, `SD`, `CHI`, `STL`, or `WIDTHxHEIGHT`; default `small` |
+| `--size <size>` | `small`, `medium`, `large`, `CON`, `NAP`, `GEN`, `LUB`, `YRK`, or `WIDTHxHEIGHT`; default `small` |
 | `--load [file]` | Load a city; without a path, use the quick-save |
 | `--fps <n>` | Render frame cap, 5-60; default 30 |
 | `--dump-map` | Print the generated/loaded map as text and exit; works headlessly |
 | `-h`, `--help` | Print game options and exit; works headlessly |
 
 ```bash
-godot --path godot -- --size SF --seed 42
+godot --path godot -- --size CON --seed 42
 godot --path godot -- --load /absolute/path/to/quicksave.json
-godot --headless --path godot -- --size CHI --seed 42 --dump-map
+godot --headless --path godot -- --size LUB --seed 42 --dump-map
 ```
 
 A command-line load failure exits with an error. In-game load failures keep the current city and
@@ -50,6 +51,16 @@ leave a visible error in the dialog. When loading, the saved map/configuration o
 Random cities start paused with a first-city guide. Connect roads to an existing highway or a map
 edge, zone nearby homes with **R**, and resume with **P**. A connected road serves land within
 two cells; water blocks service from spreading across it. Disconnected roads are amber.
+
+### Services, budget and the full city engine
+
+New games run the full rules: homes and businesses need **power and water** (build plants, pumps and towers), residents
+want a **fire watch, a sheriff, an apothecary, a chantry school and a village green** as the town grows, and a lord's
+**castle** to keep the peace. People must be fed: the harvest sets the grain in store, a bad year brings famine, and
+plague, raiders and fires are real dangers. Jobs matter and the treasury (in gold) has to balance, with the crown's
+tribute due each Michaelmas. Open **City menu > Budget, taxes and loans** to set service funding, tithes and loans, and
+**City health report** for every indicator. Details and tuning are in [docs/POPULATION.md](docs/POPULATION.md); the setting,
+the service mapping and ideas for the future are in [docs/MEDIEVAL.md](docs/MEDIEVAL.md).
 
 ### Zones and growth
 
@@ -62,8 +73,8 @@ two cells; water blocks service from spreading across it. Disconnected roads are
   and tax income for 2-3 game weeks. Restore their original zone before the deadline to keep them.
 - **D/Delete** previews demolition. It is free, with no refunds.
 
-Roads cost money: a street starts at **$500 per cell**, an avenue at **$900**, and a highway at
-**$1,500**. Upgrades charge the difference; hills multiply construction costs by 1.5.
+Roads cost money: a street starts at **500g per cell**, an avenue at **900g**, and a highway at
+**1,500g**. Upgrades charge the difference; hills multiply construction costs by 1.5.
 Road/building menus include registered player-placeable types. Default content has no
 player-placeable service buildings, and the building menu explains this.
 
@@ -193,11 +204,11 @@ Zoom levels are **0.25x, 0.5x, 1x, and 2x**. Coarse zoom samples 4x4 or 2x2 map-
 | `small` | 160x96 | Default random map |
 | `medium` | 320x192 | Random map |
 | `large` | 640x384 | Random map |
-| `SF` | 640x384 | San Francisco/Bay Area |
-| `LA` | 640x384 | Los Angeles |
-| `SD` | 640x384 | San Diego |
-| `CHI` | 640x384 | Chicago |
-| `STL` | 640x384 | St. Louis |
+| `CON` | 640x384 | Constantinople: a walled peninsula between the Golden Horn and the Marmara |
+| `NAP` | 640x384 | Naples: a sprawling bay below a volcano |
+| `GEN` | 640x384 | Genoa: a harbour town on dry, burnable hills |
+| `LUB` | 640x384 | Lubeck: a cold Hanseatic freight town on the water |
+| `YRK` | 640x384 | York: a flood-prone river town |
 
 Custom sizes range from 80x24 to 640x384. Named presets are case-insensitive.
 Random maps include hills, forests, water systems, highways/interchanges, and existing bridges.
@@ -205,22 +216,20 @@ Random maps include hills, forests, water systems, highways/interchanges, and ex
 City scenarios are **stylized, north-up regional approximations**, not current land-use datasets
 or street-accurate GIS maps. They include occupied R/C/I districts, residents, roads and tax income:
 
-- **SF:** Pacific/bay, Marin, East Bay, Alcatraz, Angel/Treasure/Yerba Buena Islands, Alameda,
-  Lake Merced, Presidio/Golden Gate Park and city hills. Residential west/south, downtown/SoMa
-  commerce, southeastern waterfront/Port of Oakland industry, and populated surrounding communities.
-- **LA:** Pacific coast, LA River, Santa Monica/San Gabriel mountains, Griffith Park, downtown,
-  Hollywood/Santa Monica commerce, Westside housing, and Vernon/Long Beach industry.
-- **SD:** Mission/San Diego bays, Coronado, coastal/inland hills, Balboa Park, downtown,
-  residential neighborhoods, and working-waterfront/National City industry.
-- **CHI:** Lake Michigan, Chicago River branches, flat inland terrain, lakefront parks, the Loop,
-  North Side housing, and South/West Side industrial corridors.
-- **STL:** Mississippi/Missouri/Meramec rivers, western rolling terrain, Forest Park, downtown,
-  South City housing, and riverfront/Metro East industry.
+- **CON:** the peninsula city on the strait (the old San Francisco layout): sea walls, hills, harbours and islands, with
+  dense houses, a market quarter, a southeastern port and populated suburbs around it.
+- **NAP:** a broad coast and bay (the old Los Angeles layout), a river, ranges behind it, a wide scatter of districts.
+- **GEN:** two bays, hills and a green hill park (the old San Diego layout); water is scarce and fires run in dry hills.
+- **LUB:** a lake (the old Chicago layout) and its river branches, flat ground, a market quarter and busy yards.
+- **YRK:** rivers and a floodplain (the old St. Louis layout), a minster park and riverside trades.
+
+These are medieval stand-ins for the original regional layouts; the geography is unchanged. Old saves and old preset
+names (`SF`, `LA`, ...) inside save files load as their stand-ins.
 
 Scenarios start paused without the automatic first-city guide; F6 still offers it explicitly.
 Geography and districts stay fixed across seeds; seeds vary households and future growth.
 Save/load preserves the map. Restart/new-city actions retain the selected scenario.
-Older medium-sized SF saves load at their original dimensions; restarting generates the large map.
+Older medium-sized Constantinople (formerly SF) saves load at their original dimensions; restarting generates the large map.
 
 ## Saving and loading
 

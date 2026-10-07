@@ -6,7 +6,7 @@ namespace TermCity.Core.Simulation;
 public readonly record struct MapSize(int Width, int Height)
 {
     public CityScenario Scenario { get; init; }
-    public bool SanFrancisco => Scenario == CityScenario.SanFrancisco;
+    public bool Constantinople => Scenario == CityScenario.Constantinople;
     public const int MinWidth = 80;
     public const int MinHeight = 24;
     public const int MaxWidth = 640;
@@ -18,11 +18,11 @@ public readonly record struct MapSize(int Width, int Height)
         ["small"] = new(160, 96),
         ["medium"] = new(320, 192),
         ["large"] = new(640, 384),
-        ["SF"] = new(640, 384) { Scenario = CityScenario.SanFrancisco },
-        ["LA"] = new(640, 384) { Scenario = CityScenario.LosAngeles },
-        ["SD"] = new(640, 384) { Scenario = CityScenario.SanDiego },
-        ["CHI"] = new(640, 384) { Scenario = CityScenario.Chicago },
-        ["STL"] = new(640, 384) { Scenario = CityScenario.StLouis },
+        ["CON"] = new(640, 384) { Scenario = CityScenario.Constantinople },
+        ["NAP"] = new(640, 384) { Scenario = CityScenario.Naples },
+        ["GEN"] = new(640, 384) { Scenario = CityScenario.Genoa },
+        ["LUB"] = new(640, 384) { Scenario = CityScenario.Lubeck },
+        ["YRK"] = new(640, 384) { Scenario = CityScenario.York },
     };
 
     public static string Describe() =>

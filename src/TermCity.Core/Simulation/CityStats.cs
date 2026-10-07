@@ -18,8 +18,20 @@ public sealed record CityStats(
     ZoneCount Industrial,
     int RoadCells,
     int ConnectedRoadCells,
-    int WeeklyIncome)
+    int WeeklyIncome,
+    int VacantHomes = 0,
+    double ResidentialIncome = 0,
+    double CommercialIncome = 0,
+    double IndustrialIncome = 0)
 {
+    public double IncomeFor(ZoneType zone) => zone switch
+    {
+        ZoneType.Residential => ResidentialIncome,
+        ZoneType.Commercial => CommercialIncome,
+        ZoneType.Industrial => IndustrialIncome,
+        _ => 0,
+    };
+
     public ZoneCount For(ZoneType zone) => zone switch
     {
         ZoneType.Residential => Residential,
