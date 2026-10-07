@@ -126,6 +126,49 @@ internal static class PrototypeSmoke
         session.PlaceCursor(center);
         session.CenterOn(center);
         host.Map.RefreshCells();
+        VerifyAnimation(host);
+    }
+
+    private static void VerifyAnimation(Main host)
+    {
+        var session = host.Session;
+        var grid = host.Map.Grid;
+        var map = session.Game.Map;
+        session.Game.Paused = true;
+        foreach (var kind in new[] { TerminalGrid.AnimationKind.Hill, TerminalGrid.AnimationKind.Tree })
+        {
+            var position = Enumerable.Range(0, map.Width * map.Height)
+                .Select(i => new Pos(i % map.Width, i / map.Width))
+                .First(p => TerminalGrid.ShouldAnimate(p) &&
+                    (kind == TerminalGrid.AnimationKind.Hill
+                        ? map.Content.Terrains.Get("Hill").Glyphs.Contains(
+                            TermCity.Core.Rendering.CellRenderer.Render(session.Game, p.X, p.Y).Glyph)
+                        : map.Content.Features.Get("Tree").Glyphs.Contains(
+                            TermCity.Core.Rendering.CellRenderer.Render(session.Game, p.X, p.Y).Glyph)));
+            session.CenterOn(position);
+            host.Map.RefreshCells();
+            var screen = Enumerable.Range(0, grid.Columns * grid.Rows)
+                .Select(i => new Pos(i % grid.Columns, i / grid.Columns))
+                .First(p => session.ScreenToMap(p.X, p.Y) == position);
+            Require(grid.AnimationAt(screen.X, screen.Y) == kind, $"{kind} was not marked for animation.");
+            var before = grid.OffsetAt(session, screen.X, screen.Y);
+            int rebuilds = grid.Rebuilds;
+            string saved = SaveGameStore.Serialize(session.Game);
+            host._Process(TerminalGrid.BeatSeconds);
+            Require(before != grid.OffsetAt(session, screen.X, screen.Y), $"Paused {kind} did not animate.");
+            Require(rebuilds == grid.Rebuilds, "Animation rebuilt base cells.");
+            Require(saved == SaveGameStore.Serialize(session.Game), "Animation mutated gameplay.");
+            var offset = grid.OffsetAt(session, screen.X, screen.Y);
+            Require(kind == TerminalGrid.AnimationKind.Hill ? offset.X == 0 : offset.Y == 0,
+                $"{kind} moved on the wrong axis.");
+        }
+        host.GetWindow().EmitSignal(Window.SignalName.FocusExited);
+        double seconds = grid.AnimationSeconds;
+        host._Process(TerminalGrid.BeatSeconds);
+        Require(seconds == grid.AnimationSeconds, "Unfocused animation continued.");
+        host.GetWindow().EmitSignal(Window.SignalName.FocusEntered);
+        session.CenterOn(new Pos(map.Width / 2, map.Height / 2));
+        host.Map.RefreshCells();
     }
 
     private static void Require(bool condition, string message)

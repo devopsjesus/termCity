@@ -29,6 +29,14 @@ public partial class TerminalMap : Control
         QueueRedraw();
     }
 
+    public void AdvanceAnimation(double delta, bool focused)
+    {
+        if (Grid.AdvanceAnimation(delta, focused))
+        {
+            QueueRedraw();
+        }
+    }
+
     public void RefreshCells()
     {
         if (!_cellsDirty)
@@ -61,7 +69,20 @@ public partial class TerminalMap : Control
                 var position = new Vector2(x * TerminalGrid.CellWidth, y * TerminalGrid.CellHeight);
                 DrawRect(new Rect2(position, new Vector2(TerminalGrid.CellWidth, TerminalGrid.CellHeight)),
                     ToColor(visual.Background));
-                DrawString(CellFont, position + new Vector2(0, baseline), visual.Glyph,
+            }
+        }
+        for (int y = 0; y < Grid.Rows; y++)
+        {
+            for (int x = 0; x < Grid.Columns; x++)
+            {
+                if (Grid.VisualAt(Session, x, y) is not { } visual)
+                {
+                    continue;
+                }
+                var offset = Grid.OffsetAt(Session, x, y);
+                var position = new Vector2(x * TerminalGrid.CellWidth + offset.X,
+                    y * TerminalGrid.CellHeight + baseline + offset.Y);
+                DrawString(CellFont, position, visual.Glyph,
                     HorizontalAlignment.Center, TerminalGrid.CellWidth, FontSize,
                     ToColor(visual.Foreground));
             }

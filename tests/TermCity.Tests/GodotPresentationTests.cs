@@ -1,4 +1,5 @@
 using TermCity.Core.Rendering;
+using TermCity.Core.Persistence;
 using TermCity.Core.Session;
 using TermCity.Core.Simulation;
 using TermCity.Core.Util;
@@ -124,4 +125,142 @@ public class GodotPresentationTests
         Assert.Throws<ArgumentException>(() => PrototypeOptions.Parse(["--unknown"]));
         Assert.Throws<ArgumentException>(() => PrototypeOptions.Parse(["--capture", "screen.png"]));
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AnimationHoldsFourStepsAtEightyBpmWithoutChangingGameplay(bool tree)
+    {
+        var session = Session();
+        session.Game.Paused = true;
+        var map = session.Game.Map;
+        var position = Enumerable.Range(0, 100)
+            .Select(x => new Pos(x, 2)).First(TerminalGrid.ShouldAnimate);
+        if (tree)
+        {
+            map.SetFeature(position.X, position.Y, map.Content.Features.Get("Tree"));
+        }
+        else
+        {
+            map.SetTerrain(position.X, position.Y, map.Content.Terrains.Get("Hill"));
+        }
+        var grid = new TerminalGrid();
+        grid.Resize(160 * TerminalGrid.CellWidth, 96 * TerminalGrid.CellHeight);
+        grid.Fill(session);
+        string saved = SaveGameStore.Serialize(session.Game);
+        int rebuilds = grid.Rebuilds;
+        var visual = grid.VisualAt(session, position.X, position.Y);
+        float direction = ((position.X ^ position.Y) & 1) == 0 ? 1 : -1;
+        foreach (float step in new[] { 1.5f, 0, -1.5f, 0, 1.5f })
+        {
+            var expected = tree ? (step * direction, 0f) : (0f, step * direction);
+            Assert.Equal(expected, grid.OffsetAt(session, position.X, position.Y));
+            Assert.False(grid.AdvanceAnimation(TerminalGrid.BeatSeconds / 2, true));
+            Assert.Equal(expected, grid.OffsetAt(session, position.X, position.Y));
+            Assert.True(grid.AdvanceAnimation(TerminalGrid.BeatSeconds / 2, true));
+        }
+        double seconds = grid.AnimationSeconds;
+        Assert.False(grid.AdvanceAnimation(1, false));
+        Assert.Equal(seconds, grid.AnimationSeconds);
+        Assert.Equal(rebuilds, grid.Rebuilds);
+        Assert.Equal(visual, grid.VisualAt(session, position.X, position.Y));
+        Assert.Equal(saved, SaveGameStore.Serialize(session.Game));
+        Assert.Throws<ArgumentOutOfRangeException>(() => grid.AdvanceAnimation(double.NaN, true));
+        Assert.Throws<ArgumentOutOfRangeException>(() => grid.AdvanceAnimation(-1, true));
+    }
+
+    [Theory]
+    [InlineData(-2)]
+    [InlineData(-1)]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void AnimationDensityIsEightToTwelvePercentForEachKindAtEveryZoom(int zoom)
+    {
+        var game = CityGame.New(new GameConfig { Seed = 42, MapWidth = 640, MapHeight = 384 });
+        var session = new GameSession(game, "unused-godot-animation-test.json");
+        var grid = new TerminalGrid();
+        grid.Resize(640 * TerminalGrid.CellWidth, 384 * TerminalGrid.CellHeight);
+        session.SetZoom(zoom);
+        grid.Fill(session);
+        var hills = game.Map.Content.Terrains.Get("Hill").Glyphs;
+        var trees = game.Map.Content.Features.Get("Tree").Glyphs;
+        int hillCount = 0, treeCount = 0, animatedHills = 0, animatedTrees = 0;
+        for (int y = 0; y < grid.Rows; y++)
+        {
+            for (int x = 0; x < grid.Columns; x++)
+            {
+                var visual = grid.VisualAt(session, x, y);
+                if (visual is null)
+                {
+                    continue;
+                }
+                if (hills.Contains(visual.Value.Glyph))
+                {
+                    hillCount++;
+                    animatedHills += grid.AnimationAt(x, y) == TerminalGrid.AnimationKind.Hill ? 1 : 0;
+                }
+                if (trees.Contains(visual.Value.Glyph))
+                {
+                    treeCount++;
+                    animatedTrees += grid.AnimationAt(x, y) == TerminalGrid.AnimationKind.Tree ? 1 : 0;
+                }
+            }
+        }
+        Assert.True(hillCount > 0 && treeCount > 0);
+        Assert.InRange(100.0 * animatedHills / hillCount, 8, 12);
+        Assert.InRange(100.0 * animatedTrees / treeCount, 8, 12);
+    }
+
+    [Fact]
+    public void AnimationEligibilityFollowsVisibleGlyphAndSurvivesScrolling()
+    {
+        var session = Session();
+        var map = session.Game.Map;
+        var position = Enumerable.Range(40, 100)
+            .Select(x => new Pos(x, 40)).First(TerminalGrid.ShouldAnimate);
+        map.SetFeature(position.X, position.Y, map.Content.Features.Get("Tree"));
+        var grid = new TerminalGrid();
+        grid.Resize(120, 110);
+        grid.Fill(session);
+        session.CenterOn(position);
+        grid.Fill(session);
+        var screen = ScreenOf(session, grid, position);
+        Assert.Equal(TerminalGrid.AnimationKind.Tree, grid.AnimationAt(screen.X, screen.Y));
+        var before = grid.OffsetAt(session, screen.X, screen.Y);
+        session.ScrollCamera(1, 0);
+        grid.Fill(session);
+        screen = ScreenOf(session, grid, position);
+        Assert.Equal(before, grid.OffsetAt(session, screen.X, screen.Y));
+        map.SetRoad(position.X, position.Y, true);
+        grid.Fill(session);
+        Assert.Equal(TerminalGrid.AnimationKind.None, grid.AnimationAt(screen.X, screen.Y));
+        Assert.Equal((0f, 0f), grid.OffsetAt(session, screen.X, screen.Y));
+    }
+
+    [Fact]
+    public void NeighboringWorldTilesHaveOppositeAnimationDirections()
+    {
+        var session = Session();
+        var map = session.Game.Map;
+        var center = Enumerable.Range(0, map.Width * (map.Height - 1))
+            .Select(i => new Pos(i % map.Width, i / map.Width))
+            .First(p => p.X + 1 < map.Width && TerminalGrid.ShouldAnimate(p) &&
+                TerminalGrid.ShouldAnimate(new Pos(p.X + 1, p.Y)));
+        map.SetTerrain(center.X, center.Y, map.Content.Terrains.Get("Hill"));
+        map.SetTerrain(center.X + 1, center.Y, map.Content.Terrains.Get("Hill"));
+        var grid = new TerminalGrid();
+        grid.Resize(map.Width * TerminalGrid.CellWidth, map.Height * TerminalGrid.CellHeight);
+        grid.Fill(session);
+        for (int beat = 0; beat < 4; beat++)
+        {
+            Assert.Equal(-grid.OffsetAt(session, center.X, center.Y).Y,
+                grid.OffsetAt(session, center.X + 1, center.Y).Y);
+            grid.AdvanceAnimation(TerminalGrid.BeatSeconds, true);
+        }
+    }
+
+    private static Pos ScreenOf(GameSession session, TerminalGrid grid, Pos position) =>
+        Enumerable.Range(0, grid.Columns * grid.Rows)
+            .Select(i => new Pos(i % grid.Columns, i / grid.Columns))
+            .First(p => session.ScreenToMap(p.X, p.Y) == position);
 }

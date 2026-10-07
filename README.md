@@ -98,6 +98,11 @@ arrow keys move, Shift extends selection, left-drag selects, middle-drag or whee
 Enter confirms, Esc cancels, and `Q` or closing the window opens the save/discard guard.
 Ctrl+wheel zooms around the pointer; Shift+wheel scrolls horizontally.
 
+About 10% of visible hills and trees animate on an 80 BPM beat (0.75 seconds per step):
+hills step up/up/down/down, while trees step left/left/right/right. Neighboring tiles move in
+opposite directions, and the chosen subset stays stable while scrolling. Decorative animation
+continues while gameplay is paused; losing window focus suspends both.
+
 This is not yet a full replacement for the terminal apps: the minimap, complete menus/reports, loading UI,
 and full control parity are deferred. It uses the C# save format but a separate `TermCityGodot` user-data
 directory, including automatic saves. Windows rendering and a desktop export are validated; macOS/Linux

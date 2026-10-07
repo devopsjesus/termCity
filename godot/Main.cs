@@ -100,6 +100,7 @@ public partial class Main : Control
         {
             Session.Update(delta);
         }
+        Map.AdvanceAnimation(delta, _focused);
         _hudElapsed += delta;
         if (_hudElapsed >= 0.1)
         {

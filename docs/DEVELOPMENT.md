@@ -94,7 +94,8 @@ dotnet test tests\TermCity.Tests\TermCity.Tests.csproj --filter FullyQualifiedNa
 
 Use your Godot .NET executable's full path if `godot` is not on `PATH`. Godot user arguments follow `--`.
 `--seed` and `--size` reuse the core's map-size rules. `--smoke-test` tests real engine/core integration,
-keyboard and pointer actions, modal guards, serialization, autosave, and all zoom levels, then exits.
+keyboard and pointer actions, modal guards, serialization, autosave, all zoom levels, paused hill/tree
+animation without cell rebuilds or gameplay mutation, and focus suspension, then exits.
 Success prints `TERMCITY_GODOT_SMOKE_OK`; a failed check logs an error and exits nonzero.
 Headless smoke runs explicitly use a 1200x720 logical viewport instead of the headless driver's 64x64 default.
 For a graphical screenshot, add `--capture <absolute PNG path>` to a non-headless smoke run.
@@ -103,6 +104,12 @@ The main scene creates one custom map `Control`, HUD/status labels, and a minima
 presenter. `TerminalGrid` prepares a reusable visible-cell buffer using `CellRenderer` and `BlockSampler`.
 The map uses native cached `_Draw` commands and `QueueRedraw` after session changes; it does not create
 one node per glyph or rebuild the grid every rendered frame. Selection/cursor overlays reuse base cells.
+`TerminalGrid` caches animation eligibility alongside the base visuals, including sampled glyphs at
+coarse zoom. A salted coordinate hash selects about 10% of hills and trees independently of glyph
+variation. Hills move vertically and trees horizontally in four held steps at 80 BPM, with checkerboard
+direction based on world coordinates. Backgrounds and hit targets remain fixed; only glyph positions move.
+Beat changes request a redraw without rebuilding cells or changing gameplay. Animation continues while
+paused and its clock freezes while unfocused.
 The bundled DejaVu Sans Mono 2.37 font is checked against every registered map glyph on startup; its
 license is retained in [Assets/DejaVu-LICENSE.txt](../godot/Assets/DejaVu-LICENSE.txt).
 

@@ -1,5 +1,6 @@
 using TermCity.Core.Rendering;
 using TermCity.Core.Session;
+using TermCity.Core.Terrain;
 using TermCity.Core.Util;
 
 namespace TermCity.GodotApp;
@@ -8,10 +9,52 @@ public sealed class TerminalGrid
 {
     public const int CellWidth = 12;
     public const int CellHeight = 22;
+    public const double BeatSeconds = 60.0 / 80.0;
+    public const double CycleSeconds = BeatSeconds * 4;
     private CellVisual?[] _cells = [];
+    private AnimationKind[] _animations = [];
+
+    public enum AnimationKind { None, Hill, Tree }
 
     public int Columns { get; private set; }
     public int Rows { get; private set; }
+    public int Rebuilds { get; private set; }
+    public double AnimationSeconds { get; private set; }
+
+    public bool AdvanceAnimation(double delta, bool focused)
+    {
+        if (!double.IsFinite(delta) || delta < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(delta), "Animation delta must be finite and non-negative.");
+        }
+        if (!focused)
+        {
+            return false;
+        }
+        int previousBeat = (int)(AnimationSeconds / BeatSeconds);
+        AnimationSeconds = (AnimationSeconds + delta % CycleSeconds) % CycleSeconds;
+        return previousBeat != (int)(AnimationSeconds / BeatSeconds);
+    }
+
+    public static bool ShouldAnimate(Pos position) =>
+        CellHash.Pick(position.X ^ 0x51ed270b, position.Y ^ 0x2f6e2b1d, 10) == 0;
+
+    public AnimationKind AnimationAt(int x, int y) => _animations[y * Columns + x];
+
+    public (float X, float Y) OffsetAt(GameSession session, int x, int y)
+    {
+        var kind = AnimationAt(x, y);
+        if (kind == AnimationKind.None)
+        {
+            return (0, 0);
+        }
+        var position = session.ScreenToMap(x, y);
+        int beat = (int)(AnimationSeconds / BeatSeconds);
+        float step = (1 - Math.Abs(beat - 2)) * 1.5f;
+        float direction = ((position.X ^ position.Y) & 1) == 0 ? 1 : -1;
+        // Godot's screen Y axis is the inverse of Bevy's world Y axis.
+        return kind == AnimationKind.Hill ? (0, -step * direction) : (-step * direction, 0);
+    }
 
     public void Resize(float width, float height)
     {
@@ -30,6 +73,7 @@ public sealed class TerminalGrid
         Columns = columns;
         Rows = rows;
         _cells = new CellVisual?[checked(columns * rows)];
+        _animations = new AnimationKind[_cells.Length];
     }
 
     public bool TryCell(float x, float y, out Pos cell)
@@ -49,6 +93,10 @@ public sealed class TerminalGrid
     {
         session.SetViewport(Columns, Rows);
         var sampler = new BlockSampler(session.Game);
+        var hillGlyphs = session.Game.Map.Content.Terrains
+            .Where(terrain => terrain.Generator is HillGenerator)
+            .SelectMany(terrain => terrain.Glyphs).ToHashSet();
+        var tree = session.Game.Map.Content.Features.Find("Tree");
         for (int y = 0; y < Rows; y++)
         {
             for (int x = 0; x < Columns; x++)
@@ -59,8 +107,18 @@ public sealed class TerminalGrid
                         ? sampler.Sample(position.X, position.Y, session.Stride)
                         : CellRenderer.Render(session.Game, position.X, position.Y)
                     : null;
+                var visual = _cells[y * Columns + x];
+                _animations[y * Columns + x] = visual is null || !ShouldAnimate(position)
+                    ? AnimationKind.None
+                    : hillGlyphs.Contains(visual.Value.Glyph) &&
+                        (session.Stride > 1 || session.Game.Map.TerrainAt(position.X, position.Y).Generator is HillGenerator)
+                        ? AnimationKind.Hill
+                        : tree?.Glyphs.Contains(visual.Value.Glyph) == true
+                            ? AnimationKind.Tree
+                            : AnimationKind.None;
             }
         }
+        Rebuilds++;
     }
 
     public CellVisual? VisualAt(GameSession session, int x, int y)
