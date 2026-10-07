@@ -86,7 +86,6 @@ From the repository root, on Windows:
 
 ```powershell
 dotnet build godot\TermCity.Godot.csproj
-godot --headless --path godot --editor --import --quit
 godot --path godot -- --seed 42 --size medium
 godot --headless --path godot -- --smoke-test --seed 42 --size large
 dotnet test tests\TermCity.Tests\TermCity.Tests.csproj --filter FullyQualifiedName~GodotPresentationTests
@@ -111,7 +110,8 @@ direction based on world coordinates. Backgrounds and hit targets remain fixed; 
 Beat changes request a redraw without rebuilding cells or changing gameplay. Animation continues while
 paused and its clock freezes while unfocused.
 The bundled DejaVu Sans Mono 2.37 font is checked against every registered map glyph on startup; its
-license is retained in [Assets/DejaVu-LICENSE.txt](../godot/Assets/DejaVu-LICENSE.txt).
+raw bytes are loaded directly rather than through Godot's generated import cache, and its license is retained
+in [Assets/DejaVu-LICENSE.txt](../godot/Assets/DejaVu-LICENSE.txt). Export presets explicitly include both files.
 
 Session updates stop while the window is unfocused, and active drags end on focus loss. Keyboard and
 mouse actions invoke the shared session rather than editing map layers. Prompt/preview state blocks

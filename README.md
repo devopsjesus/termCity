@@ -85,12 +85,13 @@ Install **Godot 4.7.2 .NET** (not the standard build) and the **.NET 10 SDK**:
 
 ```powershell
 dotnet build godot\TermCity.Godot.csproj
-godot --headless --path godot --editor --import --quit
 godot --path godot -- --seed 42 --size medium
 ```
 
 Replace `godot` with the path to your downloaded Godot .NET executable if it is not on `PATH`.
 On macOS/Linux, replace the backslash in the project path with `/`.
+The bundled map font is loaded directly from the project, so launching does not depend on a previously
+generated Godot import cache.
 
 The prototype includes a map, HUD, selection, zoom, pause/speed controls, zoning, and road previews:
 arrow keys move, Shift extends selection, left-drag selects, middle-drag or wheel pans, `+`/`-` zoom,

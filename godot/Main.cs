@@ -39,8 +39,7 @@ public partial class Main : Control
                 _options.SmokeTest ? "user://smoke/quicksave.json" : "user://quicksave.json");
             Session = new GameSession(game, savePath);
             Session.SetMessage("Godot prototype: build roads, zone nearby homes, then press P to resume.");
-            var font = GD.Load<FontFile>("res://Assets/DejaVuSansMono.ttf")
-                ?? throw new InvalidOperationException("Could not load the bundled map font.");
+            var font = LoadBundledFont();
             Map = new TerminalMap { Session = Session, CellFont = font };
             Map.VerifyGlyphs(game.Map.Content);
             CreateLayout(font);
@@ -63,6 +62,18 @@ public partial class Main : Control
             GD.PushError($"TermCity Godot startup failed: {error.Message}");
             GetTree().Quit(1);
         }
+    }
+
+    private static FontFile LoadBundledFont()
+    {
+        const string path = "res://Assets/DejaVuSansMono.ttf";
+        byte[] data = Godot.FileAccess.GetFileAsBytes(path);
+        if (data.Length == 0)
+        {
+            throw new IOException($"Could not read the bundled map font at {path}: {Godot.FileAccess.GetOpenError()}.");
+        }
+
+        return new FontFile { Data = data };
     }
 
     private void CreateLayout(Font font)
