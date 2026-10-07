@@ -343,6 +343,8 @@ public sealed partial class GameSession
             new("New city (same map size)", () => RequestNewCity(restart: false)),
             new("Restart this seed", () => RequestNewCity(restart: true)),
             new("Undo last action", RequestUndo),
+            new("Budget, taxes and loans", ShowBudgetMenu),
+            new("City health report", ShowHealthReport),
             new("Weekly report / milestones", ShowReport),
             new("First-city guide", ShowGuide),
             new("Quit", RequestQuit),

@@ -384,6 +384,12 @@ public sealed class CityGame
             (int)Math.Round(Budget.Loan * Budget.LoanInterestPerWeek));
     }
 
+    public void SetTax(ZoneType zone, double rate)
+    {
+        Taxes.Set(zone, Math.Clamp(double.IsFinite(rate) ? rate : 0.09, 0, 0.3));
+        Invalidate();
+    }
+
     /// <summary>Sets how much of its full cost a service is funded (0-1). Lower funding saves money and weakens the service.</summary>
     public void SetFunding(ServiceKind kind, double level)
     {

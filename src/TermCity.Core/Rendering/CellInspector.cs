@@ -44,6 +44,8 @@ public static class CellInspector
                 {
                     lines.Add($"{h.Total} residents: {h.Adults}A {h.Children}C {h.Seniors}S");
                 }
+
+                AddFullRulesLines(game, pos, zone, lines);
             }
             else
             {
@@ -71,5 +73,24 @@ public static class CellInspector
         }
 
         return lines;
+    }
+
+    private static void AddFullRulesLines(CityGame game, Pos pos, ZoneType zone, List<string> lines)
+    {
+        if (!game.Config.FullRules)
+        {
+            return;
+        }
+
+        int i = game.Map.Index(pos.X, pos.Y);
+        var services = game.Services;
+        if (!services.IsPowered(game.Map, i)) lines.Add("No power");
+        if (!services.IsWatered(game.Map, i)) lines.Add("No water");
+        if (zone == ZoneType.Residential && !game.Map.HouseholdAt(pos.X, pos.Y).IsEmpty)
+        {
+            lines.Add($"Happiness {CityAnalysis.CellHappiness(game, i):0}");
+        }
+
+        lines.Add($"Land value {CityAnalysis.LandValue(game, i):0}");
     }
 }

@@ -593,6 +593,7 @@ public partial class Main : Control
         UpdatePauseGlow();
         _hudPopulation.Text = $"POP {game.Stats.Population:N0}";
         _hudStats.Text = $"BUDGET ${game.Money:N0}" +
+            (game.Config.FullRules ? $" ({(game.Finance.Net >= 0 ? "+" : "-")}${Math.Abs(game.Finance.Net):N0}/wk)" : "") +
             (game.Money <= 0 ? " | OUT OF MONEY" : "");
         _hudStats.Modulate = game.Money <= 0 ? new Color("#ff7777") : new Color("#88ee99");
         FitHeaderFonts();
