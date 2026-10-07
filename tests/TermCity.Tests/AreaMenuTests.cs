@@ -93,19 +93,21 @@ public class AreaMenuTests
         var session = Session();
         session.ShowAreaMenu();
         session.SelectPrompt(2);
-        Assert.Equal("No service buildings are registered.", session.Prompt!.Text);
-        Assert.Single(session.Prompt.Choices);
-        session.SelectPrompt(0);
+        Assert.Equal("Choose a building to preview.", session.Prompt!.Text);
+        int civic = session.Game.Map.Content.Buildings.Count(b => b.PlayerPlaceable);
+        Assert.True(civic > 0);
+        Assert.Equal(civic + 1, session.Prompt.Choices.Count);
+        session.SelectPrompt(civic);
         Assert.Equal("Area menu", session.Prompt!.Title);
 
         var building = session.Game.Map.Content.Buildings.Register(new BuildingType
         {
-            Name = "Clinic", Glyphs = ["+"], Foreground = Rgb.Hex(0xffffff),
+            Name = "Chapel", Glyphs = ["+"], Foreground = Rgb.Hex(0xffffff),
             Cost = 1_000, PlayerPlaceable = true,
         });
         session.SelectPrompt(2);
-        Assert.Contains("Clinic", session.Prompt!.Choices[0].Label);
-        session.SelectPrompt(0);
+        Assert.Contains("Chapel", session.Prompt!.Choices[civic].Label);
+        session.SelectPrompt(civic);
         Assert.Null(session.Prompt);
         Assert.Same(building, session.Preview!.Building);
         Assert.Equal(1_000, session.Preview.Quote.Cost);

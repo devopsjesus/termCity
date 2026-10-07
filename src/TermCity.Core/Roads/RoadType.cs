@@ -24,6 +24,12 @@ public sealed class RoadType : RegisteredType
     /// <summary>Bigger roads can replace smaller ones (an upgrade, paying only the difference).</summary>
     public int Rank { get; init; }
 
+    /// <summary>How many trips a cell of this road carries each week before the city starts to jam.</summary>
+    public int TrafficCapacity { get; init; } = 6;
+
+    /// <summary>Weekly maintenance for one cell of this road at full funding.</summary>
+    public int WeeklyUpkeep { get; init; } = 1;
+
     public bool PlayerPlaceable { get; init; } = true;
 
     public string Description { get; init; } = string.Empty;
@@ -75,6 +81,8 @@ public static class DefaultRoads
         Background = Rgb.Hex(0x2b2b30),
         CostMultiplier = 1.0,
         Rank = 1,
+        TrafficCapacity = 6,
+        WeeklyUpkeep = 1,
         Description = "Local street",
     };
 
@@ -86,6 +94,8 @@ public static class DefaultRoads
         Background = Rgb.Hex(0x2b2f3a),
         CostMultiplier = 1.8,
         Rank = 2,
+        TrafficCapacity = 20,
+        WeeklyUpkeep = 2,
         Description = "Wide avenue",
     };
 
@@ -97,6 +107,8 @@ public static class DefaultRoads
         Background = Rgb.Hex(0x33302a),
         CostMultiplier = 3.0,
         Rank = 3,
+        TrafficCapacity = 60,
+        WeeklyUpkeep = 4,
         Description = "Highway",
     };
 }

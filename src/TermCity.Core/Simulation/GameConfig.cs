@@ -35,6 +35,9 @@ public sealed record GameConfig
 
     public int RoadCostPerCell { get; init; } = 500;
 
+    /// <summary>When false, buildings work without power and water (the city still can have them).</summary>
+    public bool UtilitiesRequired { get; init; } = true;
+
     /// <summary>Residential cells that must be filled before any commercial or industrial cell can fill.</summary>
     public int MinResidentialCells { get; init; } = 10;
 

@@ -40,6 +40,7 @@ public sealed class GameMap
     // not with the size of the map. They are kept in step by SetRoad/SetZone/ClearCell.
     private readonly HashSet<int> _roadCells = [];
     private readonly HashSet<int>[] _zoneCells = [[], [], [], []];
+    private readonly HashSet<int> _serviceCells = [];
 
     public GameMap(int width, int height, GameContent content)
     {
@@ -140,6 +141,9 @@ public sealed class GameMap
 
     public int RoadCount => _roadCells.Count;
 
+    /// <summary>Indexes of every civic (service) building.</summary>
+    public IReadOnlyCollection<int> ServiceCells => _serviceCells;
+
     /// <summary>Indexes of all cells designated for a zone type (enumeration order is not significant).</summary>
     public IReadOnlyCollection<int> ZoneCells(ZoneType zone) => _zoneCells[(int)zone];
 
@@ -147,6 +151,7 @@ public sealed class GameMap
     internal void RebuildIndexes()
     {
         _roadCells.Clear();
+        _serviceCells.Clear();
         foreach (var set in _zoneCells)
         {
             set.Clear();
@@ -162,6 +167,11 @@ public sealed class GameMap
             if (ZoneLayer[i] != ZoneType.None)
             {
                 _zoneCells[(int)ZoneLayer[i]].Add(i);
+            }
+
+            if (BuildingLayer[i] != 0 && Content.Buildings[BuildingLayer[i]].IsService)
+            {
+                _serviceCells.Add(i);
             }
         }
     }
@@ -197,6 +207,14 @@ public sealed class GameMap
         int i = Index(x, y);
         BuildingLayer[i] = building?.Id ?? 0;
         ZoneRemovals.Remove(i);
+        if (building is { IsService: true })
+        {
+            _serviceCells.Add(i);
+        }
+        else
+        {
+            _serviceCells.Remove(i);
+        }
     }
 
     public ZoneRemoval? ZoneRemovalAt(int x, int y) => ZoneRemovals.GetValueOrDefault(Index(x, y));

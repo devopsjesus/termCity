@@ -103,7 +103,7 @@ public class SessionFeatureTests
         var game = session.Game;
         var building = game.Map.Content.Buildings.Register(new BuildingType
         {
-            Name = "Clinic",
+            Name = "Chapel",
             Glyphs = ["X"],
             Foreground = Rgb.Hex(0xffffff),
             Cost = 1_000,
