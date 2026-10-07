@@ -75,6 +75,29 @@ public sealed class GameMap
 
     public bool InBounds(Pos p) => InBounds(p.X, p.Y);
 
+    /// <summary>True when open water lies within <paramref name="reach"/> cells (a square) of the cell.</summary>
+    public bool NearWater(int x, int y, int reach)
+    {
+        var water = Content.Terrains.Find(DefaultTerrains.WaterName);
+        if (water is null)
+        {
+            return false;
+        }
+
+        for (int dy = -reach; dy <= reach; dy++)
+        {
+            for (int dx = -reach; dx <= reach; dx++)
+            {
+                if (InBounds(x + dx, y + dy) && TerrainLayer[Index(x + dx, y + dy)] == water.Id)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     public bool IsEdge(int x, int y) => x == 0 || y == 0 || x == Width - 1 || y == Height - 1;
 
     public int Index(int x, int y) => y * Width + x;

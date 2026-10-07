@@ -72,7 +72,8 @@ public sealed class CityServices
     }
 
     public static CityServices Compute(
-        GameMap map, RoadNetwork network, GameConfig config, Func<ServiceKind, double> funding, double waterFactor = 1)
+        GameMap map, RoadNetwork network, GameConfig config, Func<ServiceKind, double> funding, double waterFactor = 1,
+        double powerDemandFactor = 1)
     {
         int count = map.Width * map.Height;
         var coverage = new byte[8][];
@@ -147,9 +148,9 @@ public sealed class CityServices
             }
         }
 
-        var power = new ServiceSupply(powerSupply, powerDemand);
+        var power = new ServiceSupply(powerSupply, (int)Math.Round(powerDemand * powerDemandFactor));
         var water = new ServiceSupply((int)Math.Round(waterSupply * waterFactor), waterDemand);
-        return new CityServices(coverage, pollution, config.UtilitiesRequired, power, water, buildings, active, upkeep);
+        return new CityServices(coverage, pollution, config.FullRules, power, water, buildings, active, upkeep);
     }
 
     // Strength falls linearly from the full value at the building to (1 - fade) of it at the edge of the radius,

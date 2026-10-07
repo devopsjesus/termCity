@@ -27,6 +27,9 @@ public sealed class BuildingType : RegisteredType
     /// </summary>
     public int Capacity { get; init; }
 
+    /// <summary>What a filled cell of this building is worth in tax, relative to the smallest building of its zone.</summary>
+    public double ValueMultiplier { get; init; } = 1;
+
     /// <summary>Cost per cell when placed by the player.</summary>
     public int Cost { get; init; }
 
@@ -105,7 +108,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             Glyphs = ["▣", "▦", "▣"],
             Foreground = Rgb.Hex(0x9fd0ff),
             Zone = ZoneType.Commercial,
-            Capacity = 6,
+            Capacity = 14,
             Description = "Stores and offices",
         });
         registry.Register(new BuildingType
@@ -116,7 +119,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             Glyphs = ["▤", "▩", "▤"],
             Foreground = Rgb.Hex(0xffe08a),
             Zone = ZoneType.Industrial,
-            Capacity = 9,
+            Capacity = 14,
             Pollution = 2,
             Description = "Workshops and plants",
         });
@@ -131,6 +134,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             Zone = ZoneType.Residential,
             Level = 2,
             Capacity = 18,
+            ValueMultiplier = 2.5,
             Description = "A mid-rise block of flats",
         });
         registry.Register(new BuildingType
@@ -142,7 +146,8 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             Foreground = Rgb.Hex(0x7fbcff),
             Zone = ZoneType.Commercial,
             Level = 2,
-            Capacity = 24,
+            Capacity = 40,
+            ValueMultiplier = 2.6,
             Description = "Offices and department stores",
         });
         registry.Register(new BuildingType
@@ -154,7 +159,8 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             Foreground = Rgb.Hex(0xffd060),
             Zone = ZoneType.Industrial,
             Level = 2,
-            Capacity = 28,
+            Capacity = 40,
+            ValueMultiplier = 2.6,
             Pollution = 4,
             Description = "A large manufacturing plant",
         });
@@ -169,6 +175,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             Zone = ZoneType.Residential,
             Level = 3,
             Capacity = 48,
+            ValueMultiplier = 5.5,
             Description = "A high-rise residential tower",
         });
         registry.Register(new BuildingType
@@ -180,7 +187,8 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             Foreground = Rgb.Hex(0xc4e2ff),
             Zone = ZoneType.Commercial,
             Level = 3,
-            Capacity = 90,
+            Capacity = 110,
+            ValueMultiplier = 6.0,
             Description = "A downtown skyscraper",
         });
         registry.Register(new BuildingType
@@ -192,7 +200,8 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             Foreground = Rgb.Hex(0xffe9a0),
             Zone = ZoneType.Industrial,
             Level = 3,
-            Capacity = 60,
+            Capacity = 80,
+            ValueMultiplier = 6.0,
             Pollution = 6,
             Description = "A heavy industrial complex",
         });

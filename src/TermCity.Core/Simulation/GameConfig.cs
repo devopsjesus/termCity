@@ -7,6 +7,16 @@ public enum GameSpeed
     Fast,
 }
 
+/// <summary>
+/// Classic keeps the original sandbox: families move in at a steady rate, one flat tax, nothing needs power or water, and
+/// nothing goes wrong. Full is the city simulation: services, utilities, jobs, ageing, migration, density, budgets and events.
+/// </summary>
+public enum CityRules
+{
+    Classic,
+    Full,
+}
+
 /// <summary>All tunable rules and starting values. Serialized into save files so a loaded game keeps its rules.</summary>
 public sealed record GameConfig
 {
@@ -35,8 +45,12 @@ public sealed record GameConfig
 
     public int RoadCostPerCell { get; init; } = 500;
 
-    /// <summary>When false, buildings work without power and water (the city still can have them).</summary>
-    public bool UtilitiesRequired { get; init; } = true;
+    /// <summary>Which rules the city plays by. See <see cref="CityRules"/>.</summary>
+    public CityRules Rules { get; init; } = CityRules.Full;
+
+    /// <summary>True when utilities, services, jobs, demographics, budgets and disasters matter.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool FullRules => Rules == CityRules.Full;
 
     /// <summary>Residential cells that must be filled before any commercial or industrial cell can fill.</summary>
     public int MinResidentialCells { get; init; } = 10;
@@ -47,7 +61,7 @@ public sealed record GameConfig
     public int ResidentialPerIndustrial { get; init; } = 10;
 
     /// <summary>Tax collected each week is this fraction of the weekly value of every filled cell.</summary>
-    public double DefaultTaxRate { get; init; } = 0.05;
+    public double DefaultTaxRate { get; init; } = 0.09;
 
     /// <summary>How far (in cells, through open ground) a connected road serves surrounding zones.</summary>
     public int RoadServiceReach { get; init; } = 2;
@@ -65,6 +79,32 @@ public sealed record GameConfig
     /// the residents allow, for those zones), so growth compounds: 0.02 is two percent a week.
     /// </summary>
     public double GrowthRatePerWeek { get; init; } = 0.02;
+
+    /// <summary>Share of adults who work (and, for seniors, still work).</summary>
+    public double AdultParticipation { get; init; } = 0.72;
+
+    public double SeniorParticipation { get; init; } = 0.08;
+
+    /// <summary>Jobs that exist without a building: self-employed, home businesses, odd jobs, as a share of workers.</summary>
+    public double InformalJobShare { get; init; } = 0.15;
+
+    /// <summary>Trips each resident makes on the road network in a week, before the place's car dependence.</summary>
+    public double TripsPerResident { get; init; } = 0.9;
+
+    /// <summary>Full rules: share of the city's population that arrives or leaves in a week when it is perfectly attractive.</summary>
+    public double MigrationRatePerWeek { get; init; } = 0.012;
+
+    /// <summary>Full rules: weekly chance, per building, that a fire starts (before fire cover and the place's fire risk).</summary>
+    public double FireIgnitionPerBuildingWeek { get; init; } = 0.00006;
+
+    public int OutbreakMinPopulation { get; init; } = 400;
+
+    public double OutbreakChancePerWeek { get; init; } = 0.004;
+
+    public double FloodChancePerWeek { get; init; } = 0.012;
+
+    /// <summary>Weekly chance that a filled cell is considered for a density upgrade or downgrade.</summary>
+    public double DensityChangePerWeek { get; init; } = 0.02;
 
     public int WeeksPerYear { get; init; } = 52;
 
