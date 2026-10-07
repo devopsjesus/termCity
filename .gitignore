@@ -4,3 +4,5 @@ obj/
 *.user
 rust/target/
 rust/target-*/
+bevy/target/
+bevy/target-*/

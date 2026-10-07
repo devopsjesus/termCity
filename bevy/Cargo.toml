@@ -1,0 +1,27 @@
+[package]
+name = "termcity-bevy"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+
+# Keep the engine/toolchain separate from the terminal workspace.
+[workspace]
+
+[dependencies]
+ab_glyph = "0.2.32"
+bevy = { version = "=0.19.1", default-features = false, features = ["2d", "ui", "png"] }
+termcity-core = { path = "../rust/crates/termcity-core" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

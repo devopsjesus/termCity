@@ -75,6 +75,80 @@ deliberately incompatible with C# saves and cannot overwrite the C# quick-save b
 On Windows, Cargo needs either the Visual C++ build tools for the default MSVC Rust target or a complete GNU Rust
 toolchain plus MinGW on `PATH`. Use one toolchain consistently for build scripts and the final target.
 
+### Bevy graphical frontend
+
+`bevy/` is an independent Cargo project using pinned Bevy 0.19.1 and a path dependency on
+`termcity-core`. It requires Rust 1.95+, without raising the existing terminal workspace's declared
+Rust 1.85 minimum. Its lockfile is versioned independently. Ordinary terminal CI remains unchanged.
+
+From the repository root on Windows:
+
+```powershell
+cargo run --manifest-path bevy\Cargo.toml -- --seed 42 --size large
+cargo fmt --manifest-path bevy\Cargo.toml --all -- --check
+cargo clippy --manifest-path bevy\Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path bevy\Cargo.toml --all-targets
+cargo build --manifest-path bevy\Cargo.toml --release
+.\bevy\target\release\termcity-bevy.exe --seed 42 --size large --smoke --frames 600
+.\bevy\target\release\termcity-bevy.exe --seed 42 --size large --smoke --frames 600 --no-vsync
+```
+
+Use `/` in paths on other platforms. The native smoke test opens a real GPU-backed window; it is
+not a headless unit test and needs a desktop session. Use `--screenshot PATH.png` with `--smoke`
+to capture the map. Smoke saves live in a newly created per-process temporary directory and are
+removed after successful validation, rather than overwriting player saves.
+
+The smoke exercises actual input systems, pointer hit testing, zoning/dezoning, road
+preview/confirmation, zoom, resize, focus suspension, pause, guide prompts, quick-save round trips,
+autosave, and canceling both keyboard and window-close quit guards. It also verifies that visible
+hill and tree transforms change while paused without mutating gameplay or rebuilding the base map,
+with hills moving vertically and trees horizontally on the same beat.
+Success prints `TERMCITY_BEVY_SMOKE_OK` plus large-map frame and presentation timings. An assertion
+failure or initialization error fails the process. The 60 FPS goal is a 16.7 ms frame budget:
+presentation timings alone do not prove the total frame budget, and shader warmup is excluded from
+the reported samples. Native macOS/Linux certification is not implied by a Windows run.
+Use `--no-vsync` to measure uncapped whole-frame capacity separately from monitor/compositor pacing;
+normal play uses VSync. The smoke also checks that camera projection and pointer mapping agree after
+a DPI-scale override and restoration.
+
+Initial Windows measurements (optimized development build, seed 42, 640x384 map, 1200x720 logical
+window, Intel Core Ultra 7 165H / Intel Arc integrated GPU, Vulkan): 2,600 visible cells / 5,200
+presentation entities. Over 480 post-warmup frames with animation, panning, and zooming, VSync
+averaged 60.0 FPS with 17.57 ms frame p95; uncapped rendering averaged 322.2 FPS with 4.85 ms frame
+p95. Presentation update p95 was 0.20-0.24 ms. The uncapped run shows headroom below the 16.7 ms
+budget; VSync/compositor pacing still has small tail variation. These are prototype measurements,
+not a guarantee for every GPU or a fully developed city.
+
+Architecture:
+
+```text
+Bevy window/input -> Host -> existing GameSession -> CityGame
+MapRenderer snapshot -> cached visible cells -> shared glyph atlas + batched sprites
+Presentation clock -> hill/tree transforms (independent of simulation pause and persistence)
+```
+
+The core remains ordinary Rust, not ECS components. Only presentation state belongs to Bevy.
+There are background/glyph sprites for **visible display cells**, not entities for the entire city.
+The base cache is keyed by map version, seed, camera, zoom, and viewport size. Selection/preview/cursor
+overlays have a separate dirty key; simulation clock updates do not regenerate the base map.
+Selection and placement always use core map coordinates, never animated glyph transforms.
+Hills bob vertically at 80 BPM (up/up/down/down), holding each 0.75-second step
+for a three-second cycle.
+Visible tree glyphs bounce left/left/right/right on that same beat, with no vertical movement.
+Only about 10% of hills and trees animate. A salted coordinate hash selects the subset when the
+base cache refreshes, independently of glyph variation and without consuming gameplay RNG.
+Selection stays world-anchored as the camera scrolls; nonselected elements remain stationary.
+Neighboring sampled tiles move in opposite directions using a world-anchored checkerboard;
+zoomed-out blocks alternate too, while both characters of a 2x tile share one phase.
+At 2x zoom, repeated display characters match the existing terminal presentation.
+Focus loss ends gestures and suspends both clocks; refocus drops the first delta to avoid catch-up.
+
+The font is embedded and rasterized into an atlas once at startup, with glyph coverage/bounds checked
+for all registered terrain, features, roads, buildings, and zones. Its original license is retained
+in `bevy/assets/DejaVu-LICENSE.txt` and available through `--font-license`.
+The host opts into 2D/UI support only; 3D, physics, audio, shaders, full terminal UI parity, minimap,
+and loading/undo/report menus are outside this prototype.
+
 ## Architecture
 
 ```

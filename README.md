@@ -77,6 +77,50 @@ On Linux and macOS, use `/` in those paths and run `./rust/target/release/termci
 The Rust version supports the same command-line options and gameplay. Its saves intentionally use a distinct format
 and default location, so C# and Rust quick-saves cannot overwrite or load each other.
 
+### Bevy graphical prototype
+
+The optional [Bevy](https://bevy.org/) frontend runs the existing Rust simulation in a native window,
+with a terminal-style 2D map and hills bobbing up/up/down/down at 80 BPM
+(0.75 seconds per step, a three-second cycle).
+Neighboring tiles alternate in a checkerboard pattern, moving in opposite vertical directions
+without sideways sway. It does not launch or emulate a terminal.
+Trees bounce left/left/right/right on the same 80 BPM beat, with neighboring tiles alternating.
+Only about 10% of each type animates; the chosen subset stays stable as you scroll.
+Gameplay starts paused; decorative animation continues while paused. Losing window focus suspends both.
+
+Requires **Rust 1.95 or newer**, a graphics driver supported by Bevy/wgpu, and the native build tools
+described in the [developer guide](docs/DEVELOPMENT.md#rust-implementation). Bevy 0.19.1 is pinned in
+an independent Cargo project, so the terminal workspace does not acquire engine dependencies.
+The first engine build can take several minutes.
+
+```powershell
+cargo run --manifest-path bevy\Cargo.toml -- --seed 42 --size large
+cargo build --manifest-path bevy\Cargo.toml --release
+.\bevy\target\release\termcity-bevy.exe
+```
+
+On Linux/macOS, use `/` in those paths. Native runtime validation has been performed on Windows only.
+
+| Controls | Action |
+|---|---|
+| Arrows / Shift+arrows | Move cursor / extend selection |
+| Left click and drag | Select map cells |
+| WASD / right drag | Pan |
+| Mouse wheel / `+` / `-` | Zoom |
+| `P` / `1`, `2`, `3` | Pause / set speed and resume |
+| `R`, `C`, `I` / `U` | Zone / dezone selected cells |
+| `B` / `T` | Preview a road over the selection / start a straight road line |
+| Enter / Esc | Confirm preview / cancel preview or selection |
+| F5 / F6 | Quick-save / first-city guide |
+| `Q` / window close | Quit with save/discard/cancel protection |
+
+Prompts use numbered choices; Esc cancels, and Enter accepts a single-choice prompt.
+Saves use the normal **Rust save format** but a separate `TermCityBevy/quicksave-bevy.json`
+location, avoiding collisions with the terminal quick-save. Loading UI, minimap, full menus/reports,
+undo UI, actual 3D, and advanced effects are intentionally deferred.
+The bundled DejaVu Sans Mono font and its license are embedded in the executable; `--font-license`
+prints the license. No separate font installation is needed.
+
 ### Command-line options
 
 | Option | What it does | Default and range |
