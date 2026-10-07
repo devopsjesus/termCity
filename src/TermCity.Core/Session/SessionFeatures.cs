@@ -14,8 +14,19 @@ public enum PlacementKind
     Demolish,
 }
 
-public sealed record PlacementPreview(PlacementKind Kind, CellRect Area, Quote Quote, string Name, RoadType? Road = null, BuildingType? Building = null)
+/// <summary>
+/// What a placement would cover. <see cref="Area"/> is the rectangle; for a road line at an angle, <see cref="Cells"/>
+/// holds just the cells on the line and <see cref="Area"/> their bounding box.
+/// </summary>
+public sealed record PlacementPreview(
+    PlacementKind Kind, CellRect Area, Quote Quote, string Name, RoadType? Road = null, BuildingType? Building = null,
+    IReadOnlySet<Pos>? Cells = null)
 {
+    /// <summary>Whether the placement covers any cell of <paramref name="block"/>.</summary>
+    public bool Touches(CellRect block) => Cells is null
+        ? Area.X <= block.Right && Area.Right >= block.X && Area.Y <= block.Bottom && Area.Bottom >= block.Y
+        : block.Cells().Any(Cells.Contains);
+
     public bool IsValid(CityGame game, int x, int y) => Kind switch
     {
         PlacementKind.Road => game.CanPlaceRoad(x, y, Road),
@@ -27,16 +38,29 @@ public sealed record PlacementPreview(PlacementKind Kind, CellRect Area, Quote Q
     public string Summary => $"{Name}: {Quote.Cells} valid, {Quote.Skipped} blocked, {Fmt.Money(Quote.Cost)}";
 }
 
-public sealed record SessionChoice(string Label, Action Select);
+/// <summary>One selectable row of a prompt. With table columns, <see cref="Label"/> fills the first and <see cref="Cells"/> the rest.</summary>
+public sealed record SessionChoice(string Label, Action Select, IReadOnlyList<string>? Cells = null);
+
+/// <summary>One page of a tabbed prompt such as the guide.</summary>
+public sealed record PromptTab(string Title, string Text);
 
 public sealed class SessionPrompt(
-    string title, string text, IReadOnlyList<SessionChoice> choices, string? input = null, string? footer = null)
+    string title, string text, IReadOnlyList<SessionChoice> choices, string? input = null, string? footer = null,
+    IReadOnlyList<TableColumn>? columns = null, IReadOnlyList<PromptTab>? tabs = null, int activeTab = 0)
 {
     public string Title { get; } = title;
     public string Text { get; } = text;
     public IReadOnlyList<SessionChoice> Choices { get; } = choices;
     public string? Input { get; set; } = input;
     public string? Footer { get; } = footer;
+
+    /// <summary>When set, the choices are drawn as a table with these column headers (the first heads the choice label).</summary>
+    public IReadOnlyList<TableColumn>? Columns { get; } = columns;
+
+    /// <summary>When set, the text is one page of several, switched with tabs along the top of the dialog.</summary>
+    public IReadOnlyList<PromptTab>? Tabs { get; } = tabs;
+
+    public int ActiveTab { get; } = activeTab;
 }
 
 public sealed partial class GameSession
@@ -71,12 +95,12 @@ public sealed partial class GameSession
     }
 
     public string GuideText => Game.Stats.Residential.Zoned == 0
-        ? "First city: cut a track (T), mark out homesteads (R), then resume (P). F6 dismisses the guide."
+        ? "First city: cut a track (T), mark out homesteads (R), then resume (P). F6 opens the guide."
         : Game.Stats.Residential.Occupied >= Game.Config.MinResidentialCells
-            ? "Markets and workshops unlocked: zone with C and I. F6 dismisses the guide."
+            ? "Markets and workshops unlocked: zone with C and I. F6 opens the guide."
         : Game.Paused
             ? "Homes zoned. Check road access, then press P to resume. Markets and workshops unlock at 10 occupied homes."
-            : $"Grow to {Game.Config.MinResidentialCells} occupied homes to unlock markets and workshops. F6 dismisses the guide.";
+            : $"Grow to {Game.Config.MinResidentialCells} occupied homes to unlock markets and workshops. F6 opens the guide.";
 
     public string AutosavePath(int slot)
     {
@@ -171,14 +195,14 @@ public sealed partial class GameSession
 
     private void RefreshRoadLine()
     {
-        var end = Math.Abs(Cursor.X - _roadAnchor.X) >= Math.Abs(Cursor.Y - _roadAnchor.Y)
-            ? new Pos(Cursor.X, _roadAnchor.Y) : new Pos(_roadAnchor.X, Cursor.Y);
-        var area = CellRect.FromCorners(_roadAnchor, end);
+        var line = CellLines.Between(_roadAnchor, Cursor);
+        var area = CellRect.FromCorners(_roadAnchor, Cursor);
         var road = _lineRoad ?? Game.DefaultRoad;
-        var quote = Game.QuoteRoad(area, road);
-        bool hasGap = area.Cells().Any(p => !Game.CanPlaceRoad(p.X, p.Y, road) && !Game.Map.HasRoad(p.X, p.Y));
+        var quote = Game.QuoteRoad(line, road);
+        var laid = Game.PlanRoad(line, road).ToHashSet();
+        bool hasGap = line.Any(p => !laid.Contains(p) && !Game.Map.HasRoad(p.X, p.Y));
         Preview = new(PlacementKind.Road, area, quote,
-            hasGap ? road.Name + " line (gaps)" : road.Name + " line", Road: road);
+            hasGap ? road.Name + " line (gaps)" : road.Name + " line", Road: road, Cells: line.ToHashSet());
         Changed?.Invoke();
     }
 
@@ -191,7 +215,8 @@ public sealed partial class GameSession
 
         var result = Execute(() => preview.Kind switch
         {
-            PlacementKind.Road => Game.BuildRoad(preview.Area, preview.Road),
+            PlacementKind.Road => preview.Cells is { } line
+                ? Game.BuildRoad(line, preview.Road) : Game.BuildRoad(preview.Area, preview.Road),
             PlacementKind.Building when preview.Building is { } building => Game.PlaceBuilding(building, preview.Area),
             PlacementKind.Demolish => Game.Demolish(preview.Area),
             _ => ActionResult.Fail("No building type selected."),
@@ -247,10 +272,38 @@ public sealed partial class GameSession
     }
 
     public void ShowPrompt(
-        string title, string text, IReadOnlyList<SessionChoice> choices, string? input = null, string? footer = null)
+        string title, string text, IReadOnlyList<SessionChoice> choices, string? input = null, string? footer = null,
+        IReadOnlyList<TableColumn>? columns = null)
     {
-        Prompt = new(title, text, choices, input, footer);
+        Prompt = new(title, text, choices, input, footer, columns);
         Changed?.Invoke();
+    }
+
+    /// <summary>Shows a prompt whose text is one of several pages, with a tab for each along the top.</summary>
+    public void ShowTabbedPrompt(
+        string title, IReadOnlyList<PromptTab> tabs, int activeTab, IReadOnlyList<SessionChoice> choices,
+        IReadOnlyList<TableColumn>? columns = null)
+    {
+        activeTab = Math.Clamp(activeTab, 0, tabs.Count - 1);
+        Prompt = new(title, tabs[activeTab].Text, choices, null, null, columns, tabs, activeTab);
+        Changed?.Invoke();
+    }
+
+    /// <summary>Switches a tabbed prompt by <paramref name="delta"/> tabs, wrapping around.</summary>
+    public void CycleTab(int delta)
+    {
+        if (Prompt is { Tabs: { Count: > 0 } tabs } prompt)
+        {
+            SelectTab((prompt.ActiveTab + delta % tabs.Count + tabs.Count) % tabs.Count);
+        }
+    }
+
+    public void SelectTab(int index)
+    {
+        if (Prompt is { Tabs: { Count: > 0 } tabs } prompt && index >= 0 && index < tabs.Count && index != prompt.ActiveTab)
+        {
+            ShowTabbedPrompt(prompt.Title, tabs, index, prompt.Choices, prompt.Columns);
+        }
     }
 
     public void ClosePrompt()
@@ -332,52 +385,58 @@ public sealed partial class GameSession
         return fullPath;
     }
 
+    public static readonly IReadOnlyList<TableColumn> CityMenuColumns = ["COMMAND", "DESCRIPTION", "STATE"];
+
     public void ShowSessionMenu()
     {
         CancelPreview();
         ShowPrompt("City menu", $"Seed {Game.Config.Seed} | {Game.Map.Width}x{Game.Map.Height}",
         [
-            new("Back to city", ClosePrompt),
-            new("Save quick-save", () => { if (QuickSave()) ClosePrompt(); }),
-            new("Load city", ShowLoadMenu),
-            new("New city (same map size)", () => RequestNewCity(restart: false)),
-            new("Restart this seed", () => RequestNewCity(restart: true)),
-            new("Undo last action", RequestUndo),
-            new("Budget, taxes and loans", ShowBudgetMenu),
-            new("City health report", ShowHealthReport),
-            new("Weekly report / milestones", ShowReport),
-            new("First-city guide", ShowGuide),
-            new("Quit", RequestQuit),
-        ]);
+            new("Back to city", ClosePrompt, ["Close this menu"]),
+            new("Save", () => { if (QuickSave()) ClosePrompt(); }, ["Write the quick-save file"]),
+            new("Load", ShowLoadMenu, ["Quick-save, autosaves or a file"]),
+            new("New city", () => RequestNewCity(restart: false), ["A fresh random map of the same size"]),
+            new("Restart", () => RequestNewCity(restart: true), ["Replay this seed from the start"]),
+            new("Undo", RequestUndo, ["Roll back the last action"]),
+            new("Budget", ShowBudgetMenu, ["Funding, taxes and loans"]),
+            new("Health", ShowHealthReport, ["Indicators, complaints and events"]),
+            new("Report", ShowReport, ["Weekly report and milestones"]),
+            new("Guide", () => ShowGuide(), ["How to play, tab by tab"]),
+            new("Quit", RequestQuit, ["Leave TermCity"]),
+        ], columns: CityMenuColumns);
     }
+
+    public static readonly IReadOnlyList<TableColumn> LoadMenuColumns = ["SOURCE", "NOTE"];
 
     public void ShowLoadMenu()
     {
-        var choices = new List<SessionChoice> { new("Quick-save", () => RequestLoad(SavePath)) };
+        var choices = new List<SessionChoice> { new("Quick-save", () => RequestLoad(SavePath), ["Your own save (F5)"]) };
         for (int i = 1; i <= AutosaveSlots; i++)
         {
             int slot = i;
-            choices.Add(new($"Autosave {slot} ({(slot == 1 ? "newest" : "backup")})", () => RequestLoad(AutosavePath(slot))));
+            choices.Add(new($"Autosave {slot}", () => RequestLoad(AutosavePath(slot)), [slot == 1 ? "Newest" : "Older backup"]));
         }
 
-        choices.Add(new("Enter a file path", () =>
+        choices.Add(new("File path", () =>
             ShowPrompt("Load file", OperatingSystem.IsMacOS()
                     ? "Enter a save-file path. Control+A clears the field; Return selects the highlighted button."
                     : "Enter a save-file path. Ctrl+A clears the field; Enter selects the highlighted button.",
-                [new("Load", () => RequestLoad(Prompt!.Input!)), new("Cancel", ClosePrompt)], SavePath)));
-        choices.Add(new("Cancel", ClosePrompt));
-        ShowPrompt("Load city", "Choose a quick-save, autosave, or file path.", choices);
+                [new("Load", () => RequestLoad(Prompt!.Input!)), new("Cancel", ClosePrompt)], SavePath), ["Type where a save lives"]));
+        choices.Add(new("Cancel", ClosePrompt, ["Back to the city"]));
+        ShowPrompt("Load city", "Choose a quick-save, autosave, or file path.", choices, columns: LoadMenuColumns);
     }
 
-    public void ShowGuide()
+    public static readonly IReadOnlyList<TableColumn> GuideChoiceColumns = ["ACTION", "DESCRIPTION"];
+
+    public void ShowGuide(int tab = 0)
     {
-        GuideVisible = true;
-        ShowPrompt("Your first city",
-            $"1. Join a track to the King's Road (T draws a line).\n2. Mark out homesteads nearby with R.\n3. Press P to resume. At {Game.Config.MinResidentialCells} occupied homes, markets and workshops unlock.",
-        [
-            new("Start building / keep guide", ClosePrompt),
-            new("Dismiss guide", DismissGuide),
-        ]);
+        var choices = new List<SessionChoice> { new("Close", ClosePrompt, ["Back to the city"]) };
+        if (GuideVisible)
+        {
+            choices.Add(new("Dismiss tip", DismissGuide, ["Hide the sidebar tip for good"]));
+        }
+
+        ShowTabbedPrompt("TermCity guide", GuideContent.Tabs(Game), tab, choices, GuideChoiceColumns);
     }
 
     public void DismissGuide()

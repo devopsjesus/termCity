@@ -12,7 +12,7 @@ The Godot-local solution also remains available for editor integration.
 ```bash
 dotnet build TermCity.slnx
 godot --path godot -- --seed 42 --size medium
-godot --headless --path godot -- --size CON --seed 42 --dump-map
+godot --headless --path godot -- --size SF --seed 42 --dump-map
 dotnet build TermCity.slnx -c Release
 dotnet test TermCity.slnx -c Release --no-build
 ```
@@ -56,7 +56,22 @@ Default zones are Residential, Commercial and Industrial. A residential househol
 children and seniors; occupied businesses contribute income but not population.
 
 `CellRenderer` composes terrain, features, zones, buildings and roads into glyph/foreground/background.
-Road glyphs use cardinal neighbor masks; diagonal highways are connected staircases.
+The road tool (T) draws a line at any angle between its two ends (`CellLines.Between`, four-connected so the simulation can follow it); the preview carries just the cells on the line. Straight runs and diagonal staircases are drawn as straight lines (`RoadCurves.Straighten`), rounded only at real bends.
+Roads may cross and branch but never run side by side: `CityGame.PlanRoad` (via `RoadRules.Plan`) lets a stroke touch another road only where it runs into it or at its two ends, and never completes a 2x2 block of road (`CompletesRoadBlock`). It also refuses a new junction within `RoadRules.JunctionSpacing` cells of an existing one. Quote, build and the line preview all use that plan, generated maps lay highways first and then the street grid as strokes through the same rules (`CityMapGeometry.Grid`), `RoadSeparation.RemoveFragments` drops tiny detached scraps, and `RoadSeparation.Apply` clears generated roads that form 2x2 blocks (dropping the humblest road where the neighbours stay connected). In `RoadCurves`, `Pair` decides which arms of a junction run through it (highest rank first, then straightest), so a diagonal highway stays one curve; `Join` moves each branch end onto the host curve and, unless the meeting is nearly square, `Ramp` bends it into a quadratic merge along the host. Zoomed out, `RoadVectorLayer.Weight`/`Opacity`/`Shown`/`RankOpacity` thin, fade and (at stride 8+) drop the minor roads, while top-rank highways always keep a narrow bed and a thin double line (`HighwayBedHalf`, `HighwayLineOffset`, `HighwayLineHalf`) so they stay a backdrop.
+Road glyphs use cardinal neighbor masks; generated highways leave each interchange along a compass arm and then run at any angle as four-connected staircases.
+Every road type is drawn as a curve when `vectorRoads` is passed (any zoom level, no overlay; `BlockSampler.VectorRoads`
+and `TerminalGrid` pass it, the minimap does not and stays glyph-based): the cell is left blank and
+`RoadCurves`/`RoadVectorLayer` supply the picture. The simulation is unchanged and still four-connected.
+`RoadCurves.Extract` traces roads as paths that run straight through junctions, cuts a path where the road type changes
+(`SplitByType`, so each stretch keeps its own colours and the seam is hidden by a one-cell overlap), then straightens,
+resamples and smooths each (a branch ends a short setback before the road it joins). `RoadVectorLayer`
+rasterises 16x16-cell chunks with a signed-distance field per path, blended across paths with a smooth minimum so
+junction corners get fillets. The bed is opaque out to the outer edge of the two edge lines (`BedHalfWidth`), so it hides
+terrain glyphs and water; chunks are drawn after the terrain glyph pass. When zoomed out (`Stride` > 1) chunks are
+rendered at `Render(chunkX, chunkY, scale, stride)`, covering stride times the map area at the same on-screen width.
+Ambient sprites (cars, walkers) follow the drawn curve: `IAmbientWorld.Snap` projects their position onto `RoadGuide`'s
+segments (filtered with `FollowRate` so they glide), and speeds are the `AmbientLife` `*Speed` constants.
+`godot/TerminalMap` caches the chunks as textures and draws them between the cell backgrounds and the glyphs.
 Existing roads over water render as bridges. Unserved zones dim and disconnected roads turn amber.
 `BlockSampler` chooses representative visuals for coarse zoom, prioritizing buildings, zones,
 roads, water, hills, features and open ground. `CellInspector` supplies bottom-line details.
@@ -73,22 +88,26 @@ Random `MapGenerator` stages are deterministic from the seed:
 Perlin noise controls terrain coverage. The default hills cover about 17%; water generators
 produce sea edges, bays, lakes, deltas or meandering rivers plus smaller bodies.
 Highways reach map edges, connect through cardinal links and use straight bridges in random maps.
+Highways between interchanges are angled: a straight lead (5 columns or 3 rows) out of each arm, joined by an evenly
+stepped staircase, with turns of at most 60 degrees on screen. Where water, crowding or the map rules that out, an L or Z
+of right-angle corners with legs of at least four cells is used instead; bridges never bend. Gateway rays drift sideways
+as they run to the edge. Nearly aligned interchanges are still snapped into line. Two arms of one interchange fan out
+rather than run side by side.
 
 `MapSize` accepts small 160x96, medium 320x192, large 640x384, custom 80x24 through 640x384,
-and case-insensitive city presets **CON/NAP/GEN/LUB/YRK** (Constantinople, Naples, Genoa, Lubeck, York).
+and case-insensitive city presets **SF/LA/SD/CHI/STL** (San Francisco, Los Angeles, San Diego, Chicago, St. Louis).
 Named presets set `GameConfig.Scenario`, normalize new maps to 640x384 and use `CityScenarioMap`.
-Constantinople delegates to `ConstantinopleMap`; shared `CityMapGeometry` handles polygons, ellipses and
+San Francisco delegates to `SanFranciscoMap`; shared `CityMapGeometry` handles polygons, ellipses and
 orthogonally connected road paths.
 
 These are hand-shaped, north-up regional approximations, not GIS/current land-use datasets.
 The layouts include city-specific coastlines/rivers/hills/parks and road-served occupied R/C/I
-districts. These are medieval stand-ins for the original regional layouts (San Francisco, Los Angeles, San Diego, Chicago and
-St. Louis); the geography is unchanged. Households use independent scenario RNG stages.
+districts. They keep the medieval setting's vocabulary and economy. Households use independent scenario RNG stages.
 
 Named cities start paused without automatic onboarding. Explicit F6 guide requests still work.
-Saved dimensions/layers remain unchanged on load; restarting an older medium Constantinople (formerly SF) save generates
-the expanded large scenario. The legacy `SanFrancisco` configuration alias and the old scenario names
-(`LosAngeles`, `SanDiego`, `Chicago`, `StLouis`) read as their stand-ins.
+Saved dimensions/layers remain unchanged on load; restarting an older medium San Francisco save generates
+the expanded large scenario. The legacy `SanFrancisco` configuration alias and the medieval stand-in scenario names
+(`Constantinople`, `Naples`, `Genoa`, `Lubeck`, `York`) written by earlier medieval builds are still read.
 
 ## Simulation
 
@@ -256,7 +275,7 @@ dotnet test TermCity.slnx -c Release
 dotnet test tests/TermCity.Tests/TermCity.Tests.csproj \
   --filter "FullyQualifiedName~GodotPresentationTests|FullyQualifiedName~CityScenarioTests"
 godot --headless --path godot -- --smoke-test --seed 42 --size large
-godot --path godot -- --smoke-test --seed 42 --size CON --capture /absolute/path/city.png
+godot --path godot -- --smoke-test --seed 42 --size SF --capture /absolute/path/city.png
 ```
 
 Unit tests cover economy/growth, calendar, road networks, generation/water, named-city geography,

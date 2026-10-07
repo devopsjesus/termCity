@@ -31,7 +31,7 @@ Game options follow Godot's `--` separator:
 | Option | Behavior |
 |---|---|
 | `--seed <n>` | Reproducible signed 32-bit seed; random by default |
-| `--size <size>` | `small`, `medium`, `large`, `CON`, `NAP`, `GEN`, `LUB`, `YRK`, or `WIDTHxHEIGHT`; default `small` |
+| `--size <size>` | `small`, `medium`, `large`, `SF`, `LA`, `SD`, `CHI`, `STL`, or `WIDTHxHEIGHT`; default `small` |
 | `--load [file]` | Load a city; without a path, use the quick-save |
 | `--fps <n>` | Render frame cap, 5-60; default 30 |
 | `--reduced-motion` | Disable all terminal effects (sprites, shakes, ambient life) |
@@ -39,9 +39,9 @@ Game options follow Godot's `--` separator:
 | `-h`, `--help` | Print game options and exit; works headlessly |
 
 ```bash
-godot --path godot -- --size CON --seed 42
+godot --path godot -- --size SF --seed 42
 godot --path godot -- --load /absolute/path/to/quicksave.json
-godot --headless --path godot -- --size LUB --seed 42 --dump-map
+godot --headless --path godot -- --size CHI --seed 42 --dump-map
 ```
 
 A command-line load failure exits with an error. In-game load failures keep the current city and
@@ -52,6 +52,11 @@ leave a visible error in the dialog. When loading, the saved map/configuration o
 Random cities start paused with a first-city guide. Connect roads to an existing highway or a map
 edge, zone nearby homes with **R**, and resume with **P**. A connected road serves land within
 two cells; water blocks service from spreading across it. Disconnected roads are amber.
+
+Press **F6** (or Esc > Guide) for the GUIDE, a tabbed dialog (Start, Zones, Roads, Services, Population, Happiness,
+Economy; Left/Right or a click switches tab) that explains how each thing you place drives the town's population.
+**F1** is only the short table of controls. Placing a zone, road or building makes a soft click-clack keyboard sound
+(it is silenced with **Esc > Music**, and when the window is unfocused).
 
 ### Services, budget and the full city engine
 
@@ -166,10 +171,10 @@ city saves. No external recording, audio asset, or audio package is required.
 |---|---|
 | Move cursor | Arrow keys |
 | Jump a screen | Ctrl+arrows, Home/End/PageUp/PageDown |
-| Extend selection | Shift+arrows |
+| Extend selection | Shift+arrows, or Shift+click (grows the selection to whole rows and columns up to the clicked cell) |
 | Keyboard selection mode | `S`, move, `S` to finish |
 | Pan | Left-drag, middle-drag, wheel, two-finger trackpad scroll |
-| Select with mouse | Shift/Ctrl/Alt+left-drag |
+| Select with mouse | Left-drag; Shift+click extends; Ctrl/Alt+left-drag starts a new box |
 | Area menu | Right-click, Enter, or `M` |
 | Zone homes / shops / factories | `R` / `C` / `I` |
 | Dezone | `U` |
@@ -186,7 +191,7 @@ city saves. No external recording, audio asset, or audio package is required.
 | Help / font settings | F1 or `?` / F3 |
 | Terminal effects high / low / off | `V` (or Esc > Effects) |
 | Quick-save / quick-load | F5 / F9 |
-| First-city guide | F6 |
+| Guide (tabs: how to play, population, economy) | F6 |
 | Weekly report / growth report | F7 / F8 |
 | City menu | Esc during normal gameplay |
 | Input/loop diagnostics | F12 (keyboard-only) |
@@ -206,32 +211,40 @@ Zoom levels are **0.25x, 0.5x, 1x, and 2x**. Coarse zoom samples 4x4 or 2x2 map-
 | `small` | 160x96 | Default random map |
 | `medium` | 320x192 | Random map |
 | `large` | 640x384 | Random map |
-| `CON` | 640x384 | Constantinople: a walled peninsula between the Golden Horn and the Marmara |
-| `NAP` | 640x384 | Naples: a sprawling bay below a volcano |
-| `GEN` | 640x384 | Genoa: a harbour town on dry, burnable hills |
-| `LUB` | 640x384 | Lubeck: a cold Hanseatic freight town on the water |
-| `YRK` | 640x384 | York: a flood-prone river town |
+| `SF` | 640x384 | San Francisco: a walled peninsula on the strait |
+| `LA` | 640x384 | Los Angeles: a sprawling coastal bay town |
+| `SD` | 640x384 | San Diego: a harbour town on dry, burnable hills |
+| `CHI` | 640x384 | Chicago: a cold lakeside freight town |
+| `STL` | 640x384 | St. Louis: a flood-prone river town |
 
 Custom sizes range from 80x24 to 640x384. Named presets are case-insensitive.
-Random maps include hills, forests, water systems, highways/interchanges, and existing bridges.
+Random maps include hills, forests, water systems, existing bridges and highways/interchanges. Highways run
+straight out of each interchange, then at any angle (not just right angles) between them, and bridges stay straight.
+Every road type (track, road, avenue, highway and any added later) is drawn as smooth curves that round every bend and
+merge into junctions with fillets, deliberately breaking out of the glyph grid like the terminal effects do. The road
+bed is opaque: no terrain, trees or water show inside the lines, while the terrain background stays outside them.
+Roads never run side by side: a new road meets another only end-on or at a crossing, and junctions keep a cell apart, and generated maps are cleaned of 2x2 road blocks and tiny fragments.
+At a junction the highest-ranked road runs whole through it, and a road that meets another at a slant curves in alongside it like a slip road.
+Zooming out keeps the smoothed roads but much thinner and fainter with each step (side streets drop out at the widest zooms), so they stay a backdrop to the terrain, while highways keep a thin double yellow line; the minimap and map overlays stay pixelated with box glyphs.
+Cars, walkers and birds are deliberately slow, and cars and walkers follow the drawn curve, including angled roads.
+Fish leap from the water and whales surface (with a spout) in the open sea only; rivers, lakes and bays get leaping fish and the occasional rise of bubbles, but never whales.
 
 City scenarios are **stylized, north-up regional approximations**, not current land-use datasets
 or street-accurate GIS maps. They include occupied R/C/I districts, residents, roads and tax income:
 
-- **CON:** the peninsula city on the strait (the old San Francisco layout): sea walls, hills, harbours and islands, with
+- **SF:** the peninsula city on the strait: sea walls, hills, harbours and islands, with
   dense houses, a market quarter, a southeastern port and populated suburbs around it.
-- **NAP:** a broad coast and bay (the old Los Angeles layout), a river, ranges behind it, a wide scatter of districts.
-- **GEN:** two bays, hills and a green hill park (the old San Diego layout); water is scarce and fires run in dry hills.
-- **LUB:** a lake (the old Chicago layout) and its river branches, flat ground, a market quarter and busy yards.
-- **YRK:** rivers and a floodplain (the old St. Louis layout), a minster park and riverside trades.
+- **LA:** a broad coast and bay, a river, ranges behind it, a wide scatter of districts.
+- **SD:** two bays, hills and a green hill park; water is scarce and fires run in dry hills.
+- **CHI:** a lake and its river branches, flat ground, a market quarter and busy yards.
+- **STL:** rivers and a floodplain, a minster park and riverside trades.
 
-These are medieval stand-ins for the original regional layouts; the geography is unchanged. Old saves and old preset
-names (`SF`, `LA`, ...) inside save files load as their stand-ins.
+Old saves keep loading: the original scenario names inside save files are still recognised.
 
 Scenarios start paused without the automatic first-city guide; F6 still offers it explicitly.
 Geography and districts stay fixed across seeds; seeds vary households and future growth.
 Save/load preserves the map. Restart/new-city actions retain the selected scenario.
-Older medium-sized Constantinople (formerly SF) saves load at their original dimensions; restarting generates the large map.
+Older medium-sized San Francisco saves load at their original dimensions; restarting generates the large map.
 
 ## Saving and loading
 

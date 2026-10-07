@@ -70,7 +70,7 @@ public class AreaMenuTests
             session.ShowAreaMenu();
             session.SelectPrompt(1);
             Assert.Contains(Fmt.Money(session.Game.QuoteRoad(session.ActiveArea, roads[i]).Cost),
-                session.Prompt!.Choices[i * 2].Label);
+                session.Prompt!.Choices[i * 2].Cells!.Last());
             session.SelectPrompt(i * 2);
             Assert.Null(session.Prompt);
             Assert.Same(roads[i], session.Preview!.Road);

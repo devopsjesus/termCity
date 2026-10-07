@@ -2,7 +2,7 @@
 
 The map is a grid of terminal glyphs. The effect system makes it feel alive: demolished buildings shrink away as if
 sucked into a point, new ones grow in, fires flicker and collapse into smoke, floods wash across the map, earthquakes
-shake the screen, and cars, people, birds and factory smoke roam the city. Everything is drawn with glyphs from the
+shake the screen, and cars, people, birds, leaping fish, surfacing whales and factory smoke roam the city. Everything is drawn with glyphs from the
 bundled DejaVu Sans Mono font; there are no image assets and no new packages.
 
 ## Layers
@@ -93,6 +93,10 @@ Limits of per-glyph scaling:
 - One-shot effects and shake request a redraw every frame; ambient life alone redraws at 15 fps.
 - Budgets bound the draw count; `TerminalMap.EffectGlyphsDrawn` exposes it for diagnostics.
 - Ambient actors are spawned and retired based on the view, and the density follows `Intensity`.
+- Water life: fish leap in any water, but whales surface only in open sea (`AmbientKind.Sea`: water that reaches the map's edge
+  and has four cells of water on every side), so rivers, lakes and narrow inlets never show ocean wildlife. Chicago (Lake Michigan) and St. Louis (rivers) have no open sea at all. Each spawn picks the
+  water first (open sea or other water, even odds when both are in view) so a wide sea cannot crowd out lakes and bays, then the
+  creature: a whale, fish or a puff of rising bubbles in the sea; fish or bubbles everywhere else.
 
 ## Controls
 

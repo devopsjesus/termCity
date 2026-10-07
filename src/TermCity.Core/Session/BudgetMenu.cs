@@ -23,33 +23,36 @@ public sealed partial class GameSession
         {
             var service = kind;
             double level = service == ServiceKind.None ? Game.Budget.Roads : Game.Budget.Funding(service);
-            choices.Add(new($"{CityReport.ServiceName(service)} funding {level:P0} (select to change)", () =>
+            choices.Add(new(CityReport.ServiceName(service), () =>
             {
                 Game.SetFunding(service, NextFunding(level));
                 ShowBudgetMenu();
-            }));
+            }, [$"{level:P0}", "Funding: select to step down by a quarter"]));
         }
 
         foreach (var zone in Zones.Placeable)
         {
             var z = zone;
-            choices.Add(new($"{TaxName(z)} {Game.Taxes.Get(z):P0} (select to raise, wraps at 20%)", () =>
+            choices.Add(new(TaxName(z), () =>
             {
                 double next = Game.Taxes.Get(z) + 0.01;
                 Game.SetTax(z, next > 0.2001 ? 0.01 : next);
                 ShowBudgetMenu();
-            }));
+            }, [$"{Game.Taxes.Get(z):P0}", "Tax: select to raise a point, wraps at 20%"]));
         }
 
-        choices.Add(new($"Borrow from the moneylenders {Fmt.Money(10_000)} (owed {Fmt.Money(Game.Budget.Loan)}, limit {Fmt.Money(Game.MaxLoan)})",
-            () => { SetMessage(Game.TakeLoan(10_000).Message); ShowBudgetMenu(); }));
-        choices.Add(new($"Repay {Fmt.Money(10_000)}", () => { SetMessage(Game.RepayLoan(10_000).Message); ShowBudgetMenu(); }));
-        choices.Add(new("Back", ShowSessionMenu));
+        choices.Add(new("Borrow", () => { SetMessage(Game.TakeLoan(10_000).Message); ShowBudgetMenu(); },
+            [Fmt.Money(10_000), $"From the moneylenders: owed {Fmt.Money(Game.Budget.Loan)}, limit {Fmt.Money(Game.MaxLoan)}"]));
+        choices.Add(new("Repay", () => { SetMessage(Game.RepayLoan(10_000).Message); ShowBudgetMenu(); },
+            [Fmt.Money(10_000), "Pay back part of the loan"]));
+        choices.Add(new("Back", ShowSessionMenu, ["", "Return to the city menu"]));
         ShowPrompt("Treasury, tithes and loans",
             $"Tithes and rents {Fmt.Money(finance.Income)}/wk, services {Fmt.Money(finance.ServiceUpkeep)}, roads {Fmt.Money(finance.RoadUpkeep)}, " +
             $"usury {Fmt.Money(finance.Interest)}, net {Fmt.Money(finance.Net)}/wk. Fuel and water are always paid in full.",
-            choices);
+            choices, columns: BudgetMenuColumns);
     }
+
+    private static readonly IReadOnlyList<TableColumn> BudgetMenuColumns = ["ITEM", TableColumn.Right("NOW"), "SELECT TO"];
 
     /// <summary>What the levy on each kind of plot is called: the rent and tithe of homes, market tolls and guild dues.</summary>
     public static string TaxName(ZoneType zone) => zone switch

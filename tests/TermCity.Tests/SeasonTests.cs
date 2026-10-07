@@ -175,7 +175,7 @@ public class SeasonTests
     public void PlagueKillsAndPhysicBlunts()
     {
         // A big seeded city, so the deaths are a signal rather than noise: same people, same weather, three ways.
-        var seeded = CityGame.New(new GameConfig { Scenario = CityScenario.Lubeck, MapWidth = 640, MapHeight = 384, Seed = 5 });
+        var seeded = CityGame.New(new GameConfig { Scenario = CityScenario.Chicago, MapWidth = 640, MapHeight = 384, Seed = 5 });
         Assert.True(seeded.Indicators.CoverageOf(ServiceKind.Health) > 20);
 
         static int Deaths(CityGame g, int outbreak, double physic)

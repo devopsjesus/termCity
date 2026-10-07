@@ -13,7 +13,7 @@ public class DiagonalHighwayTests
         string.Concat(cells.Select(c => CellRenderer.Render(game, c.X, c.Y).Glyph));
 
     [Fact]
-    public void ADiagonalIsADoubleLineStaircaseOfOrdinaryRoadCells()
+    public void AHandDrawnStaircaseOfRoadCellsStillRendersAsDoubleLineGlyphs()
     {
         var game = TestCity.Flat();
         var highway = game.Map.Content.Roads.Get(DefaultRoads.KingsRoadName);
@@ -55,7 +55,7 @@ public class DiagonalHighwayTests
     }
 
     [Fact]
-    public void StaircasesAppearInGeneratedMapsAndEveryRoadStillReachesTheEdge()
+    public void GeneratedHighwaysRunAtAnglesAndEveryRoadStillReachesTheEdge()
     {
         int stairs = 0;
         for (int seed = 1; seed <= 30; seed++)
@@ -78,7 +78,36 @@ public class DiagonalHighwayTests
             Assert.Equal(map.RoadCount, game.Network.ConnectedRoadCount);
         }
 
-        Assert.True(stairs > 20, $"only {stairs} staircase steps across 30 maps");
+        Assert.True(stairs > 30, $"only {stairs} stair steps: highways are not running at angles");
+    }
+
+    [Theory]
+    [InlineData(80, 48)]
+    [InlineData(160, 96)]
+    [InlineData(320, 192)]
+    public void GeneratedHighwayCurvesTurnGently(int width, int height)
+    {
+        int turns = 0;
+        for (int seed = 1; seed <= 30; seed++)
+        {
+            var game = CityGame.New(new GameConfig { Seed = seed, MapWidth = width, MapHeight = height });
+            foreach (var path in RoadCurves.Extract(game.Map, (x, y) => true))
+            {
+                for (int i = 2; i < path.Count - 1; i++)
+                {
+                    double a1 = Math.Atan2(path.Ys[i - 1] - path.Ys[i - 2], path.Xs[i - 1] - path.Xs[i - 2]);
+                    double a2 = Math.Atan2(path.Ys[i] - path.Ys[i - 1], path.Xs[i] - path.Xs[i - 1]);
+                    double turn = Math.Abs(Math.Atan2(Math.Sin(a2 - a1), Math.Cos(a2 - a1)));
+                    Assert.True(turn < 0.2, $"seed {seed}: a sharp {turn:F2} rad turn near sample {i} of a path starting at {path.Xs[0]:F0},{path.Ys[0]:F0}");
+                    if (turn > 0.02)
+                    {
+                        turns++;
+                    }
+                }
+            }
+        }
+
+        Assert.True(turns > 0, "no curves were found, so the check proved nothing");
     }
 
     [Fact]

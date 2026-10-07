@@ -14,6 +14,9 @@ public sealed class BlockSampler
     private readonly GameMap _map;
     public MapOverlay Overlay { get; set; }
 
+    /// <summary>Whether the caller draws roads as curves, so a block that shows a road is left as bare ground.</summary>
+    public bool VectorRoads { get; set; }
+
     private readonly int[] _terrainPriority = new int[256];
 
     public BlockSampler(CityGame game)
@@ -27,7 +30,10 @@ public sealed class BlockSampler
     }
 
     /// <summary>The visual for the block whose top-left cell is (x0, y0) and whose side is <paramref name="size"/> cells.</summary>
-    public CellVisual Sample(int x0, int y0, int size)
+    public CellVisual Sample(int x0, int y0, int size) => Sample(x0, y0, size, out _);
+
+    /// <param name="road">Whether the block is shown as a road (and so, with <see cref="VectorRoads"/>, left blank for the curve).</param>
+    public CellVisual Sample(int x0, int y0, int size, out bool road)
     {
         int bestX = x0, bestY = y0, best = -1;
         int right = Math.Min(_map.Width, x0 + size), bottom = Math.Min(_map.Height, y0 + size);
@@ -68,6 +74,7 @@ public sealed class BlockSampler
             }
         }
 
-        return CellRenderer.Render(_game, bestX, bestY, Overlay);
+        road = VectorRoads && _map.HasRoad(bestX, bestY);
+        return CellRenderer.Render(_game, bestX, bestY, Overlay, VectorRoads);
     }
 }

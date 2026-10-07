@@ -27,6 +27,7 @@ public sealed partial class GameSession
     public const int MaxZoom = 1;
 
     private bool _anchorFromShift;
+    private CellRect? _extendBase;
 
     public GameSession(CityGame game, string? savePath = null, bool showGuide = false)
     {
@@ -42,7 +43,6 @@ public sealed partial class GameSession
         {
             Game.Paused = true;
             GuideVisible = Game.Config.Scenario == CityScenario.Random && !Game.GuideDismissed;
-            if (Game.Config.Scenario == CityScenario.Random) ShowGuide();
         }
     }
 
@@ -71,6 +71,9 @@ public sealed partial class GameSession
     public MessageKind MessageKind { get; private set; } = MessageKind.Info;
 
     public event Action? Changed;
+
+    /// <summary>Raised after a zone, road, building or demolition succeeds (used for the placement click sound).</summary>
+    public event Action? Placed;
 
     /// <summary>Raised when only the camera moved (scrolling, panning, zooming), so just the map and minimap need redrawing.</summary>
     public event Action? CameraChanged;
@@ -387,7 +390,11 @@ public sealed partial class GameSession
         FollowCursor();
     }
 
-    public void BeginDrag(Pos p)
+    /// <summary>
+    /// Starts a drag selection. With <paramref name="extend"/> (Shift-click) the existing selection, or the cursor's cell
+    /// when there is none, is kept and grown to cover everything between it and the pointer.
+    /// </summary>
+    public void BeginDrag(Pos p, bool extend = false)
     {
         if (RoadToolActive)
         {
@@ -397,12 +404,15 @@ public sealed partial class GameSession
             return;
         }
 
+        _extendBase = extend ? ActiveArea : null;
         Cursor = Clamp(p);
         Anchor = Cursor;
         _anchorFromShift = false;
-        Selection = BlockAt(Cursor);
+        Selection = Extended(BlockAt(Cursor));
         SelectionChanged?.Invoke();
     }
+
+    private CellRect Extended(CellRect area) => _extendBase is { } baseArea ? baseArea.Union(area) : area;
 
     public void UpdateDrag(Pos p)
     {
@@ -419,7 +429,7 @@ public sealed partial class GameSession
         }
 
         Cursor = Clamp(p);
-        Selection = MakeSelection(anchor, Cursor);
+        Selection = Extended(MakeSelection(anchor, Cursor));
         SelectionChanged?.Invoke();
     }
 
@@ -427,6 +437,7 @@ public sealed partial class GameSession
     public void EndSelection()
     {
         Anchor = null;
+        _extendBase = null;
         SelectionChanged?.Invoke();
     }
 
@@ -504,6 +515,7 @@ public sealed partial class GameSession
         {
             Anchor = null;
             Selection = null;
+            Placed?.Invoke();
         }
 
         SetMessage(result.Message, result.Success ? MessageKind.Success : MessageKind.Error);
@@ -570,7 +582,6 @@ public sealed partial class GameSession
         ReplaceGame(CityGame.New(config));
         Game.Paused = true;
         GuideVisible = Game.Config.Scenario == CityScenario.Random;
-        if (GuideVisible) ShowGuide();
     }
 
     private void ReplaceGame(CityGame game)

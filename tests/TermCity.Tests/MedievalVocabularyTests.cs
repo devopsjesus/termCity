@@ -46,16 +46,16 @@ public class MedievalVocabularyTests
     }
 
     [Fact]
-    public void SavesWrittenBeforeTheMedievalSettingStillLoad()
+    public void SavesWrittenBeforeTheMedievalSettingOrWithItsStandInNamesStillLoad()
     {
-        var game = CityGame.New(new GameConfig { Scenario = CityScenario.Genoa, MapWidth = 640, MapHeight = 384, Seed = 5 });
+        var game = CityGame.New(new GameConfig { Scenario = CityScenario.SanDiego, MapWidth = 640, MapHeight = 384, Seed = 5 });
         string json = SaveGameStore.Serialize(game)
-            .Replace("\"Scenario\": \"Genoa\"", "\"Scenario\": \"SanDiego\"")
+            .Replace("\"Scenario\": \"SanDiego\"", "\"Scenario\": \"Genoa\"")
             .Replace("\"Cottage\"", "\"House\"")
             .Replace("\"Dirt Track\"", "\"Street\"")
             .Replace("\"Meadow\"", "\"Grass\"");
         var loaded = SaveGameStore.Deserialize(json);
-        Assert.Equal(CityScenario.Genoa, loaded.Config.Scenario);
+        Assert.Equal(CityScenario.SanDiego, loaded.Config.Scenario);
         Assert.Equal(game.Map.TerrainLayer, loaded.Map.TerrainLayer);
         Assert.Equal(game.Map.BuildingLayer, loaded.Map.BuildingLayer);
         Assert.Equal(game.Map.RoadLayer, loaded.Map.RoadLayer);

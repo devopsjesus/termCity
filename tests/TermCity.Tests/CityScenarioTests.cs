@@ -10,10 +10,10 @@ namespace TermCity.Tests;
 public class CityScenarioTests
 {
     [Theory]
-    [InlineData("nap", CityScenario.Naples, "Naples")]
-    [InlineData("GEN", CityScenario.Genoa, "Genoa")]
-    [InlineData(" Lub ", CityScenario.Lubeck, "Lubeck")]
-    [InlineData("YRK", CityScenario.York, "York")]
+    [InlineData("la", CityScenario.LosAngeles, "Los Angeles")]
+    [InlineData("SD", CityScenario.SanDiego, "San Diego")]
+    [InlineData(" Chi ", CityScenario.Chicago, "Chicago")]
+    [InlineData("STL", CityScenario.StLouis, "St. Louis")]
     public void CityPresetsUseLargeDimensionsAndPersistTheirPopulatedLayout(
         string preset, CityScenario scenario, string name)
     {
@@ -63,17 +63,17 @@ public class CityScenarioTests
     }
 
     [Theory]
-    [InlineData("NAP", 10, 80, "Water")]
-    [InlineData("NAP", 68, 10, "Hill")]
-    [InlineData("GEN", 10, 50, "Water")]
-    [InlineData("GEN", 39, 69, "Water")]
-    [InlineData("GEN", 34, 72, "Meadow")] // Coronado
-    [InlineData("GEN", 75, 32, "Hill")]
-    [InlineData("LUB", 90, 50, "Water")]
-    [InlineData("LUB", 50, 40, "Meadow")]
-    [InlineData("YRK", 70, 50, "Water")] // Mississippi
-    [InlineData("YRK", 50, 20, "Water")] // Missouri
-    [InlineData("YRK", 20, 47, "Hill")]
+    [InlineData("LA", 10, 80, "Water")]
+    [InlineData("LA", 68, 10, "Hill")]
+    [InlineData("SD", 10, 50, "Water")]
+    [InlineData("SD", 39, 69, "Water")]
+    [InlineData("SD", 34, 72, "Meadow")] // Coronado
+    [InlineData("SD", 75, 32, "Hill")]
+    [InlineData("CHI", 90, 50, "Water")]
+    [InlineData("CHI", 50, 40, "Meadow")]
+    [InlineData("STL", 70, 50, "Water")] // Mississippi
+    [InlineData("STL", 50, 20, "Water")] // Missouri
+    [InlineData("STL", 20, 47, "Hill")]
     public void GeographyMatchesTheCitysDefiningLandmarks(string preset, int x, int y, string terrain)
     {
         var game = City(preset);
@@ -82,20 +82,20 @@ public class CityScenarioTests
     }
 
     [Theory]
-    [InlineData("NAP", 58, 54, ZoneType.Commercial)] // Downtown
-    [InlineData("NAP", 31, 53, ZoneType.Commercial)] // Santa Monica
-    [InlineData("NAP", 68, 69, ZoneType.Industrial)] // Vernon
-    [InlineData("NAP", 73, 92, ZoneType.Industrial)] // Long Beach
-    [InlineData("NAP", 44, 53, ZoneType.Residential)] // Westside
-    [InlineData("GEN", 52, 64, ZoneType.Commercial)] // Downtown
-    [InlineData("GEN", 55, 83, ZoneType.Industrial)] // National City
-    [InlineData("GEN", 61, 44, ZoneType.Residential)] // Inland neighborhoods
-    [InlineData("LUB", 65, 55, ZoneType.Commercial)] // Loop
-    [InlineData("LUB", 45, 79, ZoneType.Industrial)] // South Side
-    [InlineData("LUB", 54, 32, ZoneType.Residential)] // North Side
-    [InlineData("YRK", 61, 54, ZoneType.Commercial)] // Downtown
-    [InlineData("YRK", 75, 38, ZoneType.Industrial)] // Metro East riverfront
-    [InlineData("YRK", 46, 62, ZoneType.Residential)] // South City
+    [InlineData("LA", 58, 54, ZoneType.Commercial)] // Downtown
+    [InlineData("LA", 31, 53, ZoneType.Commercial)] // Santa Monica
+    [InlineData("LA", 68, 69, ZoneType.Industrial)] // Vernon
+    [InlineData("LA", 73, 92, ZoneType.Industrial)] // Long Beach
+    [InlineData("LA", 44, 53, ZoneType.Residential)] // Westside
+    [InlineData("SD", 52, 64, ZoneType.Commercial)] // Downtown
+    [InlineData("SD", 55, 83, ZoneType.Industrial)] // National City
+    [InlineData("SD", 61, 44, ZoneType.Residential)] // Inland neighborhoods
+    [InlineData("CHI", 65, 55, ZoneType.Commercial)] // Loop
+    [InlineData("CHI", 45, 79, ZoneType.Industrial)] // South Side
+    [InlineData("CHI", 54, 32, ZoneType.Residential)] // North Side
+    [InlineData("STL", 61, 54, ZoneType.Commercial)] // Downtown
+    [InlineData("STL", 75, 38, ZoneType.Industrial)] // Metro East riverfront
+    [InlineData("STL", 46, 62, ZoneType.Residential)] // South City
     public void RepresentativeDistrictsHaveOccupiedRoadServedLots(string preset, int x, int y, ZoneType zone)
     {
         var game = City(preset);
@@ -108,11 +108,11 @@ public class CityScenarioTests
     [Fact]
     public void LegacySfFlagStillLoadsWithoutScenarioMetadata()
     {
-        var game = City("CON");
+        var game = City("SF");
         var json = System.Text.Json.Nodes.JsonNode.Parse(SaveGameStore.Serialize(game))!;
         json["Config"]!.AsObject().Remove("Scenario");
         var loaded = SaveGameStore.Deserialize(json.ToJsonString());
-        Assert.Equal(CityScenario.Constantinople, loaded.Config.Scenario);
+        Assert.Equal(CityScenario.SanFrancisco, loaded.Config.Scenario);
         Assert.Equal(game.Map.ZoneLayer, loaded.Map.ZoneLayer);
     }
 
@@ -126,9 +126,9 @@ public class CityScenarioTests
 public class ScenarioSeedingTests
 {
     [Theory]
-    [InlineData(CityScenario.Constantinople)]
-    [InlineData(CityScenario.Naples)]
-    [InlineData(CityScenario.York)]
+    [InlineData(CityScenario.SanFrancisco)]
+    [InlineData(CityScenario.LosAngeles)]
+    [InlineData(CityScenario.StLouis)]
     public void ScenarioCitiesStartPoweredWateredAndServed(CityScenario scenario)
     {
         var game = CityGame.New(new GameConfig { Scenario = scenario, MapWidth = 640, MapHeight = 384 });

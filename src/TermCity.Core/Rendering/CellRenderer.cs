@@ -10,9 +10,13 @@ public readonly record struct CellVisual(string Glyph, Rgb Foreground, Rgb Backg
 public static class CellRenderer
 {
     private static readonly Rgb BuildingBackground = Rgb.Hex(0x2b2b30);
-    private static readonly Rgb DisconnectedRoad = Rgb.Hex(0xe8a33d);
+    public static readonly Rgb DisconnectedRoad = Rgb.Hex(0xe8a33d);
 
-    public static CellVisual Render(CityGame game, int x, int y, MapOverlay overlay = MapOverlay.Off)
+    /// <param name="vectorRoads">
+    /// When the caller draws roads as curves (see <see cref="RoadVectorLayer"/>), their cells are left as bare ground
+    /// so the glyph does not show through.
+    /// </param>
+    public static CellVisual Render(CityGame game, int x, int y, MapOverlay overlay = MapOverlay.Off, bool vectorRoads = false)
     {
         var map = game.Map;
         var terrain = map.TerrainAt(x, y);
@@ -46,7 +50,12 @@ public static class CellRenderer
             }
         }
 
-        if (map.RoadTypeAt(x, y) is { } road)
+        if (vectorRoads && map.HasRoad(x, y))
+        {
+            glyph = " ";
+            bg = terrain.Background;
+        }
+        else if (map.RoadTypeAt(x, y) is { } road)
         {
             // A road over water is a bridge: same glyphs, but drawn on the water.
             glyph = road.GlyphFor(RoadMask(map, x, y));

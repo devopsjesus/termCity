@@ -121,11 +121,11 @@ city is. Over two game years from the default start:
 
 | City | Trajectory |
 |---|---|
-| Constantinople | Booms: high appeal, well served, little room, so it grows taller |
-| Lubeck | Steady growth on a deep trading and craft base |
-| Genoa | Slow growth; water-limited and fire-prone |
-| Naples | Flat; smoke and crowding hold it back |
-| York | Shrinks: thin services, flood and crime, low appeal. Fix services to turn it around |
+| San Francisco | Booms: high appeal, well served, little room, so it grows taller |
+| Chicago | Steady growth on a deep trading and craft base |
+| San Diego | Slow growth; water-limited and fire-prone |
+| Los Angeles | Flat; smoke and crowding hold it back |
+| St. Louis | Shrinks: thin services, flood and crime, low appeal. Fix services to turn it around |
 
 (The old San Francisco, Chicago, San Diego, Los Angeles and St. Louis save names read as these cities.)
 

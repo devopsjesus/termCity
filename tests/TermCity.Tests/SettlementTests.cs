@@ -35,7 +35,7 @@ public class SettlementTests
     }
 
     private static CityGame Seeded() =>
-        CityGame.New(new GameConfig { Scenario = CityScenario.Lubeck, MapWidth = 640, MapHeight = 384, Seed = 5 });
+        CityGame.New(new GameConfig { Scenario = CityScenario.Chicago, MapWidth = 640, MapHeight = 384, Seed = 5 });
 
     [Fact]
     public void RanksHaveNamesAndPrivileges()

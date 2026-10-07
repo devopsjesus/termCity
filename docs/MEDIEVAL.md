@@ -55,7 +55,7 @@ The simulation changes the demographic and economic levers rather than adding a 
   of grain. A bad harvest or a siege drains the store; without grain or gold there is hunger, deaths and emigration.
 - **Plague**: outbreaks last weeks, strike hardest in summer and the dense, and are blunted by physic.
 - **Raiders**: bandits and soldiers strike towns of 150 or more; a garrison or sheriff turns them away, hunger and
-  tribute arrears make them bolder. Scenarios set their own raid risk (Constantinople, Genoa and York higher, Lubeck lower).
+  tribute arrears make them bolder. Scenarios set their own raid risk (San Francisco, San Diego and St. Louis higher, Chicago lower).
 - **Fire**: wooden towns burn; summer is the worst season and tall buildings fuel the spread.
 - **Faith and feast days**: Lady Day, Midsummer, Michaelmas and Christmas bring pilgrims who spend gold at shrines and
   markets (none come in a famine).
@@ -71,7 +71,7 @@ Details and constants are in [POPULATION.md](POPULATION.md).
   adds 3% to the dues on trade and craftwork.
 - **Tribute**: at Michaelmas (week 39) the crown's reeve takes about 2g per soul, relieved by the seat and the
   rank. Anything unpaid is owed again, with the burden, next year.
-- **Scenarios**: Constantinople, Naples, Genoa, Lubeck and York are medieval stand-ins for the old regional layouts, each
+- **Scenarios**: San Francisco, Los Angeles, San Diego, Chicago and St. Louis keep their names in the medieval setting, each
   with its own appeal, water, fire, flood, raid and harvest character, and are pre-built with fuel, water and civic cover.
 
 ## Systems added with the setting

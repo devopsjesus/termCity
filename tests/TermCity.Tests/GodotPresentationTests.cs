@@ -54,7 +54,7 @@ public class GodotPresentationTests
         grid.Fill(session);
         session.PlaceCursor(new Pos(159, 95));
         grid.Fill(session);
-        var sampler = new BlockSampler(session.Game);
+        var sampler = new BlockSampler(session.Game) { VectorRoads = true };
         for (int y = 0; y < grid.Rows; y++)
         {
             for (int x = 0; x < grid.Columns; x++)
@@ -62,7 +62,7 @@ public class GodotPresentationTests
                 var position = session.ScreenToMap(x, y);
                 var expected = zoom < 0
                     ? sampler.Sample(position.X, position.Y, session.Stride)
-                    : CellRenderer.Render(session.Game, position.X, position.Y);
+                    : CellRenderer.Render(session.Game, position.X, position.Y, vectorRoads: true);
                 Assert.Equal(expected, grid.VisualAt(session, x, y));
             }
         }

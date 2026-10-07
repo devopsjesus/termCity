@@ -328,6 +328,47 @@ public class EffectBudgetTests
         }
     }
 
+    // A road laid as a staircase of cells whose drawn curve is the straight line y = x - 0.5.
+    private sealed class StairWorld : IAmbientWorld
+    {
+        public AmbientKind Classify(int x, int y) =>
+            x >= 0 && y >= 0 && x < 60 && y < 40 && (x == y || x == y + 1) ? AmbientKind.Road : AmbientKind.None;
+
+        public (double X, double Y) Snap(double x, double y)
+        {
+            double along = (x + y + 0.5) / 2;
+            return (along, along - 0.5);
+        }
+    }
+
+    [Fact]
+    public void CarsAndWalkersFollowTheDrawnCurveOfAnAngledRoad()
+    {
+        var system = new EffectSystem(3) { View = new CellRect(0, 0, 40, 40) };
+        system.Spawn(new AmbientLife(new StairWorld()));
+        int seen = 0;
+        for (int i = 0; i < 900; i++)
+        {
+            system.Update(1.0 / 30);
+            foreach (var s in system.Sprites.Where(s => s.Glyph == EffectGlyphs.Car || s.Glyph == EffectGlyphs.Person))
+            {
+                Assert.Equal(s.X - 0.5, s.Y, 3);
+                seen++;
+            }
+        }
+
+        Assert.True(seen > 50, $"only {seen} sprites seen");
+    }
+
+    [Fact]
+    public void AmbientSpritesMoveSlowly()
+    {
+        Assert.InRange(AmbientLife.CarSpeed.Max, 0.1, 2.5);
+        Assert.InRange(AmbientLife.PersonSpeed.Max, 0.1, 0.7);
+        Assert.InRange(AmbientLife.BirdSpeed.Max, 0.1, 2.0);
+        Assert.True(AmbientLife.PersonSpeed.Max < AmbientLife.CarSpeed.Min);
+    }
+
     [Fact]
     public void AmbientLifeNeedsAView()
     {
@@ -354,6 +395,129 @@ public class EffectBudgetTests
 
         Assert.Equal(1, system.ActiveEffects);
         Assert.Equal(0, system.ActiveOneShots);
+    }
+
+    // Rows 0-14 are open sea; a river two cells wide runs down column 30-31 below it. Everything else is land.
+    private sealed class WaterWorld(bool sea) : IAmbientWorld
+    {
+        public AmbientKind Classify(int x, int y)
+        {
+            if (x < 0 || y < 0 || x >= 60 || y >= 40)
+            {
+                return AmbientKind.None;
+            }
+
+            if (sea && y < 15)
+            {
+                return AmbientKind.Water | AmbientKind.Sea;
+            }
+
+            return y >= 15 && (x == 30 || x == 31) ? AmbientKind.Water : AmbientKind.None;
+        }
+    }
+
+    private static (EffectSystem System, AmbientLife Life) WaterSystem(bool sea, int seed = 3)
+    {
+        var system = new EffectSystem(seed) { View = new CellRect(0, 0, 60, 40) };
+        var life = new AmbientLife(new WaterWorld(sea));
+        system.Spawn(life);
+        return (system, life);
+    }
+
+    [Fact]
+    public void FishJumpAndWhalesSurfaceInOpenSea()
+    {
+        var (system, life) = WaterSystem(sea: true);
+        int fish = 0, whales = 0;
+        for (int i = 0; i < 1800; i++)
+        {
+            system.Update(1.0 / 30);
+            Assert.True(system.SpriteCount <= system.Settings.MaxAmbientSprites);
+            fish = Math.Max(fish, life.Fish);
+            whales = Math.Max(whales, life.Whales);
+        }
+
+        Assert.True(fish > 0 && whales > 0, $"fish {fish}, whales {whales}");
+    }
+
+    [Fact]
+    public void RiversAndLakesHaveFishButNeverWhales()
+    {
+        var (system, life) = WaterSystem(sea: false);
+        int fish = 0;
+        for (int i = 0; i < 3000; i++)
+        {
+            system.Update(1.0 / 30);
+            fish = Math.Max(fish, life.Fish);
+            Assert.Equal(0, life.Whales);
+            Assert.DoesNotContain(system.Sprites, s => s.Glyph == EffectGlyphs.WhaleBack);
+        }
+
+        Assert.True(fish > 0);
+    }
+
+    [Fact]
+    public void RiversAndLakesGetBubblesToo()
+    {
+        var (system, life) = WaterSystem(sea: false);
+        int bubbles = 0;
+        for (int i = 0; i < 3000; i++)
+        {
+            system.Update(1.0 / 30);
+            bubbles = Math.Max(bubbles, life.Bubbles);
+            foreach (var s in system.Sprites.Where(s => EffectGlyphs.Bubble.Contains(s.Glyph) && s.Glyph != EffectGlyphs.Spout[0]))
+            {
+                Assert.True(Math.Floor(s.X) is >= 29 and <= 32, $"bubble at {s.X},{s.Y}");
+            }
+        }
+
+        Assert.True(bubbles > 0);
+    }
+
+    [Fact]
+    public void AWideSeaDoesNotCrowdOutTheRiverFish()
+    {
+        var (system, _) = WaterSystem(sea: true);
+        int riverFish = 0;
+        for (int i = 0; i < 3000; i++)
+        {
+            system.Update(1.0 / 30);
+            riverFish += system.Sprites.Count(s => s.Glyph is EffectGlyphs.FishLeft or EffectGlyphs.FishRight && s.Y >= 15);
+        }
+
+        Assert.True(riverFish > 0, $"river fish sprite-frames {riverFish}");
+    }
+
+    [Fact]
+    public void WaterLifeStaysOverWater()
+    {
+        var (system, _) = WaterSystem(sea: false);
+        var world = new WaterWorld(false);
+        for (int i = 0; i < 1500; i++)
+        {
+            system.Update(1.0 / 30);
+            foreach (var s in system.Sprites.Where(s => s.Glyph is EffectGlyphs.FishLeft or EffectGlyphs.FishRight))
+            {
+                int cx = (int)Math.Floor(s.X);
+                Assert.True(cx is >= 29 and <= 32, $"fish at {s.X},{s.Y}");
+                Assert.True(s.Y >= 14, $"fish at {s.X},{s.Y}");
+            }
+        }
+    }
+
+    [Fact]
+    public void WaterLifeIsOffWithoutAmbientBudget()
+    {
+        var system = new EffectSystem(3, new EffectSettings { MaxAmbientSprites = 0 }) { View = new CellRect(0, 0, 60, 40) };
+        var life = new AmbientLife(new WaterWorld(true));
+        system.Spawn(life);
+        for (int i = 0; i < 600; i++)
+        {
+            system.Update(1.0 / 30);
+        }
+
+        Assert.Equal(0, life.Fish + life.Whales);
+        Assert.Equal(0, system.SpriteCount);
     }
 
     [Fact]

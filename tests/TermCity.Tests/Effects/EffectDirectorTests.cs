@@ -402,6 +402,45 @@ public class EffectDirectorTests
     }
 
     [Fact]
+    public void WhalesSurfaceOnlyInTheOpenSeaNeverInRivers()
+    {
+        var (game, system, director) = Setup(ambient: true);
+        var water = game.Map.Content.Terrains.Get(TermCity.Core.Terrain.DefaultTerrains.WaterName);
+        for (int y = 0; y < game.Map.Height; y++)
+        {
+            for (int x = 0; x < game.Map.Width; x++)
+            {
+                if (x < 20 || x == 40 || x == 41)
+                {
+                    game.Map.SetTerrain(x, y, water);
+                }
+            }
+        }
+
+        game.Touch();
+        int whales = 0, riverFish = 0;
+        for (double t = 0; t < 240; t += 1.0 / 30)
+        {
+            director.Update(1.0 / 30);
+            foreach (var s in system.Sprites)
+            {
+                if (s.Glyph == EffectGlyphs.WhaleBack)
+                {
+                    whales++;
+                    Assert.True(s.X < 20, $"whale at {s.X},{s.Y}");
+                }
+                else if (s.Glyph is EffectGlyphs.FishLeft or EffectGlyphs.FishRight && s.X >= 38)
+                {
+                    riverFish++;
+                }
+            }
+        }
+
+        Assert.True(whales > 0, "no whales surfaced in the sea");
+        Assert.True(riverFish > 0, "no fish jumped in the river");
+    }
+
+    [Fact]
     public void AmbientLifeReturnsAfterEffectsAreReEnabled()
     {
         var (_, system, director) = Setup(ambient: true);
@@ -608,5 +647,28 @@ public class EffectGlyphFontTests
         var all = EffectGlyphs.All().ToList();
         Assert.True(all.Count > 20);
         Assert.All(all, g => Assert.Equal(1, new System.Globalization.StringInfo(g).LengthInTextElements));
+    }
+
+    [Theory]
+    [InlineData(CityScenario.Chicago, false)]
+    [InlineData(CityScenario.StLouis, false)]
+    [InlineData(CityScenario.SanDiego, true)]
+    public void OnlyOceanScenariosHaveOpenSeaForWhales(CityScenario scenario, bool hasSea)
+    {
+        var game = CityGame.New(new GameConfig { Scenario = scenario, MapWidth = 640, MapHeight = 384, Seed = 5 });
+        var world = new EffectDirector.GameAmbientWorld(game);
+        int water = 0, sea = 0;
+        for (int y = 0; y < game.Map.Height; y++)
+        {
+            for (int x = 0; x < game.Map.Width; x++)
+            {
+                var kind = world.Classify(x, y);
+                water += (kind & AmbientKind.Water) != 0 ? 1 : 0;
+                sea += (kind & AmbientKind.Sea) != 0 ? 1 : 0;
+            }
+        }
+
+        Assert.True(water > 0);
+        Assert.Equal(hasSea, sea > 0);
     }
 }

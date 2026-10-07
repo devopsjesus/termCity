@@ -20,11 +20,11 @@ internal static class ScenarioSeeder
     /// <summary>How well each scenario's real-world counterpart is provided for: above 1 is generous, below 1 is thin.</summary>
     private static double Provision(CityScenario scenario) => scenario switch
     {
-        CityScenario.Constantinople => 1.2,
-        CityScenario.Lubeck => 1.0,
-        CityScenario.Genoa => 0.95,
-        CityScenario.Naples => 0.8,
-        CityScenario.York => 0.65,
+        CityScenario.SanFrancisco => 1.2,
+        CityScenario.Chicago => 1.0,
+        CityScenario.SanDiego => 0.95,
+        CityScenario.LosAngeles => 0.8,
+        CityScenario.StLouis => 0.65,
         _ => 1.0,
     };
 

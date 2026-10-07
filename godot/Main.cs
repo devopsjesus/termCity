@@ -131,6 +131,8 @@ public partial class Main : Control
             CreateEffects();
             CreateLayout(font);
             CreateMusic();
+            CreateClicks();
+            Session.Placed += PlayPlacementClick;
             Session.Changed += OnChanged;
             Session.CameraChanged += OnCameraChanged;
             Session.SelectionChanged += OnSelectionChanged;
@@ -213,13 +215,16 @@ public partial class Main : Control
             _ => EffectLevel.High,
         });
         Session.SetMessage($"Effects: {EffectsLabel()}.", MessageKind.Info);
-        if (Session.Prompt is { } prompt)
-        {
-            var choices = prompt.Choices.Select(choice => choice.Select == (Action)CycleEffects
-                ? choice with { Label = $"Effects: {EffectsLabel()}" }
-                : choice).ToArray();
-            Session.ShowPrompt(prompt.Title, prompt.Text, choices, prompt.Input, prompt.Footer);
-        }
+        RefreshMenuState(CycleEffects, EffectsLabel());
+    }
+
+    private void RefreshMenuState(Action target, string state)
+    {
+        if (Session.Prompt is not { } prompt) return;
+        var choices = prompt.Choices.Select(choice => choice.Select == target
+            ? choice with { Cells = [choice.Cells?[0] ?? string.Empty, state] }
+            : choice).ToArray();
+        Session.ShowPrompt(prompt.Title, prompt.Text, choices, prompt.Input, prompt.Footer, prompt.Columns);
     }
 
     private string EffectsLabel() => Effects.Settings.ReducedMotion ? "OFF (reduced motion)" : EffectsLevel.ToString().ToUpperInvariant();
@@ -290,6 +295,31 @@ public partial class Main : Control
         _music.StreamPaused = !MusicEnabled || !_focused;
     }
 
+    private AudioStreamWav[] _clicks = [];
+    private AudioStreamPlayer _clickPlayer = null!;
+    private readonly Random _clickRandom = new();
+
+    private void CreateClicks()
+    {
+        _clicks = Enumerable.Range(0, PlacementClick.Variants).Select(i => new AudioStreamWav
+        {
+            Format = AudioStreamWav.FormatEnum.Format16Bits,
+            MixRate = PlacementClick.SampleRate,
+            Stereo = false,
+            Data = PlacementClick.Render(i),
+        }).ToArray();
+        _clickPlayer = new AudioStreamPlayer { Name = "PlacementClick", VolumeDb = _options.SmokeTest ? -80 : -12 };
+        AddChild(_clickPlayer);
+    }
+
+    private void PlayPlacementClick()
+    {
+        if (!_focused || !MusicEnabled || _clicks.Length == 0) return;
+        _clickPlayer.Stream = _clicks[_clickRandom.Next(_clicks.Length)];
+        _clickPlayer.PitchScale = (float)(0.92 + _clickRandom.NextDouble() * 0.16);
+        _clickPlayer.Play();
+    }
+
     internal bool AdvanceMusicPhrase()
     {
         if (_nextMusicPhrase is null || !_nextMusicPhrase.IsCompleted) return false;
@@ -343,13 +373,7 @@ public partial class Main : Control
         MusicEnabled = !MusicEnabled;
         _music.StreamPaused = !MusicEnabled || !_focused;
         SaveDisplaySettings();
-        if (Session.Prompt is { } prompt)
-        {
-            var choices = prompt.Choices.Select(choice => choice.Select == (Action)ToggleMusic
-                ? choice with { Label = $"Music: {(MusicEnabled ? "ON" : "OFF")}" }
-                : choice).ToArray();
-            Session.ShowPrompt(prompt.Title, prompt.Text, choices, prompt.Input, prompt.Footer);
-        }
+        RefreshMenuState(ToggleMusic, MusicEnabled ? "ON" : "OFF");
     }
 
     private void ApplyFontSize()
@@ -522,7 +546,7 @@ public partial class Main : Control
         AddToolbarButton(functions, "F1 HELP", ShowHelp);
         AddToolbarButton(functions, "F3 FONT", ShowFontDialog);
         AddToolbarButton(functions, "F5 SAVE", () => Session.QuickSave());
-        AddToolbarButton(functions, "F6 GUIDE", Session.ShowGuide);
+        AddToolbarButton(functions, "F6 GUIDE", () => Session.ShowGuide());
         AddToolbarButton(functions, "F7 REPORT", Session.ShowReport);
         AddToolbarButton(functions, "F8 GROWTH", Session.ShowGrowthReport);
         AddToolbarButton(functions, "F9 LOAD", () => Session.RequestLoad(Session.SavePath));
@@ -723,11 +747,11 @@ public partial class Main : Control
         Session.ShowPrompt(prompt.Title, prompt.Text,
             prompt.Choices.Concat(new[]
             {
-                new SessionChoice("Resize sidebar", ShowSidebarDialog),
-                new SessionChoice($"Music: {(MusicEnabled ? "ON" : "OFF")}", ToggleMusic),
-                new SessionChoice($"Effects: {EffectsLabel()}", CycleEffects),
+                new SessionChoice("Resize sidebar", ShowSidebarDialog, ["Step the sidebar width by a character"]),
+                new SessionChoice("Music", ToggleMusic, ["Evolving Greensleeves phrases", MusicEnabled ? "ON" : "OFF"]),
+                new SessionChoice("Effects", CycleEffects, ["Growth, fire, flood, traffic, birds", EffectsLabel()]),
             }).ToArray(),
-            footer: prompt.Footer);
+            footer: prompt.Footer, columns: prompt.Columns);
     }
 
     private void ShowSidebarDialog() => Session.ShowPrompt(SidebarDialogTitle,
@@ -782,13 +806,27 @@ public partial class Main : Control
         StopPointerGesture();
         var content = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         content.MinimumSizeChanged += () => Callable.From(CenterModal).CallDeferred();
+        var table = Session.Prompt is { } tablePrompt ? TextTable.ForPrompt(tablePrompt) : null;
         IEnumerable<string> labels = Session.Prompt is { } sizingPrompt
-            ? sizingPrompt.Choices.Select((choice, index) => $"{index + 1}. {choice.Label}")
+            ? (table is { } t
+                ? t.Rows.Append(t.Header).Select(row => "00. " + row)
+                : sizingPrompt.Choices.Select((choice, index) => $"{index + 1}. {choice.Label}"))
                 .Append(sizingPrompt.Title)
             : new[] { "Confirm placement", "Confirm [Enter]", "Cancel [Esc]" };
         float characterWidth = Theme.DefaultFont.GetStringSize("M", fontSize: Theme.DefaultFontSize).X;
-        _modalContentWidth = labels.Max(text =>
-            Theme.DefaultFont.GetStringSize(text, fontSize: Theme.DefaultFontSize).X) + characterWidth * 10;
+        float TextWidth(string text) => Theme.DefaultFont.GetStringSize(text, fontSize: Theme.DefaultFontSize).X;
+        _modalContentWidth = labels.Max(TextWidth) + characterWidth * 10 + ButtonTextInset() * 2;
+        int fixedTextLines = 0;
+        if (Session.Prompt is { } fitPrompt && (fitPrompt.Tabs is not null || _helpVisible))
+        {
+            var pages = fitPrompt.Tabs?.Select(tab => tab.Text) ?? [fitPrompt.Text];
+            foreach (string page in pages)
+            {
+                string[] pageLines = page.Split('\n');
+                fixedTextLines = Math.Max(fixedTextLines, pageLines.Length);
+                _modalContentWidth = Math.Max(_modalContentWidth, pageLines.Max(TextWidth) + characterWidth * 12);
+            }
+        }
         var margin = new MarginContainer();
         foreach (string side in new[] { "left", "top", "right", "bottom" })
         {
@@ -814,11 +852,21 @@ public partial class Main : Control
             Text = Session.Prompt?.Title ?? "Confirm placement",
             HorizontalAlignment = HorizontalAlignment.Left,
         });
-        content.AddChild(new Label
+        if (Session.Prompt is { Tabs: { } tabs } tabbed)
+        {
+            content.AddChild(BuildTabBar(tabs, tabbed.ActiveTab));
+        }
+        var textLabel = new Label
         {
             Text = Session.Prompt?.Text ?? Session.Preview!.Summary,
             AutowrapMode = TextServer.AutowrapMode.WordSmart,
-        });
+        };
+        if (fixedTextLines > 0 && Session.Prompt?.Tabs is not null)
+        {
+            float lineHeight = Theme.DefaultFont.GetHeight(Theme.DefaultFontSize) + textLabel.GetThemeConstant("line_spacing");
+            textLabel.CustomMinimumSize = new Vector2(0, lineHeight * fixedTextLines);
+        }
+        content.AddChild(textLabel);
         _modalError = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = new Color("#ff7777") };
         content.AddChild(_modalError);
         var buttons = new VBoxContainer();
@@ -867,7 +915,8 @@ public partial class Main : Control
             for (int i = 0; i < prompt.Choices.Count; i++)
             {
                 int index = i;
-                var button = new Button { Text = $"{i + 1}. {prompt.Choices[i].Label}", Alignment = HorizontalAlignment.Left,
+                string rowText = table is { } rows ? rows.Rows[i] : prompt.Choices[i].Label;
+                var button = new Button { Text = ChoicePrefix(i, prompt.Choices.Count) + rowText, Alignment = HorizontalAlignment.Left,
                     ClipText = true, TooltipText = prompt.Choices[i].Label };
                 button.Pressed += () => SelectPromptChoice(index);
                 button.FocusEntered += () => _promptIndex = index;
@@ -877,6 +926,18 @@ public partial class Main : Control
             }
             if (prompt.Footer is { } footer)
                 content.AddChild(new Label { Text = footer, AutowrapMode = TextServer.AutowrapMode.WordSmart });
+            if (table is { } header)
+            {
+                string pad = new(' ', ChoicePrefix(0, prompt.Choices.Count).Length);
+                var headerBox = new MarginContainer();
+                headerBox.AddThemeConstantOverride("margin_left", (int)ButtonTextInset());
+                headerBox.AddChild(new Label { Text = pad + header.Header + "\n" + pad + header.Rule, ClipText = true });
+                content.AddChild(headerBox);
+            }
+            if (prompt.Tabs is not null)
+            {
+                content.AddChild(new Label { Text = "Left/Right or click: change tab.  Up/Down, Enter or a number: pick an action." });
+            }
         }
         else
         {
@@ -891,6 +952,34 @@ public partial class Main : Control
         }
         CenterModal();
         Callable.From(CenterModal).CallDeferred();
+    }
+
+    private static string ChoicePrefix(int index, int count) => $"{index + 1}. ".PadRight(count >= 10 ? 4 : 3);
+
+    private float ButtonTextInset() => GetThemeStylebox("normal", "Button")?.GetMargin(Side.Left) ?? 0;
+
+    private HFlowContainer BuildTabBar(IReadOnlyList<PromptTab> tabs, int active)
+    {
+        var bar = new HFlowContainer { Name = "GuideTabs" };
+        bar.AddThemeConstantOverride("h_separation", 0);
+        for (int i = 0; i < tabs.Count; i++)
+        {
+            int index = i;
+            bool selected = i == active;
+            var tab = new Button
+            {
+                Text = selected ? $"[{tabs[i].Title}]" : $" {tabs[i].Title} ",
+                Flat = true,
+                FocusMode = FocusModeEnum.None,
+                TooltipText = tabs[i].Title,
+            };
+            tab.AddThemeColorOverride("font_color", selected ? new Color("#ffd75e") : new Color("#9fb4c7"));
+            tab.AddThemeColorOverride("font_hover_color", new Color("#ffffff"));
+            tab.Pressed += () => Session.SelectTab(index);
+            bar.AddChild(tab);
+        }
+
+        return bar;
     }
 
     private void AddButton(Container buttons, string text, Action action)
@@ -919,6 +1008,12 @@ public partial class Main : Control
             _dialogButtons.Contains(focused))
         {
             if (!activate.Echo && !focused.Disabled) focused.EmitSignal(Button.SignalName.Pressed);
+            GetViewport().SetInputAsHandled();
+            return;
+        }
+        if (input is InputEventKey { Pressed: true, Keycode: Key.Left or Key.Right } tabKey && Session.Prompt is { Tabs: not null })
+        {
+            Session.CycleTab(tabKey.Keycode == Key.Left ? -1 : 1);
             GetViewport().SetInputAsHandled();
             return;
         }
@@ -1047,6 +1142,10 @@ public partial class Main : Control
             {
                 SelectPromptChoice(_promptIndex);
             }
+            else if (code is Key.Left or Key.Right && prompt.Tabs is not null)
+            {
+                Session.CycleTab(code == Key.Left ? -1 : 1);
+            }
             else if (code is Key.Up or Key.Down && _promptButtons.Count > 0)
             {
                 _promptIndex = (_promptIndex + (code == Key.Up ? -1 : 1) + prompt.Choices.Count) % prompt.Choices.Count;
@@ -1153,10 +1252,7 @@ public partial class Main : Control
             case Key.F1 or Key.Question: ShowHelp(); break;
             case Key.F3: ShowFontDialog(); break;
             case Key.F5: Session.QuickSave(); break;
-            case Key.F6:
-                if (Session.GuideVisible) Session.DismissGuide();
-                else Session.ShowGuide();
-                break;
+            case Key.F6: Session.ShowGuide(); break;
             case Key.F7: Session.ShowReport(); break;
             case Key.F8: Session.ShowGrowthReport(); break;
             case Key.F9: Session.RequestLoad(Session.SavePath); break;
@@ -1264,7 +1360,7 @@ public partial class Main : Control
                     _pointer = button.Position;
                     _selecting = Session.RoadToolActive || button.ShiftPressed || button.CtrlPressed || button.AltPressed || button.MetaPressed;
                     _panning = !_selecting;
-                    if (_selecting) Session.BeginDrag(position);
+                    if (_selecting) Session.BeginDrag(position, extend: button.ShiftPressed && !button.CtrlPressed && !button.AltPressed && !button.MetaPressed);
                     else { Session.SelectCell(position); _panAnchor = position; }
                     break;
                 case MouseButton.Middle:
@@ -1368,32 +1464,8 @@ public partial class Main : Control
     private void ShowHelp()
     {
         _helpVisible = true;
-        Session.ShowPrompt("TermCity - Help", """
-            Move: arrows; Ctrl+arrows or Home/End/PageUp/PageDown jump a screen.
-            Pan: left-drag, middle-drag, wheel, two-finger trackpad scroll, or minimap click/drag.
-            Select: Shift/Ctrl/Alt+left-drag; Shift+arrows; S, arrows, S.
-            Area menu: right-click or Enter/M. Esc cancels selection.
-            Zone: R homesteads, C marketplace, I craftworks; U dezone.
-            Roads: B track preview; T straight-line tool. Menus offer every road type.
-            Demolish: D/Delete (free, no refund). Enter/Y confirms; Esc/N cancels.
-            Undo: Ctrl+Z (Command+Z also works); full-city rollback with confirmation.
-            Clock: Space/P pause; 1 slow, 2 medium, 3 fast.
-            Zoom: +/- (Ctrl/Command also work), pinch, or Ctrl/Command+wheel; 0 normal.
-            Shift/Alt+wheel pans sideways. Close dialogs or finish text editing first.
-            Rename: double-click the city name (16 chars). Enter saves; Esc cancels.
-            Font: F3 opens the [-] size [+] dialog; OK closes it, RESET restores the default.
-            Sidebar: drag the divider, or Esc > Resize sidebar; arrows select, Space/Enter activates.
-            Music: Esc > Music toggles evolving Greensleeves phrases in related keys.
-            Effects: V cycles high/low/off (or Esc > Effects): buildings shrink away, grow in, burn, flood and shake; cars and birds roam. --reduced-motion forces off.
-            Name editing: Delete/Backspace removes text; Ctrl/Command+A selects all.
-            Sidebar sections stay open. E toggles edge scrolling. O cycles map overlays (fuel, water, services, smoke, land value, contentment).
-            Game: Esc city menu; F5 save; F9 quick-load; Q/Ctrl+Q quit.
-            Reports: F7 weekly report/milestones; F8 growth/road access.
-            Guide: F6 shows/dismisses. F12 input and loop diagnostics.
-            Seasons: grain is stored at harvest; famine, plague, raiders and fires threaten. Michaelmas brings the crown's tribute.
-            Dezoned buildings leave in 2-3 weeks; restore their zone to keep them.
-            Zones are free. Join your tracks to the King's Road at the map edge for growth.
-            """, [new("Close", () => { _helpVisible = false; Session.ClosePrompt(); })]);
+        Session.ShowPrompt(HelpContent.Title, HelpContent.Text(),
+            [new("Close", () => { _helpVisible = false; Session.ClosePrompt(); })], footer: HelpContent.Footer);
     }
 
     private void CenterModal()
@@ -1446,6 +1518,7 @@ public partial class Main : Control
         {
             return;
         }
+        Session.Placed -= PlayPlacementClick;
         Session.Changed -= OnChanged;
         Session.CameraChanged -= OnCameraChanged;
         Session.SelectionChanged -= OnSelectionChanged;

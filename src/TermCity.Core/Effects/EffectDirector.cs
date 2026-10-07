@@ -625,8 +625,27 @@ public sealed class EffectDirector : IDisposable
         return ((x0 + x1 + 1) / 2.0, (y0 + y1 + 1) / 2.0);
     }
 
-    private sealed class GameAmbientWorld(CityGame game) : IAmbientWorld
+    internal sealed class GameAmbientWorld(CityGame game) : IAmbientWorld
     {
+        private const int SeaRadius = 4;
+
+        private readonly RoadVectorLayer _roads = new();
+        private RoadGuide? _guide;
+        private GameMap? _seaMap;
+        private bool[] _sea = [];
+
+        public (double X, double Y) Snap(double x, double y)
+        {
+            if (_roads.Sync(game) || _guide is null)
+            {
+                _guide = new RoadGuide(_roads.Paths);
+            }
+
+            return _guide.TrySnap(x * RoadCurves.CellWidth, y * RoadCurves.CellHeight, out double sx, out double sy)
+                ? (sx / RoadCurves.CellWidth, sy / RoadCurves.CellHeight)
+                : (x, y);
+        }
+
         public AmbientKind Classify(int x, int y)
         {
             var map = game.Map;
@@ -657,9 +676,114 @@ public sealed class EffectDirector : IDisposable
             if (!map.TerrainAt(x, y).Buildable)
             {
                 kind |= AmbientKind.Water;
+                if (IsSea(map, x, y))
+                {
+                    kind |= AmbientKind.Sea;
+                }
             }
 
             return kind;
+        }
+
+        private bool IsSea(GameMap map, int x, int y)
+        {
+            // Lake Michigan and the Mississippi reach the map's edge but are not oceans, so no whales.
+            if (game.Config.Scenario is CityScenario.Chicago or CityScenario.StLouis)
+            {
+                return false;
+            }
+
+            if (!ReferenceEquals(map, _seaMap))
+            {
+                _seaMap = map;
+                _sea = SeaMask(map);
+            }
+
+            return _sea[y * map.Width + x];
+        }
+
+        /// <summary>
+        /// Open sea: water that reaches the edge of the map and has a few cells of water on every side. Rivers, lakes and
+        /// inlets are too narrow or too enclosed, so the whales stay out of them.
+        /// </summary>
+        private static bool[] SeaMask(GameMap map)
+        {
+            int w = map.Width, h = map.Height;
+            var water = new bool[w * h];
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    water[y * w + x] = !map.TerrainAt(x, y).Buildable;
+                }
+            }
+
+            var connected = new bool[w * h];
+            var queue = new Queue<int>();
+            void Seed(int x, int y)
+            {
+                int i = y * w + x;
+                if (water[i] && !connected[i])
+                {
+                    connected[i] = true;
+                    queue.Enqueue(i);
+                }
+            }
+
+            for (int x = 0; x < w; x++)
+            {
+                Seed(x, 0);
+                Seed(x, h - 1);
+            }
+
+            for (int y = 0; y < h; y++)
+            {
+                Seed(0, y);
+                Seed(w - 1, y);
+            }
+
+            while (queue.Count > 0)
+            {
+                int i = queue.Dequeue();
+                int x = i % w, y = i / w;
+                if (x > 0) Seed(x - 1, y);
+                if (x < w - 1) Seed(x + 1, y);
+                if (y > 0) Seed(x, y - 1);
+                if (y < h - 1) Seed(x, y + 1);
+            }
+
+            // Erode by the radius, one axis at a time: a cell stays only if every cell in its window is connected water.
+            var rows = new bool[w * h];
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    bool all = true;
+                    for (int d = -SeaRadius; d <= SeaRadius && all; d++)
+                    {
+                        all = x + d >= 0 && x + d < w && connected[y * w + x + d];
+                    }
+
+                    rows[y * w + x] = all;
+                }
+            }
+
+            var sea = new bool[w * h];
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    bool all = true;
+                    for (int d = -SeaRadius; d <= SeaRadius && all; d++)
+                    {
+                        all = y + d >= 0 && y + d < h && rows[(y + d) * w + x];
+                    }
+
+                    sea[y * w + x] = all;
+                }
+            }
+
+            return sea;
         }
     }
 }

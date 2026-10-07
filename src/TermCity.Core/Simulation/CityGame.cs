@@ -120,6 +120,7 @@ public sealed class CityGame
         content ??= new GameContent();
         var map = config.Scenario != CityScenario.Random ? CityScenarioMap.Generate(config, content)
             : MapGenerator.Generate(config.MapWidth, config.MapHeight, config.Seed, content);
+        RoadSeparation.Apply(map);
         var names = GameRandom.ForStage(config.Seed, "city-name");
         string[] prefixes = ["Oak", "Cedar", "Maple", "Willow", "Pine", "Silver", "Clear", "River"];
         string[] suffixes = ["haven", " Falls", " Ridge", " Creek", "brook", "wood", "view", " Harbor"];
@@ -814,20 +815,29 @@ public sealed class CityGame
         Map.InBounds(x, y) && Map.TerrainAt(x, y).Buildable && !Map.HasRoad(x, y) &&
         Map.ZoneAt(x, y) == ZoneType.None && Map.BuildingAt(x, y) is null;
 
-    /// <summary>A road can go on open, unbuilt ground, or replace a smaller road type (an upgrade).</summary>
-    public bool CanPlaceRoad(int x, int y, RoadType? type = null)
+    /// <summary>A road can go on open, unbuilt ground, or replace a smaller road type (an upgrade); see <see cref="RoadRules"/>.</summary>
+    public bool CanPlaceRoad(int x, int y, RoadType? type = null) => PlanRoad([new Pos(x, y)], type).Count == 1;
+
+    /// <summary>The cells of a road stroke that can actually be laid, in order, under the rules of <see cref="RoadRules"/>.</summary>
+    public List<Pos> PlanRoad(IEnumerable<Pos> cells, RoadType? type = null) =>
+        RoadRules.Plan(Map, cells as IReadOnlyList<Pos> ?? cells.ToList(), (type ?? DefaultRoad).Rank,
+            (x, y) => Map.TerrainAt(x, y).Buildable && Map.ZoneAt(x, y) == ZoneType.None && Map.BuildingAt(x, y) is null);
+
+    public Quote QuoteRoad(CellRect area, RoadType? type = null) => QuoteRoad(area.Cells(), type);
+
+    public Quote QuoteRoad(IEnumerable<Pos> cells, RoadType? type = null)
     {
-        type ??= DefaultRoad;
-        if (!Map.InBounds(x, y) || !Map.TerrainAt(x, y).Buildable || Map.ZoneAt(x, y) != ZoneType.None || Map.BuildingAt(x, y) is not null)
+        var area = cells as IReadOnlyCollection<Pos> ?? cells.ToList();
+        var plan = PlanRoad(area, type);
+        int total = 0;
+        foreach (var p in plan)
         {
-            return false;
+            total += RoadCostAt(p.X, p.Y, type);
         }
 
-        return Map.RoadTypeAt(x, y) is not { } existing || existing.Rank < type.Rank;
+        int inBounds = area.Count(Map.InBounds);
+        return new Quote(plan.Count, total, inBounds - plan.Count);
     }
-
-    public Quote QuoteRoad(CellRect area, RoadType? type = null) =>
-        QuoteCells(area, (x, y) => CanPlaceRoad(x, y, type), (x, y) => RoadCostAt(x, y, type));
 
     /// <summary>Open ground, and for a pump, the shore.</summary>
     public bool CanPlaceBuilding(BuildingType type, int x, int y) =>
@@ -836,10 +846,13 @@ public sealed class CityGame
     public Quote QuoteBuilding(BuildingType type, CellRect area) =>
         QuoteCells(area, (x, y) => CanPlaceBuilding(type, x, y), (x, y) => BuildingCostAt(type, x, y));
 
-    private Quote QuoteCells(CellRect area, Func<int, int, bool> valid, Func<int, int, int> cost)
+    private Quote QuoteCells(CellRect area, Func<int, int, bool> valid, Func<int, int, int> cost) =>
+        QuoteCells(area.Cells(), valid, cost);
+
+    private Quote QuoteCells(IEnumerable<Pos> area, Func<int, int, bool> valid, Func<int, int, int> cost)
     {
         int cells = 0, total = 0, skipped = 0;
-        foreach (var p in area.Cells())
+        foreach (var p in area)
         {
             if (!Map.InBounds(p))
             {
@@ -860,8 +873,12 @@ public sealed class CityGame
         return new Quote(cells, total, skipped);
     }
 
-    public ActionResult BuildRoad(CellRect area, RoadType? type = null)
+    public ActionResult BuildRoad(CellRect area, RoadType? type = null) => BuildRoad(area.Cells(), type);
+
+    /// <summary>Builds a road over any set of cells, such as a line at an angle.</summary>
+    public ActionResult BuildRoad(IEnumerable<Pos> cells, RoadType? type = null)
     {
+        var area = cells.ToList();
         type ??= DefaultRoad;
         if (!type.PlayerPlaceable)
         {
@@ -875,13 +892,8 @@ public sealed class CityGame
             return check;
         }
 
-        foreach (var p in area.Cells())
+        foreach (var p in PlanRoad(area, type))
         {
-            if (!CanPlaceRoad(p.X, p.Y, type))
-            {
-                continue;
-            }
-
             Map.SetFeature(p.X, p.Y, null);
             Map.SetRoad(p.X, p.Y, type);
         }

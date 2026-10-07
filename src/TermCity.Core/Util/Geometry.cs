@@ -6,6 +6,38 @@ public readonly record struct Pos(int X, int Y)
     public Pos Offset(int dx, int dy) => new(X + dx, Y + dy);
 }
 
+public static class CellLines
+{
+    /// <summary>
+    /// The cells on the straight line from <paramref name="a"/> to <paramref name="b"/>, at any angle, with each cell
+    /// sharing an edge with the next (never only a corner), so the line is a road the simulation can follow.
+    /// </summary>
+    public static List<Pos> Between(Pos a, Pos b)
+    {
+        int dx = Math.Abs(b.X - a.X), dy = Math.Abs(b.Y - a.Y);
+        int sx = Math.Sign(b.X - a.X), sy = Math.Sign(b.Y - a.Y);
+        var cells = new List<Pos>(dx + dy + 1) { a };
+        int x = a.X, y = a.Y, ix = 0, iy = 0;
+        while (ix < dx || iy < dy)
+        {
+            if ((1 + 2 * ix) * dy < (1 + 2 * iy) * dx)
+            {
+                x += sx;
+                ix++;
+            }
+            else
+            {
+                y += sy;
+                iy++;
+            }
+
+            cells.Add(new Pos(x, y));
+        }
+
+        return cells;
+    }
+}
+
 /// <summary>An inclusive rectangle of map cells.</summary>
 public readonly record struct CellRect(int X, int Y, int Width, int Height)
 {
@@ -23,6 +55,13 @@ public readonly record struct CellRect(int X, int Y, int Width, int Height)
     }
 
     public static CellRect Single(Pos p) => new(p.X, p.Y, 1, 1);
+
+    /// <summary>The smallest rectangle covering both, so every row and column of each is included.</summary>
+    public CellRect Union(CellRect other)
+    {
+        int x = Math.Min(X, other.X), y = Math.Min(Y, other.Y);
+        return new CellRect(x, y, Math.Max(Right, other.Right) - x + 1, Math.Max(Bottom, other.Bottom) - y + 1);
+    }
 
     public bool Contains(int x, int y) => x >= X && x <= Right && y >= Y && y <= Bottom;
 

@@ -13,6 +13,7 @@ public sealed class TerminalGrid
     public const double CycleSeconds = BeatSeconds * 4;
     private CellVisual?[] _cells = [];
     private AnimationKind[] _animations = [];
+    private bool[] _vectorRoad = [];
     private float _width, _height;
     public int PixelWidth { get; private set; } = CellWidth;
     public int PixelHeight { get; private set; } = CellHeight;
@@ -22,6 +23,12 @@ public sealed class TerminalGrid
     public int Columns { get; private set; }
     public int Rows { get; private set; }
     public int Rebuilds { get; private set; }
+
+    /// <summary>Whether roads are drawn as curves over the cells (at every zoom level, but not under a map overlay).</summary>
+    public bool VectorRoads { get; private set; }
+
+    /// <summary>Whether the cell at this screen position shows a road, so its glyph is left to the curve layer.</summary>
+    public bool IsVectorRoad(int x, int y) => VectorRoads && _vectorRoad[y * Columns + x];
     public double AnimationSeconds { get; private set; }
 
     public bool AdvanceAnimation(double delta, bool focused)
@@ -82,6 +89,7 @@ public sealed class TerminalGrid
         Rows = rows;
         _cells = new CellVisual?[checked(columns * rows)];
         _animations = new AnimationKind[_cells.Length];
+        _vectorRoad = new bool[_cells.Length];
     }
 
     public bool TryCell(float x, float y, out Pos cell)
@@ -101,7 +109,8 @@ public sealed class TerminalGrid
     {
         Resize(_width, _height, session.ZoomLevel > 0 ? 2 : 1);
         session.SetViewport(Columns, Rows);
-        var sampler = new BlockSampler(session.Game) { Overlay = session.Overlay };
+        VectorRoads = session.Overlay == MapOverlay.Off;
+        var sampler = new BlockSampler(session.Game) { Overlay = session.Overlay, VectorRoads = VectorRoads };
         var hillGlyphs = session.Game.Map.Content.Terrains
             .Where(terrain => terrain.Generator is HillGenerator)
             .SelectMany(terrain => terrain.Glyphs).ToHashSet();
@@ -114,11 +123,18 @@ public sealed class TerminalGrid
             for (int x = 0; x < Columns; x++)
             {
                 var position = session.ScreenToMap(x, y);
+                bool road = false;
                 _cells[y * Columns + x] = session.Game.Map.InBounds(position)
                     ? session.ZoomLevel < 0
-                        ? sampler.Sample(position.X, position.Y, session.Stride)
-                        : CellRenderer.Render(session.Game, position.X, position.Y, session.Overlay)
+                        ? sampler.Sample(position.X, position.Y, session.Stride, out road)
+                        : CellRenderer.Render(session.Game, position.X, position.Y, session.Overlay, VectorRoads)
                     : null;
+                if (session.ZoomLevel >= 0)
+                {
+                    road = VectorRoads && _cells[y * Columns + x] is not null && session.Game.Map.HasRoad(position.X, position.Y);
+                }
+
+                _vectorRoad[y * Columns + x] = road;
                 var visual = _cells[y * Columns + x];
                 _animations[y * Columns + x] = visual is null || !ShouldAnimate(position)
                     ? AnimationKind.None
@@ -149,7 +165,7 @@ public sealed class TerminalGrid
         {
             visual = visual with { Background = Rgb.Hex(0x4e4578) };
         }
-        if (session.Preview is { } preview && Intersects(preview.Area, block))
+        if (session.Preview is { } preview && preview.Touches(block))
         {
             visual = visual with
             {
@@ -162,6 +178,12 @@ public sealed class TerminalGrid
         }
         return visual;
     }
+
+    /// <summary>The colour a selection, preview or cursor paints over this cell, or null if it has none.</summary>
+    public Rgb? HighlightAt(GameSession session, int x, int y) =>
+        _cells[y * Columns + x] is { } plain && VisualAt(session, x, y) is { } shown && shown.Background != plain.Background
+            ? shown.Background
+            : null;
 
     private static bool Intersects(CellRect left, CellRect right) =>
         left.X <= right.Right && left.Right >= right.X &&

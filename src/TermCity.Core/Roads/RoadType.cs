@@ -10,7 +10,9 @@ namespace TermCity.Core.Roads;
 public sealed class RoadType : RegisteredType
 {
     /// <summary>
-    /// Sixteen glyphs indexed by which neighbours are also roads: bit 1 = north, 2 = east, 4 = south, 8 = west.
+    /// Sixteen glyphs indexed by which neighbours are also roads: bit 1 = north, 2 = east, 4 = south, 8 = west. They are
+    /// drawn where roads are not shown as smooth curves (under a map overlay, and on the minimap). Every road type is
+    /// otherwise drawn as a continuous curve in its colours, which merges smoothly with the roads it meets.
     /// </summary>
     public required IReadOnlyList<string> Glyphs { get; init; }
 

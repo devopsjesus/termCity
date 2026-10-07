@@ -28,14 +28,13 @@ public sealed record GameConfig
     public int Seed { get; init; } = 1;
     public CityScenario Scenario { get; init; }
     // Retains compatibility with saves created before the other city presets existed.
-    [System.Text.Json.Serialization.JsonPropertyName("SanFrancisco")]
-    public bool Constantinople
+    public bool SanFrancisco
     {
-        get => Scenario == CityScenario.Constantinople;
+        get => Scenario == CityScenario.SanFrancisco;
         init
         {
-            if (value) Scenario = CityScenario.Constantinople;
-            else if (Scenario == CityScenario.Constantinople) Scenario = CityScenario.Random;
+            if (value) Scenario = CityScenario.SanFrancisco;
+            else if (Scenario == CityScenario.SanFrancisco) Scenario = CityScenario.Random;
         }
     }
 

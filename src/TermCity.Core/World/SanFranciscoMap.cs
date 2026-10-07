@@ -8,7 +8,7 @@ using static TermCity.Core.World.CityMapGeometry;
 namespace TermCity.Core.World;
 
 /// <summary>A north-up, hand-shaped Bay Area scenario; coordinates are percentages of the large map.</summary>
-public static class ConstantinopleMap
+public static class SanFranciscoMap
 {
     private static readonly (double X, double Y)[] Peninsula =
     [
@@ -70,16 +70,6 @@ public static class ConstantinopleMap
         var street = content.Roads.Get(DefaultRoads.TrackName);
         var avenue = content.Roads.Get(DefaultRoads.CobbledName);
         var highway = content.Roads.Get(DefaultRoads.KingsRoadName);
-        for (int y = 0; y < map.Height; y++)
-        {
-            for (int x = 0; x < map.Width; x++)
-            {
-                double u = x * 100.0 / (map.Width - 1), v = y * 100.0 / (map.Height - 1);
-                if (DistrictAt(u, v) != ZoneType.None && map.TerrainAt(x, y).Buildable &&
-                    (x % 5 == 0 || y % 5 == 0))
-                    map.SetRoad(x, y, x % 20 == 0 || y % 20 == 0 ? avenue : street);
-            }
-        }
         // Golden Gate / US 101, Bay Bridge via Yerba Buena, and Market Street.
         Road(map, highway, (32, 0), (32, 25), (32, 43), (37, 56), (50, 70), (54, 100));
         Road(map, highway, (55, 60), (59, 57), (71, 53), (72, 50), (87, 57), (100, 57));
@@ -90,6 +80,12 @@ public static class ConstantinopleMap
         Road(map, avenue, (32, 17), (45, 17), (51, 16), (56, 18)); // Marin / Tiburon
         Road(map, avenue, (45, 17), (43, 24)); // Sausalito
         Road(map, avenue, (80, 74), (84, 74), (89, 70)); // Alameda bridge to Oakland
+        Grid(map, (x, y) =>
+        {
+            double u = x * 100.0 / (map.Width - 1), v = y * 100.0 / (map.Height - 1);
+            return DistrictAt(u, v) != ZoneType.None && map.TerrainAt(x, y).Buildable;
+        }, street, avenue);
+        RoadSeparation.RemoveFragments(map, 16);
 
         foreach (var zone in Zones.Placeable)
             if (content.Buildings.ForZone(zone) is null)

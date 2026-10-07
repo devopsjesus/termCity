@@ -16,6 +16,9 @@ public partial class TerminalMap : Control
     private bool _cellsDirty = true;
     private readonly List<GlyphDraw> _overlays = [];
     private Vector2 _shakeOffset;
+    private readonly RoadVectorLayer _roads = new();
+    private readonly Dictionary<(int X, int Y, int Scale, int Stride), ImageTexture?> _roadChunks = [];
+    private readonly List<GlyphDraw> _mains = [];
 
     /// <summary>Optional visual effects. Null or inactive means the map draws exactly as it always did.</summary>
     public EffectSystem? Effects { get; set; }
@@ -25,6 +28,9 @@ public partial class TerminalMap : Control
 
     /// <summary>How many glyphs the last frame drew because of effects (modified cells, ghosts and sprites).</summary>
     public int EffectGlyphsDrawn { get; private set; }
+
+    /// <summary>How many blocks of curved road the last frame laid over the map (diagnostics and the smoke test).</summary>
+    public int RoadChunksDrawn { get; private set; }
 
     public override void _Ready()
     {
@@ -117,6 +123,7 @@ public partial class TerminalMap : Control
                 DrawRect(new Rect2(position, new Vector2(cellWidth, cellHeight)), ToColor(background));
             }
         }
+        _mains.Clear();
         for (int y = 0; y < Grid.Rows; y++)
         {
             for (int x = 0; x < Grid.Columns; x++)
@@ -133,8 +140,7 @@ public partial class TerminalMap : Control
                         EffectDraw.PlanCell(cellEffect, visual, x, y, cellWidth, cellHeight, shake, out var main, out var overlay);
                         if (main is { } mainDraw)
                         {
-                            DrawEffectGlyph(mainDraw, cellWidth, cellHeight, baseline, fontSize);
-                            drawn++;
+                            _mains.Add(mainDraw);
                         }
                         if (overlay is { } ghost)
                         {
@@ -150,6 +156,13 @@ public partial class TerminalMap : Control
                     HorizontalAlignment.Center, cellWidth, fontSize,
                     ToColor(visual.Foreground));
             }
+        }
+        // The roads cover whatever terrain they run over; effects on cells go over the roads.
+        DrawRoadCurves(scale, cellWidth, cellHeight);
+        foreach (var mainDraw in _mains)
+        {
+            DrawEffectGlyph(mainDraw, cellWidth, cellHeight, baseline, fontSize);
+            drawn++;
         }
         if (fx is not null)
         {
@@ -172,6 +185,67 @@ public partial class TerminalMap : Control
         }
         DrawSetTransform(Vector2.Zero, 0f, Vector2.One);
         EffectGlyphsDrawn = drawn;
+    }
+
+    /// <summary>
+    /// Lays the curved roads over the terrain, then lets the cursor, selection and previews show through them.
+    /// </summary>
+    private void DrawRoadCurves(int scale, int cellWidth, int cellHeight)
+    {
+        RoadChunksDrawn = 0;
+        if (!Grid.VectorRoads)
+        {
+            return;
+        }
+
+        if (_roads.Sync(Session.Game))
+        {
+            _roadChunks.Clear();
+        }
+
+        if (_roads.Paths.Count == 0)
+        {
+            return;
+        }
+
+        const int chunk = RoadVectorLayer.ChunkCells;
+        int stride = Session.Stride, span = chunk * stride;
+        var origin = Session.ScreenToMap(0, 0);
+        int lastX = origin.X + Grid.Columns * stride - 1, lastY = origin.Y + Grid.Rows * stride - 1;
+        for (int cy = Math.Max(0, origin.Y) / span; cy <= lastY / span; cy++)
+        {
+            for (int cx = Math.Max(0, origin.X) / span; cx <= lastX / span; cx++)
+            {
+                if (!_roadChunks.TryGetValue((cx, cy, scale, stride), out var texture))
+                {
+                    texture = _roads.Render(cx, cy, scale, stride) is { } rendered
+                        ? ImageTexture.CreateFromImage(Image.CreateFromData(
+                            rendered.Width, rendered.Height, false, Image.Format.Rgba8, rendered.Rgba))
+                        : null;
+                    _roadChunks[(cx, cy, scale, stride)] = texture;
+                }
+
+                if (texture is not null)
+                {
+                    var at = new Vector2((cx * chunk - origin.X / stride) * cellWidth, (cy * chunk - origin.Y / stride) * cellHeight);
+                    DrawTexture(texture, at);
+                    RoadChunksDrawn++;
+                }
+            }
+        }
+
+        for (int y = 0; y < Grid.Rows; y++)
+        {
+            for (int x = 0; x < Grid.Columns; x++)
+            {
+                if (Grid.IsVectorRoad(x, y) && Grid.HighlightAt(Session, x, y) is { } highlight)
+                {
+                    var tint = ToColor(highlight);
+                    tint.A = 0.6f;
+                    DrawRect(new Rect2(x * cellWidth, y * cellHeight, cellWidth, cellHeight), tint);
+                }
+            }
+        }
     }
 
     /// <summary>Draws one effect glyph scaled about its own centre.</summary>

@@ -19,6 +19,11 @@ public static class EffectGlyphs
     public static readonly string[] Confetti = ["▪", "◆", "●", "✦", "◇", "▫"];
     public static readonly string[] Coin = ["$", "¢"];
     public static readonly string[] Bird = ["v", "^"];
+    public const string FishRight = ">";
+    public const string FishLeft = "<";
+    public const string WhaleBack = "∩";
+    public static readonly string[] Spout = ["°", "∙"];
+    public static readonly string[] Bubble = ["◦", "○", "°"];
     public const string Person = "·";
     public const string Car = "▪";
     public const string Crack = "/";
@@ -38,6 +43,10 @@ public static class EffectGlyphs
     public static readonly Rgb CarColor = Rgb.Hex(0xe0e0e8);
     public static readonly Rgb PersonColor = Rgb.Hex(0xf0e0c0);
     public static readonly Rgb BirdColor = Rgb.Hex(0xc8c8d0);
+    public static readonly Rgb FishColor = Rgb.Hex(0xd8ecff);
+    public static readonly Rgb WhaleColor = Rgb.Hex(0xc4d4e4);
+    public static readonly Rgb SpoutColor = Rgb.Hex(0xeaf6ff);
+    public static readonly Rgb BubbleColor = Rgb.Hex(0xd0ebff);
 
     public static readonly Rgb[] ConfettiColors =
     [
@@ -52,7 +61,7 @@ public static class EffectGlyphs
             yield return c.ToString();
         }
 
-        foreach (var set in new[] { Dust, Sparkle, Flame, Smoke, Ripple, Confetti, Coin, Bird, new[] { Person, Car, Crack } })
+        foreach (var set in new[] { Dust, Sparkle, Flame, Smoke, Ripple, Confetti, Coin, Bird, Spout, Bubble, new[] { Person, Car, Crack, FishRight, FishLeft, WhaleBack } })
         {
             foreach (string glyph in set)
             {
