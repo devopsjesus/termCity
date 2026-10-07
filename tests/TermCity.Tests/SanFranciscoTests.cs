@@ -140,7 +140,7 @@ public class SanFranciscoTests
                 if (map.BuildingAt(x, y) is null) continue;
                 Assert.True(map.TerrainAt(x, y).Buildable);
                 Assert.False(map.HasRoad(x, y));
-                Assert.NotEqual(ZoneType.None, map.ZoneAt(x, y));
+                if (!map.BuildingAt(x, y)!.IsService) Assert.NotEqual(ZoneType.None, map.ZoneAt(x, y));
             }
         }
 

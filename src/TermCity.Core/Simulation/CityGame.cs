@@ -31,9 +31,9 @@ public sealed record WeekReport(
     int Events = 0);
 
 /// <summary>What the treasury expects each week: tax in, and what services, roads and the loan cost.</summary>
-public sealed record WeeklyFinance(int Income, int ServiceUpkeep, int RoadUpkeep, int Interest)
+public sealed record WeeklyFinance(int Income, int ServiceUpkeep, int RoadUpkeep, int Interest, int Administration = 0)
 {
-    public int Expenses => ServiceUpkeep + RoadUpkeep + Interest;
+    public int Expenses => ServiceUpkeep + RoadUpkeep + Interest + Administration;
 
     public int Net => Income - Expenses;
 }
@@ -123,11 +123,17 @@ public sealed class CityGame
         var names = GameRandom.ForStage(config.Seed, "city-name");
         string[] prefixes = ["Oak", "Cedar", "Maple", "Willow", "Pine", "Silver", "Clear", "River"];
         string[] suffixes = ["haven", " Falls", " Ridge", " Creek", "brook", "wood", "view", " Harbor"];
-        return new CityGame(config, map, GameRandom.ForStage(config.Seed, "simulation"))
+        var game = new CityGame(config, map, GameRandom.ForStage(config.Seed, "simulation"))
         {
             CityName = config.Scenario != CityScenario.Random ? CityScenarioMap.Name(config.Scenario)
                 : prefixes[names.Next(prefixes.Length)] + suffixes[names.Next(suffixes.Length)],
         };
+        if (config.Scenario != CityScenario.Random && config.FullRules)
+        {
+            ScenarioSeeder.Seed(game);
+        }
+
+        return game;
     }
 
     public GameConfig Config { get; }
@@ -379,9 +385,11 @@ public sealed class CityGame
             roads += Map.Content.Roads[Map.RoadTypeLayer[i]].WeeklyUpkeep;
         }
 
+        double bureaucracy = Config.AdministrationShare *
+            Math.Clamp((stats.Population - 2_000) / (double)(Config.AdministrationFullAt - 2_000), 0, 1);
         return new WeeklyFinance(
             (int)Math.Round(income), (int)Math.Round(services), (int)Math.Round(roads * Budget.Roads),
-            (int)Math.Round(Budget.Loan * Budget.LoanInterestPerWeek));
+            (int)Math.Round(Budget.Loan * Budget.LoanInterestPerWeek), (int)Math.Round(income * bureaucracy));
     }
 
     public void SetTax(ZoneType zone, double rate)

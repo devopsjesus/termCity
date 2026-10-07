@@ -60,7 +60,7 @@ public static class CityReport
             $"Crime {ind.Crime:0}  Pollution {ind.Pollution:0}  Traffic {ind.Congestion:0}  Land value {ind.LandValue:0}",
             $"Power {ind.PowerSupplied:P0}  Water {ind.WaterSupplied:P0}",
             "Coverage: " + string.Join("  ", ServiceKinds.Area.Select(k => $"{ServiceName(k)} {ind.CoverageOf(k):0}%")),
-            $"Weekly: tax {Fmt.Money(f.Income)}, services {Fmt.Money(f.ServiceUpkeep)}, roads {Fmt.Money(f.RoadUpkeep)}, interest {Fmt.Money(f.Interest)}, net {Fmt.Money(f.Net)}",
+            $"Weekly: tax {Fmt.Money(f.Income)}, services {Fmt.Money(f.ServiceUpkeep)}, roads {Fmt.Money(f.RoadUpkeep)}, administration {Fmt.Money(f.Administration)}, interest {Fmt.Money(f.Interest)}, net {Fmt.Money(f.Net)}",
         };
         if (ind.Complaints.Count > 0)
         {

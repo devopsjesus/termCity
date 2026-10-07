@@ -95,7 +95,12 @@ public sealed record GameConfig
     public double TripsPerResident { get; init; } = 0.9;
 
     /// <summary>Full rules: share of the city's population that arrives or leaves in a week when it is perfectly attractive.</summary>
-    public double MigrationRatePerWeek { get; init; } = 0.012;
+    public double MigrationRatePerWeek { get; init; } = 0.006;
+
+    /// <summary>Full rules: the share of tax income a city of <see cref="AdministrationFullAt"/> people or more spends on payroll, welfare and overhead.</summary>
+    public double AdministrationShare { get; init; } = 0.55;
+
+    public int AdministrationFullAt { get; init; } = 50_000;
 
     /// <summary>Full rules: weekly chance, per building, that a fire starts (before fire cover and the place's fire risk).</summary>
     public double FireIgnitionPerBuildingWeek { get; init; } = 0.00006;
@@ -107,7 +112,7 @@ public sealed record GameConfig
     public double FloodChancePerWeek { get; init; } = 0.012;
 
     /// <summary>Weekly chance that a filled cell is considered for a density upgrade or downgrade.</summary>
-    public double DensityChangePerWeek { get; init; } = 0.02;
+    public double DensityChangePerWeek { get; init; } = 0.006;
 
     public int WeeksPerYear { get; init; } = 52;
 
