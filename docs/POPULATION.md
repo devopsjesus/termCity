@@ -16,44 +16,78 @@ Each game week, in order:
    `MaxNewResidentialPerWeek + max(filled homes, population / 5) x MigrationRatePerWeek`, scaled by the city's
    *attraction* and stochastically rounded. A hamlet always gets its few families; a city's inflow compounds with size.
 2. **Businesses** open in proportion to residents and the *business climate*.
-3. **Population engine** (`PopulationEngine.RunWeek`): births, ageing, deaths, emigration, abandonment, business
-   closures, density changes, then disasters.
-4. **Treasury**: tax in, upkeep out, interest on any loan, and an insolvency event if money runs out.
+3. **Population engine** (`PopulationEngine.RunWeek`): the harvest and grain store, births, ageing, deaths, emigration,
+   abandonment, business closures, density changes, feast days, then disasters (fires, raiders, plague, floods, quakes).
+4. **Settlement** (`Settlement.RunWeek`): the town's rank and, at Michaelmas, the crown's tribute.
+5. **Treasury**: tithes and rents in, upkeep out, interest on any loan, and an insolvency event if money runs out.
 
 ## What people feel
 
 `CityAnalysis.Assess` builds a `CityIndicators` snapshot whenever the layout, budget or week changes. Each home has a
-happiness of 66 minus charges, each in points:
+happiness of 70 minus charges, each in points:
 
 | Charge | Cost |
 |---|---|
 | No power / no water | 30 / 25 |
 | Smog | 0.32 x smog x scenario sensitivity |
-| Crime | 0.28 x felt crime (police, parks and schools cut it) |
-| Fire, health, schools, parks | up to 12 / 14 / 9 / 8, scaled by how much of the city's need is unmet |
+| Crime | 0.28 x felt crime (the sheriff, greens, taverns, the faith and schools cut it) |
+| Fire, health, schools, greens | up to 12 / 14 / 9 / 8, scaled by how much of the city's need is unmet |
+| Unguarded (no castle or watch reaching a big enough town) | 7 |
+| No solace (no chapel or church in a town big enough to want one) | 4 |
+| Hunger | scaled by how far the grain store has run dry |
 | Traffic | up to 18 |
 | Unemployment | 45 x (rate - 6%) |
 | Taxes | rate above the scenario's fair rate, clamped to -4..20 |
 | No road access | 10 |
 
-Service *need* grows with population (fire from 300 people, health 450, schools 700...), so a hamlet is not punished for
-lacking a police force it does not need yet. Jobs come from working commercial and industrial buildings plus a base of
+Service *need* grows with population (fire from 300 people, the sheriff 600, physic 700, schools 450, greens 900, defence 400, faith 500), so a
+hamlet is not punished for lacking a sheriff it does not need yet. Jobs come from working commercial and industrial buildings plus a base of
 informal work, so a few families are not "unemployed" before the first shop opens.
 
 ## Attraction and climate
 
-- **Attraction** = comfort (happiness 32 to 66 mapped to 0..1) x job availability x scenario appeal. Below happiness 32
+- **Attraction** = comfort (happiness 32 to 70 mapped to 0..1) x job availability x scenario appeal. Below happiness 32
   nobody new arrives. It scales arrivals from 0 (none) to 2 (a boom).
 - **Business climate** falls with excess taxes, unfilled jobs, crime, congestion and shortages of power or water. Below
   about 0.4 businesses close.
 
 ## Demographics
 
-- Children grow up in about 18 years; adults retire after about 47 working years.
-- Yearly mortality: 0.06% children, 0.3% adults, 6.5% seniors, reduced by health cover.
-- Births: 0.06% of adults each week, scaled by happiness.
+Medieval lives are short and hard (see [MEDIEVAL.md](MEDIEVAL.md)):
+
+- Children grow up in about 18 years; adults retire after about 47 working years, though 20% of elders still work
+  and 12% of children already herd, glean or are apprenticed.
+- Yearly mortality: 5% children, 1.8% adults, 16% seniors, reduced by physic (the Health service).
+- Births: 0.14% of adults each week, scaled by happiness.
 - Emigration: when happiness is under 42 (or unemployment high) the unhappier of two random homes loses 1-3 people.
 - Homes below happiness 40 can be abandoned; failing businesses close.
+- Famine adds deaths and emigration; plague adds weeks of extra deaths blunted by physic.
+
+## Seasons, grain and famine
+
+The year starts in midwinter: winter weeks 49-9, spring 10-22, summer 23-35, autumn 36-48. Farmland yields at harvest
+(`Harvest`): the town keeps a grain store measured in weeks of need, households keep up to 10 weeks in their own bins and a
+Granary raises the cap (up to 78 weeks). The harvest quality is rolled each autumn (volatility scaled by the scenario),
+so a poor harvest drains the store. A town with an empty store buys grain from merchants for gold if it can; a Market
+Cross or Guildhall widens the reach and cuts the price. With neither grain nor gold, **Hunger** rises, happiness drops,
+people die and leave. Summer is the season of plague and fire (`Seasons.PlagueFactor`, `FireFactor`); winter slows travel.
+
+## Disasters
+
+- **Fire**: ignition 0.009% per building per week (more in summer, more in tall wooden buildings); it spreads by fuel and
+  is stopped by a Fire Watch.
+- **Plague**: 0.6% weekly chance in a town of 250 or more; it lasts weeks and kills 1.2% of the town a week without physic.
+- **Raids**: 0.7% weekly chance in a town of 150 or more, higher with hunger and tribute arrears. A garrison (castle tier)
+  or a sheriff turns them away; an unguarded town is sacked.
+- **Floods** and **earthquakes** are unchanged and scale with the scenario's risk.
+
+## Settlement: rank and tribute
+
+`Settlement.RankOf` assigns a rank from size and standing: Hamlet, Village (120 people), Market Town (800 and a market),
+Borough (5,000, a market and a keep) and City (25,000, a market, a castle and a church). Each rank above Hamlet lifts the
+tithes on shops and workshops by 3%. At Michaelmas (week 39) the crown's reeve takes about 2g per soul, trimmed by the
+strength of the lord's seat (12% per tier) and the rank (8% per rank). A town of under 150 people is below notice. A
+shortfall becomes **arrears**, added to next year's bill, and makes raiders bolder.
 
 ## Density
 
@@ -64,7 +98,7 @@ demand all allow it, and downgrades when land value collapses. Upgrades are gate
 
 ## Money
 
-Tax income = filled cell value x tax rate, reduced by unemployment and unfilled jobs and lifted by education.
+Gold is the currency (`Fmt.Money` prints `15,000g`). Tithes and rents (the tax) = filled cell value x tax rate, reduced by unemployment and unfilled jobs and lifted by education.
 Expenses are the upkeep of every civic building (scaled by the funding level), road upkeep, loan interest and
 administration: a share of tax income (up to 55%) that grows with population from 2,000 up to 50,000 people, so large
 cities cannot coast on surpluses.
@@ -75,9 +109,8 @@ limited to 40 weeks of income and cost 0.2% a week.
 
 ## Events
 
-Fires (damped by fire cover), outbreaks (health cover), floods (low land beside water, mostly in spring) and earthquakes
-(scenario risk) are reported through `CityGame.EventOccurred` and the `Events` list. Milestones, upgrades, closures and
-insolvency are events too.
+Fires, plague, raids, famine, floods and earthquakes, harvests, feast days and rank changes are reported through
+`CityGame.EventOccurred` and the `Events` list. Milestones, upgrades, closures and insolvency are events too.
 
 ## Scenarios
 
@@ -88,16 +121,19 @@ city is. Over two game years from the default start:
 
 | City | Trajectory |
 |---|---|
-| San Francisco | Booms: high appeal, well served, little room, so it grows taller |
-| Chicago | Steady growth on a deep industrial base |
-| San Diego | Slow growth; water-limited |
-| Los Angeles | Flat; smog and traffic hold it back |
-| St. Louis | Shrinks: thin services, high crime, low appeal. Fix services to turn it around |
+| Constantinople | Booms: high appeal, well served, little room, so it grows taller |
+| Lubeck | Steady growth on a deep trading and craft base |
+| Genoa | Slow growth; water-limited and fire-prone |
+| Naples | Flat; smoke and crowding hold it back |
+| York | Shrinks: thin services, flood and crime, low appeal. Fix services to turn it around |
+
+(The old San Francisco, Chicago, San Diego, Los Angeles and St. Louis save names read as these cities.)
 
 ## Playing it
 
 - **City menu > Budget, taxes and loans** sets funding per service, taxes and borrowing.
 - **City menu > City health report** lists every indicator, complaint and the latest events.
-- The sidebar shows mood, jobs, utilities, net income and the top complaint; the inspector shows power, water,
+- The sidebar shows mood, jobs, utilities, the season and grain store, standing, net income and the top complaint; the inspector shows power, water,
   happiness and land value per cell.
-- Place power, water, fire, police, clinics, schools and parks from the area menu (**Service buildings**).
+- Place fuel, water, fire watches, sheriffs, apothecaries, schools, greens, castles, churches, markets and granaries from
+  the area menu (**Service buildings**).

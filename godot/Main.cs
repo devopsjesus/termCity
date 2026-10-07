@@ -1316,6 +1316,7 @@ public partial class Main : Control
             Game: Esc city menu; F5 save; F9 quick-load; Q/Ctrl+Q quit.
             Reports: F7 weekly report/milestones; F8 growth/road access.
             Guide: F6 shows/dismisses. F12 input and loop diagnostics.
+            Seasons: grain is stored at harvest; famine, plague, raiders and fires threaten. Michaelmas brings the crown's tribute.
             Dezoned buildings leave in 2-3 weeks; restore their zone to keep them.
             Zones are free. Join your tracks to the King's Road at the map edge for growth.
             """, [new("Close", () => { _helpVisible = false; Session.ClosePrompt(); })]);

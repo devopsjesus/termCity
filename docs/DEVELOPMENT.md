@@ -12,7 +12,7 @@ The Godot-local solution also remains available for editor integration.
 ```bash
 dotnet build TermCity.slnx
 godot --path godot -- --seed 42 --size medium
-godot --headless --path godot -- --size SF --seed 42 --dump-map
+godot --headless --path godot -- --size CON --seed 42 --dump-map
 dotnet build TermCity.slnx -c Release
 dotnet test TermCity.slnx -c Release --no-build
 ```
@@ -75,19 +75,20 @@ produce sea edges, bays, lakes, deltas or meandering rivers plus smaller bodies.
 Highways reach map edges, connect through cardinal links and use straight bridges in random maps.
 
 `MapSize` accepts small 160x96, medium 320x192, large 640x384, custom 80x24 through 640x384,
-and case-insensitive city presets **SF/LA/SD/CHI/STL**.
+and case-insensitive city presets **CON/NAP/GEN/LUB/YRK** (Constantinople, Naples, Genoa, Lubeck, York).
 Named presets set `GameConfig.Scenario`, normalize new maps to 640x384 and use `CityScenarioMap`.
-SF delegates to `SanFranciscoMap`; shared `CityMapGeometry` handles polygons, ellipses and
+Constantinople delegates to `ConstantinopleMap`; shared `CityMapGeometry` handles polygons, ellipses and
 orthogonally connected road paths.
 
 These are hand-shaped, north-up regional approximations, not GIS/current land-use datasets.
 The layouts include city-specific coastlines/rivers/hills/parks and road-served occupied R/C/I
-districts. SF includes surrounding Marin/East Bay/Alameda communities; other presets represent
-LA, San Diego, Chicago and St. Louis. Households use independent scenario RNG stages.
+districts. These are medieval stand-ins for the original regional layouts (San Francisco, Los Angeles, San Diego, Chicago and
+St. Louis); the geography is unchanged. Households use independent scenario RNG stages.
 
 Named cities start paused without automatic onboarding. Explicit F6 guide requests still work.
-Saved dimensions/layers remain unchanged on load; restarting an older medium SF save generates
-the expanded large scenario. The legacy `SanFrancisco` configuration alias supports earlier saves.
+Saved dimensions/layers remain unchanged on load; restarting an older medium Constantinople (formerly SF) save generates
+the expanded large scenario. The legacy `SanFrancisco` configuration alias and the old scenario names
+(`LosAngeles`, `SanDiego`, `Chicago`, `StLouis`) read as their stand-ins.
 
 ## Simulation
 
@@ -100,6 +101,12 @@ allocation. Candidates are sorted before random selection so results remain stab
 sparse indexes. Base weekly caps are 3 homes, 1 shop and 1 factory, plus 2% of existing capacity.
 Commercial/industrial growth unlocks at 10 occupied residential cells, with one supported shop per
 20 homes and one factory per 10 homes.
+
+The medieval layer lives in `TermCity.Core/Simulation`: `Seasons` (the farming year), `Harvest` (grain, famine, buying
+grain), `Feasts` (pilgrim feast days), `Disasters` (fires, raids, plague, floods, earthquakes), `Settlement` (town rank and the
+crown's tribute) and the castle tiers in `CityServices` (`SeatRank`). Each runs from `PopulationEngine.RunWeek` or
+`CityGame.AdvanceWeek` in a fixed order and draws only from `game.Rng`, so a seed stays reproducible. See
+[POPULATION.md](POPULATION.md) and [MEDIEVAL.md](MEDIEVAL.md).
 
 Taxes arrive weekly. Occupied R/C/I cells have weekly values 200/350/500 at the default 5% tax rate.
 Dezoned occupied buildings retain population/tax income until their random 14-21-game-day deadline.
@@ -207,7 +214,9 @@ last report, milestones, guide dismissal, pending dezone removals and all map la
 Terrain/features/buildings/road types use name palettes. Layers are deflate-compressed and
 base64-encoded; older uncompressed layers remain readable. Load refreshes clock timings from
 current defaults unless explicitly preserving test timings, rebuilds sparse indexes and starts
-the session paused. Legacy starting years, city names and SF metadata have compatibility defaults.
+the session paused. Legacy starting years, city names, SF metadata and the old building names (`House`, `Police Station`, ...) have compatibility
+defaults. Medieval state (grain, harvest, hunger, outbreaks, town rank, tribute arrears) is optional in the file, so older
+saves load with sensible defaults; saves with no engine marker still load as Classic rules.
 
 Autosave checks every 60 real seconds, rotates three sibling files and never overwrites the
 quick-save. Unsaved-progress guards offer save/continue, discard/continue or cancel, and failed
@@ -244,7 +253,7 @@ dotnet test TermCity.slnx -c Release
 dotnet test tests/TermCity.Tests/TermCity.Tests.csproj \
   --filter "FullyQualifiedName~GodotPresentationTests|FullyQualifiedName~CityScenarioTests"
 godot --headless --path godot -- --smoke-test --seed 42 --size large
-godot --path godot -- --smoke-test --seed 42 --size SF --capture /absolute/path/city.png
+godot --path godot -- --smoke-test --seed 42 --size CON --capture /absolute/path/city.png
 ```
 
 Unit tests cover economy/growth, calendar, road networks, generation/water, named-city geography,
