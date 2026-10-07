@@ -51,6 +51,13 @@ Random cities start paused with a first-city guide. Connect roads to an existing
 edge, zone nearby homes with **R**, and resume with **P**. A connected road serves land within
 two cells; water blocks service from spreading across it. Disconnected roads are amber.
 
+### Services, budget and the full city engine
+
+New games run the full rules: homes and businesses need **power and water** (build plants, pumps and towers), residents
+want **fire, police, health, education and parks** as the city grows, jobs matter, and the budget has to balance.
+Open **City menu > Budget, taxes and loans** to set service funding, tax rates and loans, and **City health report**
+for every indicator. Details and tuning are in [docs/POPULATION.md](docs/POPULATION.md).
+
 ### Zones and growth
 
 - **Residential (R):** households build homes and add adults, children, and seniors to the population.
