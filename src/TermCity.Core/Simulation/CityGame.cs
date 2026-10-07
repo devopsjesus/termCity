@@ -293,6 +293,20 @@ public sealed class CityGame
     /// <summary>Weeks left of a disease outbreak (0 when there is none).</summary>
     public int OutbreakWeeksLeft { get; internal set; }
 
+    /// <summary>The season of the farming year (the year starts in midwinter).</summary>
+    public Season Season => Seasons.Of(WeekOfYear, Config.WeeksPerYear);
+
+    /// <summary>Weeks of the town's grain in store: the cushion between a poor harvest and starvation.</summary>
+    public double GrainWeeks { get; internal set; } = 8;
+
+    /// <summary>This year's crop against an ordinary one (1): below about 0.8 is a poor harvest.</summary>
+    public double HarvestQuality { get; internal set; } = 1;
+
+    /// <summary>Share of the town's grain need that went unmet last week, 0-1: above 0 people are going hungry.</summary>
+    public double Hunger { get; internal set; }
+
+    internal bool BuyingGrain { get; set; }
+
     internal WeekTally Tally { get; } = new();
 
     /// <summary>Coverage of every area service, smog, and power and water supply. Recomputed when the city layout or budget changes.</summary>
@@ -625,7 +639,7 @@ public sealed class CityGame
             var ind = Indicators;
             int effective = Math.Max(Stats.Residential.Filled, Stats.Population / 5);
             double families = Config.MaxNewResidentialPerWeek + effective * Config.MigrationRatePerWeek;
-            _planHomes = StochasticRound(families * ind.Attraction);
+            _planHomes = StochasticRound(families * ind.Attraction * Seasons.Travel(Season));
             int allowedC = SupportedCells(ZoneType.Commercial);
             int allowedI = SupportedCells(ZoneType.Industrial);
             _planShops = StochasticRound(WeeklyCap(Config.MaxNewCommercialPerWeek, allowedC) * ind.BusinessClimate);
@@ -1049,8 +1063,8 @@ public sealed class CityGame
             return 1;
         }
 
-        double factor = 1 + 0.15 * services.Coverage(ServiceKind.Defence, i) / 100;
-        return zone == ZoneType.Residential ? factor : factor * (1 + 0.25 * services.Coverage(ServiceKind.Trade, i) / 100);
+        double factor = 1 + 0.15 * services.Coverage(ServiceKind.Defence, i) / 100.0;
+        return zone == ZoneType.Residential ? factor : factor * (1 + 0.25 * services.Coverage(ServiceKind.Trade, i) / 100.0);
     }
 
     private CityStats ComputeStats()

@@ -14,7 +14,7 @@ internal static class ScenarioSeeder
     [
         ("Fire Watch", 24), ("Sheriff's Hall", 28), ("Apothecary", 22), ("Infirmary", 64),
         ("Chantry School", 22), ("Monastery", 84), ("Village Green", 15),
-        ("Chapel", 17), ("Market Cross", 20), ("Motte and Bailey", 34),
+        ("Chapel", 17), ("Market Cross", 20), ("Motte and Bailey", 26),
     ];
 
     /// <summary>How well each scenario's real-world counterpart is provided for: above 1 is generous, below 1 is thin.</summary>

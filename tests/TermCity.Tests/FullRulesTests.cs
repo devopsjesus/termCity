@@ -200,7 +200,7 @@ public class FullRulesTests
     public void SavesWithoutAnEngineMarkerPlayByClassicRules()
     {
         var game = Town();
-        string json = SaveGameStore.Serialize(game).Replace("\"Engine\": \"city-rules-1\"", "\"Engine\": null");
+        string json = SaveGameStore.Serialize(game).Replace("\"Engine\": \"city-rules-2\"", "\"Engine\": null");
         var loaded = SaveGameStore.Deserialize(json);
         Assert.Equal(CityRules.Classic, loaded.Config.Rules);
     }

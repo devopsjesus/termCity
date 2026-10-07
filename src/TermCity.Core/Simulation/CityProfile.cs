@@ -24,6 +24,12 @@ public sealed record CityProfile
 
     public double OutbreakRisk { get; init; } = 1;
 
+    /// <summary>How often bandits and raiders come: high on a frontier, low behind strong walls and busy roads.</summary>
+    public double RaidRisk { get; init; } = 1;
+
+    /// <summary>How wildly the harvest swings from year to year: 1 is the temperate norm, above 1 the fields are chancier.</summary>
+    public double HarvestVolatility { get; init; } = 1;
+
     public double FloodRisk { get; init; } = 1;
 
     /// <summary>Chance, per decade, of an earthquake that damages the city.</summary>

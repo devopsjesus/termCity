@@ -11,6 +11,10 @@ public enum EventKind
     Milestone,
     Finance,
     Upgrade,
+    Raid,
+    Harvest,
+    Famine,
+    Feast,
 }
 
 /// <summary>Something that happened to the city. <see cref="Cells"/> are the map cells it touched (for a UI to point at).</summary>

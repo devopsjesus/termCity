@@ -19,12 +19,14 @@ internal sealed class WeekTally
 /// </summary>
 internal static class PopulationEngine
 {
-    private const double ChildMortality = 0.0006 / 52;
-    private const double AdultMortality = 0.003 / 52;
-    private const double SeniorMortality = 0.065 / 52;
-    private const double BirthsPerAdultWeek = 0.0006;
-    private const double ChildrenGrowUpPerWeek = 1.0 / 936;
-    private const double AdultsRetirePerWeek = 1.0 / 2444;
+    // Medieval lives: a child in five dies before ten, adults are worn out by fifty and a senior is a grandparent of fifty-five.
+    // Large families (women bear to forty), children at work from twelve and old hands working until they drop.
+    private const double ChildMortality = 0.05 / 52;
+    private const double AdultMortality = 0.018 / 52;
+    private const double SeniorMortality = 0.16 / 52;
+    private const double BirthsPerAdultWeek = 0.0014;
+    private const double ChildrenGrowUpPerWeek = 1.0 / 624;
+    private const double AdultsRetirePerWeek = 1.0 / 1976;
 
     private static readonly int[] UpgradePopulation = [0, 1_500, 9_000];
     private static readonly double[] UpgradeLandValue = [0, 38, 60];
@@ -34,11 +36,13 @@ internal static class PopulationEngine
     {
         var map = game.Map;
         var homes = Cells(map, ZoneType.Residential);
+        Harvest.RunWeek(game, tally);
         Demographics(game, tally, homes);
         Emigration(game, tally, homes);
         Abandonment(game, homes);
         Closures(game);
         Density(game);
+        Feasts.RunWeek(game);
 
         var occupied = new List<int>();
         foreach (var zone in Zones.Placeable)
@@ -69,7 +73,8 @@ internal static class PopulationEngine
     {
         var map = game.Map;
         var services = game.Services;
-        double fertility = 0.7 + 0.6 * game.Indicators.Happiness / 100;
+        double hunger = game.Hunger;
+        double fertility = (0.7 + 0.6 * game.Indicators.Happiness / 100) * (1 - 0.6 * hunger);
         bool outbreak = game.OutbreakWeeksLeft > 0;
 
         foreach (int i in homes)
@@ -80,16 +85,14 @@ internal static class PopulationEngine
                 continue;
             }
 
-            double cover = services.Coverage(ServiceKind.Health, i) / 100;
-            double mortality = 1.6 - 0.8 * cover;
-            if (outbreak)
-            {
-                mortality *= 1 + 3 * (1 - 0.7 * cover);
-            }
+            double cover = services.Coverage(ServiceKind.Health, i) / 100.0;
+            double mortality = 1.3 - 0.6 * cover;
 
-            int deadS = Math.Min(h.Seniors, game.StochasticRound(h.Seniors * SeniorMortality * mortality));
-            int deadA = Math.Min(h.Adults, game.StochasticRound(h.Adults * AdultMortality * mortality));
-            int deadC = Math.Min(h.Children, game.StochasticRound(h.Children * ChildMortality * mortality));
+            // Plague kills a share of everyone, the very young and old most, and the physic's cover blunts it.
+            double plague = outbreak ? game.Config.PlagueDeathPerWeek * (1 - 0.7 * cover) * (1 + hunger) : 0;
+            int deadS = Math.Min(h.Seniors, game.StochasticRound(h.Seniors * (SeniorMortality * mortality * (1 + 3 * hunger) + 1.6 * plague)));
+            int deadA = Math.Min(h.Adults, game.StochasticRound(h.Adults * (AdultMortality * mortality * (1 + 1.5 * hunger) + plague)));
+            int deadC = Math.Min(h.Children, game.StochasticRound(h.Children * (ChildMortality * mortality * (1 + 3 * hunger) + 1.3 * plague)));
             int grown = Math.Min(h.Children - deadC, game.StochasticRound(h.Children * ChildrenGrowUpPerWeek));
             int retired = Math.Min(h.Adults - deadA, game.StochasticRound(h.Adults * AdultsRetirePerWeek));
 

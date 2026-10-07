@@ -82,9 +82,12 @@ public sealed record GameConfig
     public double GrowthRatePerWeek { get; init; } = 0.02;
 
     /// <summary>Share of adults who work (and, for seniors, still work).</summary>
-    public double AdultParticipation { get; init; } = 0.72;
+    public double AdultParticipation { get; init; } = 0.8;
 
-    public double SeniorParticipation { get; init; } = 0.08;
+    public double SeniorParticipation { get; init; } = 0.2;
+
+    /// <summary>Share of children who work (herding, gleaning, spinning, apprenticed at ten): medieval children start early.</summary>
+    public double ChildLabour { get; init; } = 0.12;
 
     /// <summary>Jobs that exist without a building: self-employed, home businesses, odd jobs, as a share of workers.</summary>
     public double InformalJobShare { get; init; } = 0.15;
@@ -104,11 +107,33 @@ public sealed record GameConfig
     public int AdministrationFullAt { get; init; } = 50_000;
 
     /// <summary>Full rules: weekly chance, per building, that a fire starts (before fire cover and the place's fire risk).</summary>
-    public double FireIgnitionPerBuildingWeek { get; init; } = 0.00006;
+    public double FireIgnitionPerBuildingWeek { get; init; } = 0.00009;
 
-    public int OutbreakMinPopulation { get; init; } = 400;
+    public int OutbreakMinPopulation { get; init; } = 250;
 
-    public double OutbreakChancePerWeek { get; init; } = 0.004;
+    public double OutbreakChancePerWeek { get; init; } = 0.006;
+
+    /// <summary>Share of a stricken town's people who die each week of a plague with no physic to help them.</summary>
+    public double PlagueDeathPerWeek { get; init; } = 0.012;
+
+    /// <summary>Weekly chance bandits strike a town (before the place's raid risk, hunger, the sheriff and the garrison).</summary>
+    public double RaidChancePerWeek { get; init; } = 0.007;
+
+    public int RaidMinPopulation { get; init; } = 150;
+
+    /// <summary>Grain, in measures, a person eats in a week.</summary>
+    public double GrainPerPersonWeek { get; init; } = 0.1;
+
+    /// <summary>Weeks of grain households can keep in their own bins, before any granary.</summary>
+    public double HouseholdStoreWeeks { get; init; } = 10;
+
+    public double MaxStoreWeeks { get; init; } = 78;
+
+    /// <summary>Gold a measure of grain costs from merchants in a shortage, in a town with no market.</summary>
+    public double GrainPrice { get; init; } = 5;
+
+    /// <summary>Gold each pilgrim spends at a feast, before the market multiplier.</summary>
+    public double PilgrimGold { get; init; } = 3;
 
     public double FloodChancePerWeek { get; init; } = 0.012;
 

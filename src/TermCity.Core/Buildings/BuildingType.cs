@@ -44,6 +44,9 @@ public sealed class BuildingType : RegisteredType
     /// </summary>
     public int SeatRank { get; init; }
 
+    /// <summary>Pilgrims this holy place draws to each feast (the quarter days); 0 for buildings that draw none.</summary>
+    public int Pilgrims { get; init; }
+
     public string Description { get; init; } = string.Empty;
 
     public ServiceKind Service { get; init; } = ServiceKind.None;
@@ -265,7 +268,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(Civic("Chantry School", ServiceKind.Education, "✎", 0xc59bff, cost: 8_000, upkeep: 120,
             radius: 12, strength: 70, text: "A priest teaches letters and sums; lettered workers earn and build more"));
         registry.Register(Civic("Monastery", ServiceKind.Education, "⌘", 0xa56cff, cost: 45_000, upkeep: 560,
-            radius: 28, text: "A scriptorium and cloister: learning with a wide reach"));
+            radius: 28, pilgrims: 60, text: "A scriptorium and cloister: learning with a wide reach, and a shrine for pilgrims"));
         registry.Register(Civic("Village Green", ServiceKind.Recreation, "♣", 0x4ddf6b, cost: 2_500, upkeep: 25,
             radius: 8, strength: 80, pollution: -2, text: "Common land and a maypole: land value, happiness, less crime and smoke"));
         registry.Register(Civic("Tavern", ServiceKind.Recreation, "◒", 0xffb347, cost: 6_000, upkeep: 80,
@@ -281,11 +284,11 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             radius: 38, strength: 100, seat: 3, minPopulation: 2_500, text: "Curtain walls, towers and a great hall: a royal seat that anchors a whole town"));
 
         registry.Register(Civic("Chapel", ServiceKind.Faith, "†", 0xfff2b3, cost: 5_000, upkeep: 70,
-            radius: 10, strength: 70, text: "A priest and a bell: solace for the faithful and a gentler temper"));
+            radius: 10, strength: 70, pilgrims: 12, text: "A priest and a bell: solace for the faithful and a gentler temper"));
         registry.Register(Civic("Parish Church", ServiceKind.Faith, "‡", 0xffe680, cost: 26_000, upkeep: 280,
-            radius: 18, strength: 90, minPopulation: 300, text: "A stone church with a tower: a wide reach for the faith, tithes and holy days"));
+            radius: 18, strength: 90, minPopulation: 300, pilgrims: 80, text: "A stone church with a tower: a wide reach for the faith, tithes and holy days"));
         registry.Register(Civic("Cathedral", ServiceKind.Faith, "✙", 0xfff7d6, cost: 240_000, upkeep: 1_900,
-            radius: 34, strength: 100, minPopulation: 4_000, text: "A soaring cathedral that draws pilgrims and wonder; a work of generations"));
+            radius: 34, strength: 100, minPopulation: 4_000, pilgrims: 700, text: "A soaring cathedral that draws pilgrims and wonder; a work of generations"));
 
         registry.Register(Civic("Market Cross", ServiceKind.Trade, "¤", 0xffd27f, cost: 6_000, upkeep: 60,
             radius: 12, strength: 80, text: "A market place and a toll: traders and shoppers raise land value and market tolls"));
@@ -298,10 +301,11 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
 
     private static BuildingType Civic(
         string name, ServiceKind kind, string glyph, int color, int cost, int upkeep, int radius = 0, int capacity = 0,
-        int strength = 100, int pollution = 0, bool water = false, string text = "", int minPopulation = 0, int seat = 0) => new()
+        int strength = 100, int pollution = 0, bool water = false, string text = "", int minPopulation = 0, int seat = 0, int pilgrims = 0) => new()
     {
         MinPopulation = minPopulation,
         SeatRank = seat,
+        Pilgrims = pilgrims,
         Name = name,
         Glyphs = [glyph],
         Foreground = Rgb.Hex(color),

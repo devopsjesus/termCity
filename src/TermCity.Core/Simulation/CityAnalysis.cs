@@ -77,7 +77,7 @@ public static class CityAnalysis
     // How many souls a town needs before it starts to want each service. A hamlet has no use for a sheriff; the same
     // want grows linearly until the town is as big as the threshold and then stays at full strength. Index is the
     // ServiceKind: none, fuel, water, fire, sheriff, physic, learning, commons, lord's garrison, faith, trade, granary.
-    internal static readonly int[] NeedPopulation = [0, 0, 0, 200, 400, 500, 900, 600, 150, 250, 350, 0];
+    internal static readonly int[] NeedPopulation = [0, 0, 0, 300, 600, 700, 450, 900, 400, 500, 0, 0];
 
     public static double Need(ServiceKind kind, int population) =>
         NeedPopulation[(int)kind] == 0 ? 0 : Math.Clamp(population / (double)NeedPopulation[(int)kind], 0, 1);
@@ -108,7 +108,8 @@ public static class CityAnalysis
             }
         }
 
-        int workers = (int)Math.Round(stats.Adults * config.AdultParticipation + stats.Seniors * config.SeniorParticipation);
+        int workers = (int)Math.Round(stats.Adults * config.AdultParticipation + stats.Seniors * config.SeniorParticipation +
+            stats.Children * config.ChildLabour);
         int informal = (int)Math.Round(workers * config.InformalJobShare) + config.InformalJobsBase;
         double unemployment = workers == 0 ? 0 : Math.Clamp(1 - (jobs + informal) / (double)workers, 0, 1);
         double jobsFilled = jobs + informal == 0 ? 1 : Math.Clamp(workers / (double)(jobs + informal), 0, 1);
@@ -261,7 +262,7 @@ public static class CityAnalysis
         double crime = Math.Clamp(crimeBase * (1 - 0.85 * police / 100) * (1 - 0.25 * recreation / 100) *
             (1 - 0.3 * education / 100) * (1 - 0.3 * defence / 100) * (1 - 0.15 * faith / 100), 0, 100);
 
-        double h = 66;
+        double h = 70;
         void Charge(string reason, double points)
         {
             if (points == 0)
@@ -284,8 +285,9 @@ public static class CityAnalysis
         Charge("Physic", 14 * Need(ServiceKind.Health, population) * (1 - health / 100));
         Charge("Learning", 9 * Need(ServiceKind.Education, population) * (1 - education / 100));
         Charge("Commons", 8 * Need(ServiceKind.Recreation, population) * (1 - recreation / 100));
-        Charge("Unguarded", 10 * Need(ServiceKind.Defence, population) * (1 - defence / 100));
-        Charge("Solace", 6 * Need(ServiceKind.Faith, population) * (1 - faith / 100));
+        Charge("Unguarded", 7 * Need(ServiceKind.Defence, population) * (1 - defence / 100));
+        Charge("Solace", 4 * Need(ServiceKind.Faith, population) * (1 - faith / 100));
+        Charge("Hunger", 45 * game.Hunger);
         Charge("Cart traffic", 18 * congestion);
         Charge("Idleness", 45 * Math.Max(0, unemployment - 0.06));
         Charge("Tithes", Math.Clamp(taxPenalty, -4, 20));

@@ -19,7 +19,7 @@ public static class SaveGameStore
     private const string Deflate = "deflate";
 
     // Saves from before the city rules existed carry no marker and keep playing by the classic rules.
-    private const string EngineMarker = "city-rules-1";
+    private const string EngineMarker = "city-rules-2";
 
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -72,6 +72,9 @@ public static class SaveGameStore
             Funding = game.Budget.Snapshot(),
             Loan = game.Budget.Loan,
             OutbreakWeeksLeft = game.OutbreakWeeksLeft,
+            GrainWeeks = game.GrainWeeks,
+            HarvestQuality = game.HarvestQuality,
+            Hunger = game.Hunger,
             Terrain = EncodeLayer(map.TerrainLayer, map.Content.Terrains, noneValue: null),
             Features = EncodeLayer(map.FeatureLayer, map.Content.Features, noneValue: 0),
             Buildings = EncodeLayer(map.BuildingLayer, map.Content.Buildings, noneValue: 0),
@@ -188,6 +191,9 @@ public static class SaveGameStore
         game.Budget.Restore(data.Funding);
         game.Budget.Loan = Math.Max(0, data.Loan);
         game.OutbreakWeeksLeft = Math.Clamp(data.OutbreakWeeksLeft, 0, 52);
+        game.GrainWeeks = Math.Clamp(data.GrainWeeks ?? 8, 0, 200);
+        game.HarvestQuality = Math.Clamp(data.HarvestQuality ?? 1, 0.1, 2);
+        game.Hunger = Math.Clamp(data.Hunger ?? 0, 0, 1);
         game.Touch();
         return game;
     }
@@ -397,6 +403,13 @@ public static class SaveGameStore
         public int Loan { get; set; }
 
         public int OutbreakWeeksLeft { get; set; }
+
+        /// <summary>Absent in saves made before grain and harvests.</summary>
+        public double? GrainWeeks { get; set; }
+
+        public double? HarvestQuality { get; set; }
+
+        public double? Hunger { get; set; }
 
         public LayerData? Terrain { get; set; }
 
