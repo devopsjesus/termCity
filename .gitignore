@@ -6,3 +6,4 @@ rust/target/
 rust/target-*/
 bevy/target/
 bevy/target-*/
+.DS_Store
