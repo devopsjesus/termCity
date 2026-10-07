@@ -52,30 +52,30 @@ public sealed record CityProfile
         CityScenario.Constantinople => new()
         {
             Summary = "A walled peninsula at the crossing of the world: steep land, dear plots, a famous harbour and the fault underfoot.",
-            Appeal = 1.25, DensityAppetite = 0.8, QuakeRisk = 0.5, FireRisk = 1.2, CarDependence = 0.7, FairTaxRate = 0.11,
+            Appeal = 1.25, DensityAppetite = 0.8, QuakeRisk = 0.5, FireRisk = 1.2, RaidRisk = 1.3, CarDependence = 0.7, FairTaxRate = 0.11,
         },
         CityScenario.Naples => new()
         {
             Summary = "A crowded, sun-baked bay town under a smoking mountain, loud with quarrels and thirsty for water carried from afar.",
             Appeal = 1.2, WaterSupply = 0.75, PowerDemand = 1.15, CrimeLevel = 1.1, FireRisk = 1.3, QuakeRisk = 0.4,
-            SmogSensitivity = 1.5, CarDependence = 1.6, DensityAppetite = 1.3, FairTaxRate = 0.10,
+            SmogSensitivity = 1.5, HarvestVolatility = 0.8, CarDependence = 1.6, DensityAppetite = 1.3, FairTaxRate = 0.10,
         },
         CityScenario.Genoa => new()
         {
             Summary = "A proud harbour republic of galleys and tower-houses, with dry hills that burn.",
-            Appeal = 1.15, WaterSupply = 0.65, FireRisk = 1.4, QuakeRisk = 0.15, CarDependence = 1.3,
+            Appeal = 1.15, WaterSupply = 0.65, FireRisk = 1.4, RaidRisk = 1.2, QuakeRisk = 0.15, CarDependence = 1.3,
             DensityAppetite = 1.15, FairTaxRate = 0.09,
         },
         CityScenario.Lubeck => new()
         {
             Summary = "A Hanseatic salt-and-timber port on a cold sea: hard winters, busy guilds, brick gables and a long memory of fire.",
             Appeal = 1.1, WaterSupply = 1.6, PowerDemand = 1.3, CrimeLevel = 1.2, FireRisk = 1.2, FloodRisk = 1.1,
-            CarDependence = 0.8, DensityAppetite = 0.9, FairTaxRate = 0.10,
+            RaidRisk = 0.8, HarvestVolatility = 1.3, CarDependence = 0.8, DensityAppetite = 0.9, FairTaxRate = 0.10,
         },
         CityScenario.York => new()
         {
             Summary = "A river minster town past its peak: broad old lanes, fewer trades, flood-prone banks and a thin tithe.",
-            Appeal = 0.8, WaterSupply = 1.3, CrimeLevel = 1.35, FireRisk = 1.1, OutbreakRisk = 1.1, FloodRisk = 1.7,
+            Appeal = 0.8, WaterSupply = 1.3, CrimeLevel = 1.35, FireRisk = 1.1, OutbreakRisk = 1.1, FloodRisk = 1.7, RaidRisk = 1.3, HarvestVolatility = 1.1,
             CarDependence = 1.1, DensityAppetite = 1.1, FairTaxRate = 0.08,
         },
         _ => new(),
