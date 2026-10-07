@@ -145,7 +145,9 @@ internal static class Disasters
             return;
         }
 
-        double chance = game.Config.RaidChancePerWeek * game.Profile.RaidRisk * (1 + 1.5 * game.Hunger);
+        // A town in arrears has lost the crown's favour: bandits come more often, and nobody rides out to stop them.
+        double chance = game.Config.RaidChancePerWeek * game.Profile.RaidRisk * (1 + 1.5 * game.Hunger) *
+            (game.TributeArrears > 0 ? 1.5 : 1);
         if (!game.Rng.Chance(chance))
         {
             return;

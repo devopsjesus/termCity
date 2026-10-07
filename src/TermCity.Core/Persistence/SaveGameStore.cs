@@ -75,6 +75,8 @@ public static class SaveGameStore
             GrainWeeks = game.GrainWeeks,
             HarvestQuality = game.HarvestQuality,
             Hunger = game.Hunger,
+            HighestRank = game.HighestRank,
+            TributeArrears = game.TributeArrears,
             Terrain = EncodeLayer(map.TerrainLayer, map.Content.Terrains, noneValue: null),
             Features = EncodeLayer(map.FeatureLayer, map.Content.Features, noneValue: 0),
             Buildings = EncodeLayer(map.BuildingLayer, map.Content.Buildings, noneValue: 0),
@@ -194,6 +196,8 @@ public static class SaveGameStore
         game.GrainWeeks = Math.Clamp(data.GrainWeeks ?? 8, 0, 200);
         game.HarvestQuality = Math.Clamp(data.HarvestQuality ?? 1, 0.1, 2);
         game.Hunger = Math.Clamp(data.Hunger ?? 0, 0, 1);
+        game.HighestRank = Math.Clamp(data.HighestRank ?? -1, -1, 4);
+        game.TributeArrears = Math.Max(0, data.TributeArrears ?? 0);
         game.Touch();
         return game;
     }
@@ -410,6 +414,10 @@ public static class SaveGameStore
         public double? HarvestQuality { get; set; }
 
         public double? Hunger { get; set; }
+
+        public int? HighestRank { get; set; }
+
+        public int? TributeArrears { get; set; }
 
         public LayerData? Terrain { get; set; }
 

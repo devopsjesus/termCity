@@ -132,6 +132,12 @@ public sealed record GameConfig
     /// <summary>Gold a measure of grain costs from merchants in a shortage, in a town with no market.</summary>
     public double GrainPrice { get; init; } = 5;
 
+    /// <summary>Gold a soul owes the crown each Michaelmas, before the relief a lord's seat and a charter win.</summary>
+    public double TributePerSoul { get; init; } = 2;
+
+    /// <summary>Towns smaller than this are beneath the crown's notice.</summary>
+    public int TributeMinPopulation { get; init; } = 150;
+
     /// <summary>Gold each pilgrim spends at a feast, before the market multiplier.</summary>
     public double PilgrimGold { get; init; } = 3;
 

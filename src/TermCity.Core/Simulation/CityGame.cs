@@ -307,6 +307,15 @@ public sealed class CityGame
 
     internal bool BuyingGrain { get; set; }
 
+    /// <summary>The highest <see cref="TownRank"/> the town has held, so each promotion is announced once (-1 until first assessed).</summary>
+    public int HighestRank { get; internal set; } = -1;
+
+    /// <summary>Tribute left unpaid in earlier years, added to the next demand.</summary>
+    public int TributeArrears { get; internal set; }
+
+    /// <summary>The town's standing in the realm: see <see cref="Settlement"/>.</summary>
+    public TownRank Rank => Config.FullRules ? Settlement.RankOf(this) : TownRank.Hamlet;
+
     internal WeekTally Tally { get; } = new();
 
     /// <summary>Coverage of every area service, smog, and power and water supply. Recomputed when the city layout or budget changes.</summary>
@@ -384,7 +393,7 @@ public sealed class CityGame
         double education = 1 + 0.3 * ind.Education / 100;
         double staffing = 0.5 + 0.5 * ind.JobsFilled;
         double income = stats.ResidentialIncome * (0.5 + 0.5 * (1 - ind.Unemployment)) +
-            (stats.CommercialIncome + stats.IndustrialIncome) * staffing * education;
+            (stats.CommercialIncome + stats.IndustrialIncome) * staffing * education * Settlement.CharterDues(Rank);
 
         double services = 0;
         foreach (int i in Map.ServiceCells)
@@ -580,6 +589,7 @@ public sealed class CityGame
         {
             PopulationEngine.RunWeek(this, Tally);
             Invalidate();
+            Settlement.RunWeek(this);
             _serviceVersion++;
         }
 
