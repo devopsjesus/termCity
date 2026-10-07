@@ -2,6 +2,8 @@
 
 The technical companion to the [README](../README.md), which covers how to install and play. This document covers how the game is put together, the numbers behind it, and how to change it.
 
+The C# terminal application and experimental Godot .NET frontend share the same gameplay core.
+
 Contents
 
 - [Build, run and test](#build-run-and-test)
@@ -35,9 +37,80 @@ dotnet publish src/TermCity.App -c Release -o out     # framework-dependent buil
 
 The published executable is `out/termcity` on Linux and macOS, or `out\termcity.exe` on Windows. Use backslashes in project paths on Windows.
 
+GitHub Actions CI restores, builds the solution in Release mode, and runs tests on Windows, Linux,
+and macOS for pushes and pull requests. Tests reuse the Release build.
+
 Command-line options are parsed in [Program.cs](../src/TermCity.App/Program.cs) and are documented in the README. `--dump-map` prints a header with the seed and map dimensions, followed by the glyphs rendered through `CellRenderer`, which makes it a quick way to eyeball a generator change.
 
 Both projects target `net10.0` with nullable reference types and implicit usings on. The assembly name of the app is `termcity`. `TieredPGO` and concurrent GC are switched off in the app project: steady frame times matter more than peak throughput here.
+
+### Godot desktop prototype
+
+The isolated [Godot project](../godot/project.godot) uses **Godot 4.7.2 .NET** and the existing **.NET 10**
+core without retargeting. Download the .NET editor and its matching .NET export templates from the
+[official release](https://github.com/godotengine/godot/releases/tag/4.7.2-stable). The standard editor
+cannot run this C# project. Install export templates through the editor's template manager.
+
+From the repository root, on Windows:
+
+```powershell
+dotnet build godot\TermCity.Godot.csproj
+godot --path godot -- --seed 42 --size medium
+godot --headless --path godot -- --smoke-test --seed 42 --size large
+dotnet test tests\TermCity.Tests\TermCity.Tests.csproj --filter FullyQualifiedName~GodotPresentationTests
+```
+
+Use your Godot .NET executable's full path if `godot` is not on `PATH`. Godot user arguments follow `--`.
+`--seed` and `--size` reuse the core's map-size rules. `--smoke-test` tests real engine/core integration,
+keyboard and pointer actions, modal guards, serialization, autosave, all zoom levels, paused hill/tree
+animation without cell rebuilds or gameplay mutation, and focus suspension, then exits.
+Success prints `TERMCITY_GODOT_SMOKE_OK`; a failed check logs an error and exits nonzero.
+Headless smoke runs explicitly use a 1200x720 logical viewport instead of the headless driver's 64x64 default.
+For a graphical screenshot, add `--capture <absolute PNG path>` to a non-headless smoke run.
+
+The main scene creates one custom map `Control`, HUD/status labels, and a minimal confirmation/prompt
+presenter. `TerminalGrid` prepares a reusable visible-cell buffer using `CellRenderer` and `BlockSampler`.
+The map uses native cached `_Draw` commands and `QueueRedraw` after session changes; it does not create
+one node per glyph or rebuild the grid every rendered frame. Selection/cursor overlays reuse base cells.
+`TerminalGrid` caches animation eligibility alongside the base visuals, including sampled glyphs at
+coarse zoom. A salted coordinate hash selects about 10% of hills and trees independently of glyph
+variation. Hills move vertically and trees horizontally in four held steps at 80 BPM, with checkerboard
+direction based on world coordinates. Backgrounds and hit targets remain fixed; only glyph positions move.
+Beat changes request a redraw without rebuilding cells or changing gameplay. Animation continues while
+paused and its clock freezes while unfocused.
+The bundled DejaVu Sans Mono 2.37 font is checked against every registered map glyph on startup; its
+raw bytes are loaded directly rather than through Godot's generated import cache, and its license is retained
+in [Assets/DejaVu-LICENSE.txt](../godot/Assets/DejaVu-LICENSE.txt). Export presets explicitly include both files.
+
+Session updates stop while the window is unfocused, and active drags end on focus loss. Keyboard and
+mouse actions invoke the shared session rather than editing map layers. Prompt/preview state blocks
+background actions. `Q` and window-close requests use the existing save/discard/cancel guard.
+Saves and autosaves use `user://` in a distinct `TermCityGodot` directory, preserving the C# save format
+without sharing the terminal app's quick-save. Smoke autosaves use a separate subdirectory and are cleaned up.
+
+Export presets are included for Windows x86-64, Linux x86-64, and macOS. After installing matching templates,
+create the relevant output directory and export using the preset name:
+
+```powershell
+New-Item -ItemType Directory -Force godot\exports\windows
+dotnet build godot\TermCity.Godot.csproj -c ExportRelease
+godot --headless --path godot --export-release Windows
+.\godot\exports\windows\termcity-godot.console.exe --headless -- --smoke-test --seed 42
+```
+
+Use `Linux` or `macOS` for the other presets, and replace Windows path separators/commands on those hosts.
+Distribute the entire export output, not just the executable: it includes the resource pack and
+self-contained .NET dependencies. The macOS preset is unsigned; signing/notarization is needed for
+normal public distribution. Windows graphical rendering and the exported player are verified.
+macOS/Linux runtime verification is not yet performed.
+Check the export log for errors as well as the exit code: Godot can finish packing resources after a
+managed publish failure. A successful smoke run should use the newly built export, not an older player.
+
+The Godot project stays outside `TermCity.slnx` so the existing terminal CI does not require Godot.
+Engine-independent grid/option tests are linked into the existing xUnit project and run in ordinary .NET CI.
+Generated `.godot` state and export outputs are ignored, while scene files, script UID sidecars, and font
+import settings remain versioned. This prototype is not covered by the full terminal UI parity claim.
+Minimap, complete menus/reports, loading UI, and full keyboard/mouse parity remain deferred.
 
 ## Architecture
 

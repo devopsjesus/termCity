@@ -24,4 +24,9 @@
     <ProjectReference Include="..\..\src\TermCity.App\TermCity.App.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\..\godot\TerminalGrid.cs" Link="Godot\TerminalGrid.cs" />
+    <Compile Include="..\..\godot\PrototypeOptions.cs" Link="Godot\PrototypeOptions.cs" />
+  </ItemGroup>
+
 </Project>

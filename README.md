@@ -1,6 +1,6 @@
 # TermCity
 
-A city builder that lives in your terminal. Zone some land, lay some roads, and watch a handful of families turn into a bustling (if slightly boxy) metropolis. Written in C# on .NET 10 with [Terminal.Gui](https://github.com/gui-cs/Terminal.Gui) v2. Runs on Windows, macOS and Linux, with keyboard and mouse.
+A city builder that lives in your terminal. Zone some land, lay some roads, and watch a handful of families turn into a bustling (if slightly boxy) metropolis. Written in C# on .NET 10 with [Terminal.Gui](https://github.com/gui-cs/Terminal.Gui) v2, with an experimental Godot .NET graphical frontend sharing the same gameplay core. Runs on Windows, macOS and Linux, with keyboard and mouse.
 
 > **Developers:** the architecture, extension points, file formats and test setup are in **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)**. This README is for players.
 
@@ -61,6 +61,39 @@ Add options after a `--` when using `dotnet run`, or directly after the program 
 dotnet run --project src/TermCity.App -- --seed 42 --size medium
 ./out/termcity --seed 42 --size medium
 ```
+
+### Experimental Godot front end
+
+For a graphical window that looks like a terminal, use the desktop prototype under [godot/](godot/).
+It reuses the C# gameplay core directly; it does not run a terminal or emulate ANSI output.
+Install **Godot 4.7.2 .NET** (not the standard build) and the **.NET 10 SDK**:
+
+```powershell
+dotnet build godot\TermCity.Godot.csproj
+godot --path godot -- --seed 42 --size medium
+```
+
+Replace `godot` with the path to your downloaded Godot .NET executable if it is not on `PATH`.
+On macOS/Linux, replace the backslash in the project path with `/`.
+The bundled map font is loaded directly from the project, so launching does not depend on a previously
+generated Godot import cache.
+
+The prototype includes a map, HUD, selection, zoom, pause/speed controls, zoning, and road previews:
+arrow keys move, Shift extends selection, left-drag selects, middle-drag or wheel pans, `+`/`-` zoom,
+`P`/Space pauses, `1`/`2`/`3` changes speed, `R`/`C`/`I` zones, and `B` previews a street.
+Enter confirms, Esc cancels, and `Q` or closing the window opens the save/discard guard.
+Ctrl+wheel zooms around the pointer; Shift+wheel scrolls horizontally.
+
+About 10% of visible hills and trees animate on an 80 BPM beat (0.75 seconds per step):
+hills step up/up/down/down, while trees step left/left/right/right. Neighboring tiles move in
+opposite directions, and the chosen subset stays stable while scrolling. Decorative animation
+continues while gameplay is paused; losing window focus suspends both.
+
+This is not yet a full replacement for the terminal apps: the minimap, complete menus/reports, loading UI,
+and full control parity are deferred. It uses the C# save format but a separate `TermCityGodot` user-data
+directory, including automatic saves. Windows rendering and a desktop export are validated; macOS/Linux
+player verification remains outstanding. Build and smoke-test instructions are in
+[the development guide](docs/DEVELOPMENT.md#godot-desktop-prototype).
 
 ### Command-line options
 
