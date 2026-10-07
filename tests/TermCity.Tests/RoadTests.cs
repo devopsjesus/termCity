@@ -17,9 +17,9 @@ public class RoadTypeTests
     public void StreetsAvenuesAndHighwaysCostMoreInThatOrder()
     {
         var game = TestCity.Flat();
-        Assert.Equal(500, game.RoadCostAt(1, 1, Type(game, "Street")));
-        Assert.Equal(900, game.RoadCostAt(1, 1, Type(game, "Avenue")));
-        Assert.Equal(1500, game.RoadCostAt(1, 1, Type(game, "Highway")));
+        Assert.Equal(500, game.RoadCostAt(1, 1, Type(game, DefaultRoads.TrackName)));
+        Assert.Equal(900, game.RoadCostAt(1, 1, Type(game, DefaultRoads.CobbledName)));
+        Assert.Equal(1500, game.RoadCostAt(1, 1, Type(game, DefaultRoads.KingsRoadName)));
         Assert.Equal(500, game.RoadCostAt(1, 1));
     }
 
@@ -27,7 +27,7 @@ public class RoadTypeTests
     public void BuildingARoadStoresItsType()
     {
         var game = TestCity.Flat();
-        var avenue = Type(game, "Avenue");
+        var avenue = Type(game, DefaultRoads.CobbledName);
         var result = game.BuildRoad(new CellRect(5, 5, 3, 1), avenue);
         Assert.True(result.Success, result.Message);
         Assert.Equal(3 * 900, result.Cost);
@@ -39,8 +39,8 @@ public class RoadTypeTests
     public void UpgradingPaysOnlyTheDifferenceAndNeverDowngrades()
     {
         var game = TestCity.Flat();
-        var street = Type(game, "Street");
-        var highway = Type(game, "Highway");
+        var street = Type(game, DefaultRoads.TrackName);
+        var highway = Type(game, DefaultRoads.KingsRoadName);
 
         // Row 20 is a street already: a highway over it costs 1500 - 500 per cell.
         var quote = game.QuoteRoad(new CellRect(10, 20, 4, 1), highway);
@@ -60,7 +60,7 @@ public class RoadTypeTests
     {
         var game = TestCity.Flat();
         game.Map.SetRoad(7, 7, true);
-        Assert.Equal(DefaultRoads.StreetName, game.Map.RoadTypeAt(7, 7)!.Name);
+        Assert.Equal(DefaultRoads.TrackName, game.Map.RoadTypeAt(7, 7)!.Name);
         game.Map.SetRoad(7, 7, false);
         Assert.Null(game.Map.RoadTypeAt(7, 7));
     }
@@ -70,8 +70,8 @@ public class RoadTypeTests
     {
         var game = TestCity.Flat();
         var map = game.Map;
-        var highway = Type(game, "Highway");
-        var avenue = Type(game, "Avenue");
+        var highway = Type(game, DefaultRoads.KingsRoadName);
+        var avenue = Type(game, DefaultRoads.CobbledName);
 
         // A plus-shaped highway junction, and an avenue stretch.
         foreach (var (x, y) in new[] { (30, 10), (29, 10), (31, 10), (30, 9), (30, 11) })
@@ -108,26 +108,166 @@ public class RoadTypeTests
     public void RoadTypesRoundTripThroughSaves()
     {
         var game = TestCity.Flat();
-        game.BuildRoad(new CellRect(5, 5, 4, 1), Type(game, "Avenue"));
-        game.BuildRoad(new CellRect(5, 6, 4, 1), Type(game, "Highway"));
+        game.BuildRoad(new CellRect(5, 5, 4, 1), Type(game, DefaultRoads.CobbledName));
+        game.BuildRoad(new CellRect(5, 8, 4, 1), Type(game, DefaultRoads.KingsRoadName));
         var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
         Assert.Equal(game.Map.RoadTypeLayer, loaded.Map.RoadTypeLayer);
-        Assert.Equal("Avenue", loaded.Map.RoadTypeAt(6, 5)!.Name);
-        Assert.Equal("Highway", loaded.Map.RoadTypeAt(6, 6)!.Name);
-        Assert.Equal("Street", loaded.Map.RoadTypeAt(6, 20)!.Name);
+        Assert.Equal(DefaultRoads.CobbledName, loaded.Map.RoadTypeAt(6, 5)!.Name);
+        Assert.Equal(DefaultRoads.KingsRoadName, loaded.Map.RoadTypeAt(6, 8)!.Name);
+        Assert.Equal(DefaultRoads.TrackName, loaded.Map.RoadTypeAt(6, 20)!.Name);
     }
 
     [Fact]
     public void SavesFromBeforeRoadTypesLoadWithEveryRoadAStreet()
     {
         var game = TestCity.Flat();
-        game.BuildRoad(new CellRect(5, 5, 4, 1), Type(game, "Highway"));
+        game.BuildRoad(new CellRect(5, 5, 4, 1), Type(game, DefaultRoads.KingsRoadName));
         var root = JsonNode.Parse(SaveGameStore.Serialize(game))!.AsObject();
         root.Remove("RoadTypes");
 
         var loaded = SaveGameStore.Deserialize(root.ToJsonString());
         Assert.Equal(game.Map.RoadCount, loaded.Map.RoadCount);
-        Assert.All(loaded.Map.RoadCells, i => Assert.Equal("Street", loaded.Map.RoadTypeAt(i % loaded.Map.Width, i / loaded.Map.Width)!.Name));
+        Assert.All(loaded.Map.RoadCells, i => Assert.Equal(DefaultRoads.TrackName, loaded.Map.RoadTypeAt(i % loaded.Map.Width, i / loaded.Map.Width)!.Name));
+    }
+}
+
+public class RoadSideBySideTests
+{
+    private static bool HasBlock(GameMap map)
+    {
+        for (int y = 0; y < map.Height - 1; y++)
+            for (int x = 0; x < map.Width - 1; x++)
+                if (map.HasRoad(x, y) && map.HasRoad(x + 1, y) && map.HasRoad(x, y + 1) && map.HasRoad(x + 1, y + 1)) return true;
+        return false;
+    }
+
+    [Fact]
+    public void ARoadCannotRunBesideAnotherRoad()
+    {
+        var game = TestCity.Flat();
+        var result = game.BuildRoad(new CellRect(10, 5, 6, 1));
+        Assert.True(result.Success, result.Message);
+        // Only the two ends of a parallel stroke can join the road; nothing runs alongside it.
+        var quote = game.QuoteRoad(new CellRect(10, 6, 6, 1));
+        Assert.Equal(2, quote.Cells);
+        game.BuildRoad(new CellRect(10, 6, 6, 1));
+        for (int x = 11; x <= 14; x++) Assert.False(game.Map.HasRoad(x, 6));
+        Assert.False(HasBlock(game.Map));
+    }
+
+    [Fact]
+    public void JunctionsCannotCrowdEachOther()
+    {
+        var game = TestCity.Flat();
+        game.BuildRoad(new CellRect(10, 5, 6, 1));
+        Assert.True(game.BuildRoad(new CellRect(12, 2, 1, 8)).Success);
+        Assert.False(game.CanPlaceRoad(13, 6));  // would put a second junction right beside the one at (12, 5)
+        Assert.False(game.CanPlaceRoad(11, 4));
+        Assert.True(game.CanPlaceRoad(14, 6));   // far enough from it
+        Assert.Equal(RoadRules.JunctionSpacing, 2);
+    }
+
+    [Fact]
+    public void RemoveFragmentsDropsTinyDisconnectedRoads()
+    {
+        var game = TestCity.Flat();
+        game.BuildRoad(new CellRect(10, 5, 20, 1));
+        game.BuildRoad(new CellRect(10, 12, 3, 1));
+        RoadSeparation.RemoveFragments(game.Map, 16);
+        Assert.True(game.Map.HasRoad(20, 5));
+        Assert.False(game.Map.HasRoad(11, 12));
+    }
+
+    [Fact]
+    public void RoadsStillBranchCrossAndContinue()
+    {
+        var game = TestCity.Flat();
+        game.BuildRoad(new CellRect(10, 5, 6, 1));
+        Assert.True(game.CanPlaceRoad(12, 6));   // a branch leaving the road at a right angle
+        Assert.True(game.BuildRoad(new CellRect(12, 2, 1, 8)).Success); // crossing it
+        Assert.True(game.Map.HasRoad(12, 2) && game.Map.HasRoad(12, 9));
+        Assert.True(game.CanPlaceRoad(16, 5));   // carrying on along the same line
+        Assert.False(HasBlock(game.Map));
+    }
+
+    [Fact]
+    public void ADiagonalIsBuiltWholeButNeverMergesWithAParallelRoad()
+    {
+        var game = TestCity.Flat();
+        var line = CellLines.Between(new Pos(10, 2), new Pos(30, 12));
+        var result = game.BuildRoad(line);
+        Assert.True(result.Success, result.Message);
+        Assert.All(line, p => Assert.True(game.Map.HasRoad(p.X, p.Y)));
+        Assert.False(HasBlock(game.Map));
+
+        // A second diagonal drawn right beside the first only gets the cells that do not touch it side by side.
+        var beside = CellLines.Between(new Pos(10, 3), new Pos(30, 13));
+        var quote = game.QuoteRoad(beside);
+        Assert.True(quote.Cells < beside.Count);
+        game.BuildRoad(beside);
+        Assert.False(HasBlock(game.Map));
+    }
+
+    [Fact]
+    public void AStrokeCannotFoldBackOnItself()
+    {
+        var game = TestCity.Flat();
+        var square = new[] { new Pos(40, 40), new Pos(41, 40), new Pos(40, 41), new Pos(41, 41) };
+        Assert.Equal(3, game.QuoteRoad(square).Cells);
+        game.BuildRoad(square);
+        Assert.False(HasBlock(game.Map));
+    }
+
+    [Fact]
+    public void UpgradingAnExistingRoadIsStillAllowed()
+    {
+        var game = TestCity.Flat();
+        var highway = game.Map.Content.Roads.Get(DefaultRoads.KingsRoadName);
+        game.BuildRoad(new CellRect(10, 5, 6, 1));
+        Assert.Equal(6, game.QuoteRoad(new CellRect(10, 5, 6, 1), highway).Cells);
+    }
+
+    [Theory]
+    [InlineData(CityScenario.Random, 3)]
+    [InlineData(CityScenario.SanFrancisco, 4)]
+    [InlineData(CityScenario.LosAngeles, 5)]
+    [InlineData(CityScenario.StLouis, 6)]
+    public void GeneratedMapsHaveNoRoadsSideBySide(CityScenario scenario, int seed)
+    {
+        var game = CityGame.New(new GameConfig { Scenario = scenario, Seed = seed, MapWidth = 320, MapHeight = 192 });
+        Assert.False(HasBlock(game.Map));
+    }
+
+    [Fact]
+    public void SeparationThinsADoubleWideRoadWithoutBreakingIt()
+    {
+        var game = TestCity.Flat();
+        var map = game.Map;
+        var street = game.DefaultRoad;
+        for (int x = 40; x < 60; x++)
+        {
+            map.SetRoad(x, 40, street);
+            map.SetRoad(x, 41, street);
+        }
+
+        Assert.True(HasBlock(map));
+        RoadSeparation.Apply(map);
+        Assert.False(HasBlock(map));
+        // Still one unbroken road from end to end.
+        var seen = new HashSet<(int, int)>();
+        var stack = new Stack<(int, int)>();
+        for (int x = 40; x < 60 && stack.Count == 0; x++)
+            if (map.HasRoad(x, 40)) stack.Push((x, 40)); else if (map.HasRoad(x, 41)) stack.Push((x, 41));
+        while (stack.Count > 0)
+        {
+            var (x, y) = stack.Pop();
+            if (!map.HasRoad(x, y) || x < 38 || x > 61 || y < 38 || y > 43 || !seen.Add((x, y))) continue;
+            stack.Push((x + 1, y)); stack.Push((x - 1, y)); stack.Push((x, y + 1)); stack.Push((x, y - 1));
+        }
+
+        int total = 0;
+        for (int y = 38; y <= 43; y++) for (int x = 38; x <= 61; x++) if (map.HasRoad(x, y)) total++;
+        Assert.Equal(total, seen.Count);
     }
 }
 
@@ -157,8 +297,8 @@ public class HighwayGenerationTests
         foreach (var (seed, w, h) in Cases())
         {
             var map = Generate(w, h, seed).Map;
-            int highways = map.RoadCells.Count(i => map.RoadTypeAt(i % w, i / w)!.Name == "Highway");
-            int streets = map.RoadCells.Count(i => map.RoadTypeAt(i % w, i / w)!.Name == "Street");
+            int highways = map.RoadCells.Count(i => map.RoadTypeAt(i % w, i / w)!.Name == DefaultRoads.KingsRoadName);
+            int streets = map.RoadCells.Count(i => map.RoadTypeAt(i % w, i / w)!.Name == DefaultRoads.TrackName);
             Assert.True(highways > w / 2, $"seed {seed} {w}x{h}: only {highways} highway cells");
             Assert.True(highways > streets, $"seed {seed} {w}x{h}: {highways} highway vs {streets} street");
             if (w >= 160)
@@ -286,7 +426,10 @@ public class HighwayGenerationTests
         foreach (var (seed, w, h) in Cases())
         {
             var map = Generate(w, h, seed).Map;
-            bool Highway(int x, int y) => map.RoadTypeAt(x, y)?.Name == "Highway";
+            bool Highway(int x, int y) => map.RoadTypeAt(x, y)?.Name == DefaultRoads.KingsRoadName;
+
+            // Angled highways climb in steps, so only a straight stretch of a few cells counts as running alongside.
+            bool Along(int x, int y, int sx, int sy, int length) => Enumerable.Range(0, length).All(k => Highway(x + sx * k, y + sy * k));
 
             // Horizontal runs: while a highway runs along a row, nothing else runs along the rows just above or below it,
             // except near its ends (where it meets an interchange and its own arms leave in other directions).
@@ -313,8 +456,8 @@ public class HighwayGenerationTests
                     {
                         for (int cx = start + 18; cx <= end - 18; cx++)
                         {
-                            Assert.False(Highway(cx, y + dy) && Highway(cx + 1, y + dy), $"seed {seed} {w}x{h}: parallel highways {dy} rows apart at {cx},{y}");
-                            Assert.False(Highway(cx, y - dy) && Highway(cx + 1, y - dy), $"seed {seed} {w}x{h}: parallel highways {dy} rows apart at {cx},{y}");
+                            Assert.False(Along(cx, y + dy, 1, 0, 6), $"seed {seed} {w}x{h}: parallel highways {dy} rows apart at {cx},{y}");
+                            Assert.False(Along(cx, y - dy, 1, 0, 6), $"seed {seed} {w}x{h}: parallel highways {dy} rows apart at {cx},{y}");
                         }
                     }
                 }
@@ -344,8 +487,8 @@ public class HighwayGenerationTests
                     {
                         for (int cy = start + 9; cy <= end - 9; cy++)
                         {
-                            Assert.False(Highway(x + dx, cy) && Highway(x + dx, cy + 1), $"seed {seed} {w}x{h}: parallel highways {dx} columns apart at {x},{cy}");
-                            Assert.False(Highway(x - dx, cy) && Highway(x - dx, cy + 1), $"seed {seed} {w}x{h}: parallel highways {dx} columns apart at {x},{cy}");
+                            Assert.False(Along(x + dx, cy, 0, 1, 4), $"seed {seed} {w}x{h}: parallel highways {dx} columns apart at {x},{cy}");
+                            Assert.False(Along(x - dx, cy, 0, 1, 4), $"seed {seed} {w}x{h}: parallel highways {dx} columns apart at {x},{cy}");
                         }
                     }
                 }
@@ -363,7 +506,7 @@ public class HighwayGenerationTests
             foreach (int i in map.RoadCells)
             {
                 int x = i % w, y = i / w;
-                if (map.RoadTypeAt(x, y)!.Name == "Highway" &&
+                if (map.RoadTypeAt(x, y)!.Name == DefaultRoads.KingsRoadName &&
                     new[] { (0, -1), (1, 0), (0, 1), (-1, 0) }.Count(d => map.HasRoad(x + d.Item1, y + d.Item2)) >= 3)
                 {
                     junctions.Add(new Pos(x, y));

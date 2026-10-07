@@ -25,7 +25,9 @@
   <ItemGroup>
     <Compile Include="..\..\godot\TerminalGrid.cs" Link="Godot\TerminalGrid.cs" />
     <Compile Include="..\..\godot\GodotOptions.cs" Link="Godot\GodotOptions.cs" />
+    <Compile Include="..\..\godot\EffectDraw.cs" Link="Godot\EffectDraw.cs" />
     <Compile Include="..\..\godot\GreensleevesTrack.cs" Link="Godot\GreensleevesTrack.cs" />
+    <Compile Include="..\..\godot\PlacementClick.cs" Link="Godot\PlacementClick.cs" />
   </ItemGroup>
 
 </Project>

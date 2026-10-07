@@ -256,6 +256,37 @@ public class SessionTests
     }
 
     [Fact]
+    public void ShiftClickGrowsTheSelectionToCoverTheClickedCell()
+    {
+        var s = NewSession();
+        s.SelectCell(new Pos(10, 10));
+        s.BeginDrag(new Pos(14, 8), extend: true);
+        s.EndSelection();
+        Assert.Equal(new CellRect(10, 8, 5, 3), s.Selection);
+
+        s.BeginDrag(new Pos(7, 12), extend: true);
+        s.EndSelection();
+        Assert.Equal(new CellRect(7, 8, 8, 5), s.Selection);
+    }
+
+    [Fact]
+    public void ShiftDragExtendsFromTheExistingSelectionAndPlainDragStartsOver()
+    {
+        var s = NewSession();
+        s.BeginDrag(new Pos(10, 10));
+        s.UpdateDrag(new Pos(12, 11));
+        s.EndSelection();
+        s.BeginDrag(new Pos(20, 20), extend: true);
+        s.UpdateDrag(new Pos(22, 21));
+        s.EndSelection();
+        Assert.Equal(new CellRect(10, 10, 13, 12), s.Selection);
+
+        s.BeginDrag(new Pos(30, 30));
+        s.EndSelection();
+        Assert.Equal(new CellRect(30, 30, 1, 1), s.Selection);
+    }
+
+    [Fact]
     public void ClickSelectsOneCell()
     {
         var s = NewSession();

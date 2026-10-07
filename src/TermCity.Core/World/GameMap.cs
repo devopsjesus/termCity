@@ -40,6 +40,7 @@ public sealed class GameMap
     // not with the size of the map. They are kept in step by SetRoad/SetZone/ClearCell.
     private readonly HashSet<int> _roadCells = [];
     private readonly HashSet<int>[] _zoneCells = [[], [], [], []];
+    private readonly HashSet<int> _serviceCells = [];
 
     public GameMap(int width, int height, GameContent content)
     {
@@ -73,6 +74,29 @@ public sealed class GameMap
     public bool InBounds(int x, int y) => x >= 0 && y >= 0 && x < Width && y < Height;
 
     public bool InBounds(Pos p) => InBounds(p.X, p.Y);
+
+    /// <summary>True when open water lies within <paramref name="reach"/> cells (a square) of the cell.</summary>
+    public bool NearWater(int x, int y, int reach)
+    {
+        var water = Content.Terrains.Find(DefaultTerrains.WaterName);
+        if (water is null)
+        {
+            return false;
+        }
+
+        for (int dy = -reach; dy <= reach; dy++)
+        {
+            for (int dx = -reach; dx <= reach; dx++)
+            {
+                if (InBounds(x + dx, y + dy) && TerrainLayer[Index(x + dx, y + dy)] == water.Id)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
 
     public bool IsEdge(int x, int y) => x == 0 || y == 0 || x == Width - 1 || y == Height - 1;
 
@@ -140,6 +164,9 @@ public sealed class GameMap
 
     public int RoadCount => _roadCells.Count;
 
+    /// <summary>Indexes of every civic (service) building.</summary>
+    public IReadOnlyCollection<int> ServiceCells => _serviceCells;
+
     /// <summary>Indexes of all cells designated for a zone type (enumeration order is not significant).</summary>
     public IReadOnlyCollection<int> ZoneCells(ZoneType zone) => _zoneCells[(int)zone];
 
@@ -147,6 +174,7 @@ public sealed class GameMap
     internal void RebuildIndexes()
     {
         _roadCells.Clear();
+        _serviceCells.Clear();
         foreach (var set in _zoneCells)
         {
             set.Clear();
@@ -162,6 +190,11 @@ public sealed class GameMap
             if (ZoneLayer[i] != ZoneType.None)
             {
                 _zoneCells[(int)ZoneLayer[i]].Add(i);
+            }
+
+            if (BuildingLayer[i] != 0 && Content.Buildings[BuildingLayer[i]].IsService)
+            {
+                _serviceCells.Add(i);
             }
         }
     }
@@ -197,6 +230,14 @@ public sealed class GameMap
         int i = Index(x, y);
         BuildingLayer[i] = building?.Id ?? 0;
         ZoneRemovals.Remove(i);
+        if (building is { IsService: true })
+        {
+            _serviceCells.Add(i);
+        }
+        else
+        {
+            _serviceCells.Remove(i);
+        }
     }
 
     public ZoneRemoval? ZoneRemovalAt(int x, int y) => ZoneRemovals.GetValueOrDefault(Index(x, y));

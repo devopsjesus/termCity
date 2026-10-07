@@ -32,13 +32,13 @@ public class SanFranciscoTests
             SaveGameStore.Save(sf, path);
             var normal = new GameSession(TestCity.Flat(), path, showGuide: true);
             Assert.True(normal.GuideVisible);
-            Assert.Equal("Your first city", normal.Prompt?.Title);
+            Assert.Null(normal.Prompt);
             Assert.True(normal.LoadFrom(path));
             Assert.False(normal.GuideVisible);
             Assert.Null(normal.Prompt);
             normal.NewGame(new GameConfig());
             Assert.True(normal.GuideVisible);
-            Assert.Equal("Your first city", normal.Prompt?.Title);
+            Assert.Null(normal.Prompt);
         }
         finally
         {
@@ -140,7 +140,7 @@ public class SanFranciscoTests
                 if (map.BuildingAt(x, y) is null) continue;
                 Assert.True(map.TerrainAt(x, y).Buildable);
                 Assert.False(map.HasRoad(x, y));
-                Assert.NotEqual(ZoneType.None, map.ZoneAt(x, y));
+                if (!map.BuildingAt(x, y)!.IsService) Assert.NotEqual(ZoneType.None, map.ZoneAt(x, y));
             }
         }
 

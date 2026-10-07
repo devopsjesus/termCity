@@ -1,4 +1,5 @@
 using TermCity.Core.Roads;
+using TermCity.Core.Util;
 
 namespace TermCity.Core.World;
 
@@ -20,8 +21,10 @@ internal static class CityMapGeometry
         return inside;
     }
 
+    /// <summary>Lays a road through the given points (percent of the map), over water too, as one stroke under <see cref="RoadRules"/>.</summary>
     public static void Road(GameMap map, RoadType road, params (int X, int Y)[] points)
     {
+        var cells = new List<Pos>();
         for (int segment = 1; segment < points.Length; segment++)
         {
             var a = points[segment - 1];
@@ -32,16 +35,14 @@ internal static class CityMapGeometry
             int error = dx - dy;
             while (true)
             {
-                map.SetFeature(x, y, null);
-                map.SetRoad(x, y, road);
+                cells.Add(new Pos(x, y));
                 if (x == endX && y == endY) break;
                 int twice = error * 2;
                 if (twice > -dy)
                 {
                     error -= dy;
                     x += Math.Sign(endX - x);
-                    map.SetFeature(x, y, null);
-                    map.SetRoad(x, y, road);
+                    cells.Add(new Pos(x, y));
                 }
                 if (twice < dx)
                 {
@@ -49,6 +50,55 @@ internal static class CityMapGeometry
                     y += Math.Sign(endY - y);
                 }
             }
+        }
+
+        foreach (var p in RoadRules.Plan(map, cells, road.Rank, (_, _) => true))
+        {
+            map.SetFeature(p.X, p.Y, null);
+            map.SetRoad(p.X, p.Y, road);
+        }
+    }
+
+    /// <summary>
+    /// Lays the street grid: a street every five cells each way, an avenue every twenty, each run drawn as a stroke so
+    /// streets stop short of the roads already there instead of running alongside them.
+    /// </summary>
+    public static void Grid(GameMap map, Func<int, int, bool> cell, RoadType street, RoadType avenue)
+    {
+        RoadType Type(int x, int y) => x % 20 == 0 || y % 20 == 0 ? avenue : street;
+        void Run(List<Pos> run)
+        {
+            if (run.Count == 0) return;
+            foreach (var p in RoadRules.Plan(map, run, street.Rank, (_, _) => true))
+            {
+                map.SetRoad(p.X, p.Y, Type(p.X, p.Y));
+            }
+
+            foreach (var p in run)
+            {
+                if (map.RoadTypeAt(p.X, p.Y) is { } existing && existing.Rank < Type(p.X, p.Y).Rank)
+                    map.SetRoad(p.X, p.Y, Type(p.X, p.Y));
+            }
+
+            run.Clear();
+        }
+
+        var cells = new List<Pos>();
+        for (int y = 0; y < map.Height; y += 5)
+        {
+            for (int x = 0; x < map.Width; x++)
+            {
+                if (cell(x, y)) cells.Add(new Pos(x, y)); else Run(cells);
+            }
+            Run(cells);
+        }
+        for (int x = 0; x < map.Width; x += 5)
+        {
+            for (int y = 0; y < map.Height; y++)
+            {
+                if (cell(x, y)) cells.Add(new Pos(x, y)); else Run(cells);
+            }
+            Run(cells);
         }
     }
 }

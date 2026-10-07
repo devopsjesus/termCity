@@ -9,6 +9,7 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
     public string? LoadPath { get; init; }
     public bool Help { get; init; }
     public bool DumpMap { get; init; }
+    public bool ReducedMotion { get; init; }
     public int FramesPerSecond { get; init; } = 30;
 
     public const string Usage = """
@@ -19,6 +20,7 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
           --load [file]     Load a city (default: Godot quick-save)
           --fps <n>         Maximum rendered frames per second, 5-60 (default: 30)
           --dump-map        Print the map and exit
+          --reduced-motion  Turn all visual effects off (the V key cannot turn them back on)
           -h, --help        Show this help
           --smoke-test     Run engine integration checks and exit
           --capture <path> Save a PNG during a graphical smoke run
@@ -29,7 +31,7 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
         var config = new GameConfig { Seed = Random.Shared.Next() };
         bool smokeTest = false;
         string? capturePath = null;
-        bool load = false, help = false, dump = false;
+        bool load = false, help = false, dump = false, reducedMotion = false;
         string? loadPath = null;
         int fps = 30;
         for (int i = 0; i < arguments.Length; i++)
@@ -43,6 +45,11 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
             if (argument == "--dump-map")
             {
                 dump = true;
+                continue;
+            }
+            if (argument == "--reduced-motion")
+            {
+                reducedMotion = true;
                 continue;
             }
             if (argument == "--load")
@@ -106,7 +113,7 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
         }
         return new(config, smokeTest, capturePath)
         {
-            Load = load, LoadPath = loadPath, Help = help, DumpMap = dump, FramesPerSecond = fps,
+            Load = load, LoadPath = loadPath, Help = help, DumpMap = dump, FramesPerSecond = fps, ReducedMotion = reducedMotion,
         };
     }
 }

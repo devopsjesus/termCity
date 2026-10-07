@@ -1,3 +1,4 @@
+using TermCity.Core.Roads;
 using Godot;
 using TermCity.Core.Rendering;
 using System.Diagnostics;
@@ -206,14 +207,15 @@ internal static class GodotSmoke
         Require(menuButtons.All(b => b.Alignment == HorizontalAlignment.Left),
             "Menu choices must be left-aligned.");
         float menuCharacter = host.Theme.DefaultFont.GetStringSize("M", fontSize: host.Theme.DefaultFontSize).X;
-        float longestMenuLabel = session.Prompt!.Choices.Select((choice, index) => $"{index + 1}. {choice.Label}")
+        var menuTable = TextTable.ForPrompt(session.Prompt!)!.Value;
+        float longestMenuLabel = menuTable.Rows.Append(menuTable.Header).Select(row => "00. " + row)
             .Append(session.Prompt.Title)
             .Max(text => host.Theme.DefaultFont.GetStringSize(text, fontSize: host.Theme.DefaultFontSize).X);
-        float expectedMenuWidth = Math.Min(longestMenuLabel + menuCharacter * 10, host.Size.X - 64) + 24;
+        float expectedMenuWidth = Math.Min(longestMenuLabel + menuCharacter * 10 + host.GetThemeStylebox("normal", "Button").GetMargin(Side.Left) * 2, host.Size.X - 64) + 24;
         Require(Math.Abs(cityMenu.Size.X - expectedMenuWidth) <= 16,
             $"Menu width must match its longest label plus 5-character side padding: {cityMenu.Size.X} vs {expectedMenuWidth}.");
         var menuPadding = Descendants(cityMenu).OfType<MarginContainer>()
-            .Single(m => m.HasThemeConstantOverride("margin_left") && m.GetThemeConstant("margin_left") > 0);
+            .Single(m => m.HasThemeConstantOverride("margin_left") && m.GetThemeConstant("margin_left") == (int)Math.Round(menuCharacter * 5));
         Require(menuPadding.GetThemeConstant("margin_left") == (int)Math.Round(menuCharacter * 5) &&
             menuPadding.GetThemeConstant("margin_right") == (int)Math.Round(menuCharacter * 5),
             "Menu must have five character widths of padding on each side.");
@@ -224,27 +226,27 @@ internal static class GodotSmoke
             "Menu must have two pixels of inner top/bottom padding.");
         Require(Math.Abs(cityMenu.GetGlobalRect().GetCenter().Y - host.Size.Y / 2) < 1,
             "Menu must remain vertically centered after fitting its content.");
-        int musicChoice = session.Prompt!.Choices.ToList().FindIndex(c => c.Label.StartsWith("Music:", StringComparison.Ordinal));
+        int musicChoice = session.Prompt!.Choices.ToList().FindIndex(c => c.Label == "Music");
         Require(musicChoice >= 0, "City menu is missing the music toggle.");
         for (int item = 0; item < musicChoice; item++) await KeyEvent(Key.Down);
         await KeyEvent(Key.Enter);
         Require(!host.MusicEnabled && host.GetNode<AudioStreamPlayer>("CityMusic").StreamPaused,
             "Music toggle did not mute playback.");
         Require(host.GetViewport().GuiGetFocusOwner() is Button { Text: var musicLabel } &&
-            musicLabel.EndsWith("Music: OFF", StringComparison.Ordinal),
+            musicLabel.Contains("Music", StringComparison.Ordinal) && musicLabel.EndsWith(" OFF", StringComparison.Ordinal),
             "Changing music moved the highlight away from the music menu item.");
         await KeyEvent(Key.Enter);
         host.GetWindow().EmitSignal(Window.SignalName.FocusEntered);
         Require(host.MusicEnabled && !host.GetNode<AudioStreamPlayer>("CityMusic").StreamPaused,
             $"Music toggle did not resume playback: enabled={host.MusicEnabled}, paused={host.GetNode<AudioStreamPlayer>("CityMusic").StreamPaused}, focus={host.GetViewport().GuiGetFocusOwner()}.");
         Require(host.GetViewport().GuiGetFocusOwner() is Button { Text: var enabledLabel } &&
-            enabledLabel.EndsWith("Music: ON", StringComparison.Ordinal),
+            enabledLabel.Contains("Music", StringComparison.Ordinal) && enabledLabel.EndsWith(" ON", StringComparison.Ordinal),
             "Repeated music changes did not preserve the highlight.");
         var musicButton = (Button)host.GetViewport().GuiGetFocusOwner();
         musicButton.EmitSignal(Button.SignalName.Pressed);
         await Frames();
         Require(!host.MusicEnabled && host.GetViewport().GuiGetFocusOwner() is Button { Text: var clickedLabel } &&
-            clickedLabel.EndsWith("Music: OFF", StringComparison.Ordinal),
+            clickedLabel.Contains("Music", StringComparison.Ordinal) && clickedLabel.EndsWith(" OFF", StringComparison.Ordinal),
             "Clicking a changed music item did not keep its highlight.");
         await KeyEvent(Key.Enter);
         await KeyEvent(Key.Escape);
@@ -280,7 +282,7 @@ internal static class GodotSmoke
         Require(session.Preview is null, "Preview Enter did not select the focused cancel button.");
         Require(beforeCancel == SaveGameStore.Serialize(session.Game), "Focused cancel changed the city.");
         session.ShowSessionMenu();
-        await KeyEvent(Key.Key7);
+        await KeyEvent(Key.Key9);
         Require(session.Prompt?.Title == "Weekly report and milestones", "Numbered menu shortcuts failed.");
         await KeyEvent(Key.Escape);
 
@@ -482,7 +484,7 @@ internal static class GodotSmoke
         await Frames();
         var finances = Descendants(host).OfType<Label>().Single(l => l.Name == "Budget");
         Require(finances.HorizontalAlignment == HorizontalAlignment.Right &&
-            finances.Text.Contains($"BUDGET ${session.Game.Money:N0}", StringComparison.Ordinal) &&
+            finances.Text.Contains($"TREASURY {Fmt.Money(session.Game.Money)}", StringComparison.Ordinal) &&
             finances.GlobalPosition.X >= host.Size.X / 2 &&
             finances.GlobalPosition.X + finances.Size.X <= host.Size.X,
             "Budget must remain visible on the right side of the HUD at minimum window size.");
@@ -623,7 +625,84 @@ internal static class GodotSmoke
         await KeyEvent(Key.Escape);
         host.SetFontSize(Main.DefaultFontSize);
         await Frames();
+        await VerifyEffects(host, Frames, KeyEvent);
         if (File.Exists(session.SavePath)) File.Delete(session.SavePath);
+    }
+
+    /// <summary>Drives the effect pipeline through the real scene: build, demolish, toggle, drain. Draw checks only apply when the engine draws.</summary>
+    private static async Task VerifyEffects(Main host, Func<Task> frames, Func<Key, bool, uint, bool, Key, Task> key)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        session.ClosePrompt();
+        session.SetZoom(0);
+        session.CenterOn(new Pos(map.Width / 2, map.Height / 2));
+        host.Map.RefreshCells();
+        await frames();
+        Require(host.Effects.Settings.Level == TermCity.Core.Effects.EffectLevel.High && host.Map.Effects == host.Effects,
+            "Effects are not wired into the map at the default level.");
+        void Drain()
+        {
+            for (int i = 0; i < 40 && host.Effects.ActiveOneShots > 0; i++) host._Process(0.25);
+        }
+        Drain();
+        Pos Visible()
+        {
+            for (int y = 2; y < host.Map.Grid.Rows - 2; y++)
+                for (int x = 2; x < host.Map.Grid.Columns - 2; x++)
+                {
+                    var at = session.ScreenToMap(x, y);
+                    if (map.InBounds(at) && session.Game.CanBuildOn(at.X, at.Y)) return at;
+                }
+            throw new InvalidOperationException("No visible vacant cell for the effects check.");
+        }
+        var spot = Visible();
+        int spawned = host.Director.TotalSpawned;
+        Require(session.Game.BuildRoad(new CellRect(spot.X, spot.Y, 1, 1)).Success, "Effects check could not build a road.");
+        await frames();
+        Require(host.Director.TotalSpawned > spawned, "Building a road did not start an effect.");
+        Drain();
+        Require(host.Effects.ActiveOneShots == 0 && host.Effects.CellCount == 0, "Road effect left cell modifiers behind.");
+        int draws = host.Map.DrawCount;
+        Require(session.Game.Demolish(new CellRect(spot.X, spot.Y, 1, 1)).Success, "Effects check could not demolish.");
+        host.Map.RefreshCells();
+        host._Process(0.05);
+        Require(host.Effects.Effects.OfType<TermCity.Core.Effects.DemolishEffect>().Any() && host.Effects.HasVisuals,
+            "Demolishing did not start the shrink-away effect.");
+        await frames();
+        if (host.Map.DrawCount > draws)
+        {
+            Require(host.Map.EffectGlyphsDrawn > 0, "The map drew a frame without the running effect glyphs.");
+            if (host.Map.Grid.VectorRoads && session.Game.Map.RoadCells.Any())
+                Require(host.Map.RoadChunksDrawn > 0, "The map drew a frame without the curved roads.");
+        }
+        else GD.Print("Godot did not draw during the effects check (headless); effect glyph drawing was not exercised.");
+        Drain();
+        Require(host.Effects.ActiveOneShots == 0 && host.Effects.CellCount == 0, "Demolish effect did not finish and clean up.");
+        string saved = SaveGameStore.Serialize(session.Game);
+        host._Process(0.1);
+        Require(saved == SaveGameStore.Serialize(session.Game), "Effects mutated gameplay.");
+
+        await key(Key.V, false, 0, false, Key.None);
+        Require(host.EffectsLevel == TermCity.Core.Effects.EffectLevel.Low && host.Effects.Settings.Intensity < 1, "V did not lower effects.");
+        await key(Key.V, false, 0, false, Key.None);
+        Require(host.EffectsLevel == TermCity.Core.Effects.EffectLevel.Off && !host.Effects.Settings.Active, "V did not turn effects off.");
+        spot = Visible();
+        spawned = host.Director.TotalSpawned;
+        session.Game.BuildRoad(new CellRect(spot.X, spot.Y, 1, 1));
+        session.Game.Demolish(new CellRect(spot.X, spot.Y, 1, 1));
+        await frames();
+        Require(host.Director.TotalSpawned == spawned && host.Effects.ActiveEffects == 0 && !host.Effects.HasVisuals,
+            "Effects ran while switched off.");
+        await key(Key.V, false, 0, false, Key.None);
+        Require(host.EffectsLevel == TermCity.Core.Effects.EffectLevel.High && host.Effects.Settings.Active, "V did not restore effects.");
+        await frames();
+        Require(host.Director.TotalSpawned == spawned, "Re-enabling effects replayed old changes.");
+        await key(Key.Escape, false, 0, false, Key.None);
+        Require(session.Prompt?.Choices.Any(c => c.Label == "Effects") == true,
+            "The city menu has no Effects entry.");
+        await key(Key.Escape, false, 0, false, Key.None);
+        Drain();
     }
 
     public static void Run(Main host)
@@ -726,6 +805,7 @@ internal static class GodotSmoke
 
         var pointer = new Vector2(5 * TerminalGrid.CellWidth, 5 * TerminalGrid.CellHeight);
         var expected = session.ScreenToMap(5, 5);
+        session.SelectCell(expected);
         host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
         {
             ButtonIndex = MouseButton.Left,
@@ -744,6 +824,21 @@ internal static class GodotSmoke
         });
         Require(session.Selection?.Width == 3 && session.Selection.Value.Contains(expected),
             "Mouse drag selection did not reach the session.");
+        var farCell = session.ScreenToMap(12, 9);
+        host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
+        {
+            ButtonIndex = MouseButton.Left,
+            Pressed = true,
+            Position = new Vector2(12 * TerminalGrid.CellWidth, 9 * TerminalGrid.CellHeight),
+            ShiftPressed = true,
+        });
+        host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
+        {
+            ButtonIndex = MouseButton.Left,
+            Pressed = false,
+        });
+        Require(session.Selection is { } grown && grown.Contains(expected) && grown.Contains(farCell),
+            "Shift-click did not extend the selection to the clicked cell.");
         session.ClearSelection();
         host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
         {
@@ -772,7 +867,7 @@ internal static class GodotSmoke
 
         foreach (var (key, title) in new[]
         {
-            (Key.F1, "TermCity - Help"), (Key.F7, "Weekly report and milestones"),
+            (Key.F1, HelpContent.Title), (Key.F7, "Weekly report and milestones"),
             (Key.F8, "Growth and road access"), (Key.Escape, "City menu"),
         })
         {
@@ -782,12 +877,21 @@ internal static class GodotSmoke
             if (key != Key.F1) Require(session.Prompt?.Title == title, "Report allowed a background action.");
             if (session.Prompt is not null) Press(Key.Escape);
         }
-        if (session.GuideVisible) session.DismissGuide();
         Press(Key.F6);
-        Require(session.GuideVisible, "First-city guide was not shown.");
+        Require(session.Prompt is { Title: "TermCity guide", Tabs.Count: 7, ActiveTab: 0 }, "F6 did not open the tabbed guide.");
+        Press(Key.Right);
+        Require(session.Prompt?.ActiveTab == 1 && session.Prompt.Tabs![1].Title == "Zones", "Right arrow did not switch guide tab.");
+        Press(Key.Left);
+        Press(Key.Left);
+        Require(session.Prompt?.ActiveTab == 6, "Left arrow did not wrap to the last guide tab.");
         Press(Key.Escape);
-        Press(Key.F6);
-        Require(!session.GuideVisible && session.Game.GuideDismissed, "First-city guide was not dismissed.");
+        Require(session.Prompt is null, "Esc did not close the guide.");
+        if (session.GuideVisible)
+        {
+            Press(Key.F6);
+            session.SelectPrompt(1);
+            Require(!session.GuideVisible && session.Game.GuideDismissed, "Guide tip was not dismissed.");
+        }
         Press(Key.F12);
         Require(session.InputDebug, "Input diagnostics were not enabled.");
         Press(Key.F12);
@@ -836,15 +940,16 @@ internal static class GodotSmoke
         Require(session.Prompt?.Title == "Area menu", "Area menu was not opened.");
         session.SelectPrompt(1);
         Require(session.Prompt?.Title == "Roads", "Road menu was not opened.");
-        var avenue = session.Game.Map.Content.Roads.Get("Avenue");
-        int avenueChoice = session.Prompt!.Choices.ToList().FindIndex(c => c.Label.StartsWith("Avenue:", StringComparison.Ordinal));
-        Require(avenueChoice >= 0, "Avenue was missing from the road menu.");
+        var avenue = session.Game.Map.Content.Roads.Get(DefaultRoads.CobbledName);
+        int avenueChoice = session.Prompt!.Choices.ToList().FindIndex(c => c.Label == DefaultRoads.CobbledName && c.Cells?[0] == "Fill area");
+        Require(avenueChoice >= 0, "Cobbled Road was missing from the road menu.");
         session.SelectPrompt(avenueChoice);
         Require(session.Preview?.Road == avenue, "Road menu did not preview the selected type.");
         Press(Key.Escape);
         session.ShowAreaMenu();
         session.SelectPrompt(2);
-        Require(session.Prompt?.Text == "No service buildings are registered.", "Empty building menu was not explained.");
+        Require(session.Prompt?.Title == "Service buildings" && (session.Prompt.Text == "Choose a building to preview." ||
+            session.Prompt.Text == "No service buildings are registered."), "Building menu was not shown or explained.");
         Press(Key.Escape);
 
         string quickSave = session.SavePath;
@@ -868,8 +973,8 @@ internal static class GodotSmoke
         int seed = session.Game.Config.Seed;
         session.RequestNewCity(restart: true);
         Require(session.Game.Config.Seed == seed && session.Game.Paused &&
-            (session.Game.Config.Scenario != CityScenario.Random ? session.Prompt is null && !session.GuideVisible
-                : session.Prompt?.Title == "Your first city"),
+            session.Prompt is null &&
+            session.GuideVisible == (session.Game.Config.Scenario == CityScenario.Random),
             "Restart did not preserve the seed and scenario-appropriate guide behavior.");
         if (session.Prompt is not null) Press(Key.Escape);
         session.DismissGuide();

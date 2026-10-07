@@ -54,7 +54,7 @@ public class GodotPresentationTests
         grid.Fill(session);
         session.PlaceCursor(new Pos(159, 95));
         grid.Fill(session);
-        var sampler = new BlockSampler(session.Game);
+        var sampler = new BlockSampler(session.Game) { VectorRoads = true };
         for (int y = 0; y < grid.Rows; y++)
         {
             for (int x = 0; x < grid.Columns; x++)
@@ -62,7 +62,7 @@ public class GodotPresentationTests
                 var position = session.ScreenToMap(x, y);
                 var expected = zoom < 0
                     ? sampler.Sample(position.X, position.Y, session.Stride)
-                    : CellRenderer.Render(session.Game, position.X, position.Y);
+                    : CellRenderer.Render(session.Game, position.X, position.Y, vectorRoads: true);
                 Assert.Equal(expected, grid.VisualAt(session, x, y));
             }
         }
@@ -132,6 +132,14 @@ public class GodotPresentationTests
         session.Game.Touch();
         Assert.Equal(Rgb.Hex(0x8c2d37), grid.VisualAt(session, 1, 1)!.Value.Background);
         Assert.Equal(Rgb.Hex(0xffdc5a), grid.VisualAt(session, 3, 1)!.Value.Background);
+    }
+
+    [Fact]
+    public void GodotOptionsParseReducedMotion()
+    {
+        Assert.False(GodotOptions.Parse([]).ReducedMotion);
+        Assert.True(GodotOptions.Parse(["--reduced-motion"]).ReducedMotion);
+        Assert.Contains("--reduced-motion", GodotOptions.Usage);
     }
 
     [Fact]

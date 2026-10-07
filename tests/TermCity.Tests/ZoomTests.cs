@@ -1,3 +1,4 @@
+using TermCity.Core.Roads;
 using TermCity.Core.Rendering;
 using TermCity.Core.Session;
 using TermCity.Core.Simulation;
@@ -170,7 +171,7 @@ public class ZoomTests
         var game = TestCity.Flat();
         var map = game.Map;
         var water = map.Content.Terrains.Get("Water");
-        var highway = map.Content.Roads.Get("Highway");
+        var highway = map.Content.Roads.Get(DefaultRoads.KingsRoadName);
 
         // A 4x4 block at (40,5): water in one cell, a highway in another, then a zone, then a building.
         map.SetTerrain(41, 6, water);

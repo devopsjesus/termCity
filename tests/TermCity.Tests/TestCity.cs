@@ -7,9 +7,9 @@ namespace TermCity.Tests;
 internal static class TestCity
 {
     /// <summary>A flat, empty map with a single road running edge to edge along row 20.</summary>
-    public static CityGame Flat(int seed = 1, GameConfig? config = null)
+    public static CityGame Flat(int seed = 1, GameConfig? config = null, CityRules rules = CityRules.Classic)
     {
-        var game = CityGame.New((config ?? new GameConfig()) with { Seed = seed });
+        var game = CityGame.New((config ?? new GameConfig { DefaultTaxRate = 0.05 }) with { Seed = seed, Rules = rules });
         var map = game.Map;
         var grass = map.Content.Terrains.Base;
         for (int y = 0; y < map.Height; y++)

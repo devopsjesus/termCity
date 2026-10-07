@@ -1,3 +1,4 @@
+using TermCity.Core.Roads;
 using TermCity.Core.Persistence;
 using TermCity.Core.Buildings;
 using TermCity.Core.Rendering;
@@ -92,7 +93,7 @@ public class SessionFeatureTests
         Assert.False(session.ConfirmPreview().Success);
         Assert.NotNull(session.Preview);
         Assert.Equal(MessageKind.Error, session.MessageKind);
-        Assert.Contains("Not enough money", session.Message);
+        Assert.Contains("Not enough gold", session.Message);
         Assert.False(session.CanUndo);
     }
 
@@ -103,7 +104,7 @@ public class SessionFeatureTests
         var game = session.Game;
         var building = game.Map.Content.Buildings.Register(new BuildingType
         {
-            Name = "Clinic",
+            Name = "Shrine",
             Glyphs = ["X"],
             Foreground = Rgb.Hex(0xffffff),
             Cost = 1_000,
@@ -130,19 +131,58 @@ public class SessionFeatureTests
     [InlineData(-2)]
     [InlineData(0)]
     [InlineData(1)]
-    public void RoadToolDrawsOneCellWideOnDominantAxisAtEveryZoom(int zoom)
+    public void RoadToolDrawsStraightLinesAtEveryZoom(int zoom)
     {
         var session = Session();
         session.SetZoom(zoom);
         session.PlaceCursor(new Pos(10, 18));
         session.BeginRoadLine();
-        session.UpdateDrag(new Pos(15, 19));
+        session.UpdateDrag(new Pos(15, 18));
         Assert.Equal(new CellRect(10, 18, 6, 1), session.Preview!.Area);
-        session.UpdateDrag(new Pos(11, 13));
+        session.UpdateDrag(new Pos(10, 13));
         Assert.Equal(new CellRect(10, 13, 1, 6), session.Preview.Area);
         Assert.True(session.ConfirmPreview().Success);
         Assert.Equal(6, session.Game.Map.RoadCells.Count(i => i % session.Game.Map.Width == 10 && i / session.Game.Map.Width < 20));
         Assert.False(session.RoadToolActive);
+    }
+
+    [Fact]
+    public void RoadToolDrawsLinesAtAnyAngle()
+    {
+        var session = Session();
+        session.PlaceCursor(new Pos(10, 10));
+        session.BeginRoadLine();
+        session.UpdateDrag(new Pos(16, 13));
+        var preview = session.Preview!;
+        Assert.Equal(new CellRect(10, 10, 7, 4), preview.Area);
+        Assert.Equal(10, preview.Cells!.Count);
+        Assert.Equal(10, preview.Quote.Cells);
+        Assert.True(session.ConfirmPreview().Success);
+        var map = session.Game.Map;
+        Assert.Equal(10, map.RoadCells.Count(i => preview.Cells.Contains(new Pos(i % map.Width, i / map.Width))));
+        Assert.False(map.HasRoad(10, 13));
+        Assert.False(map.HasRoad(16, 10));
+    }
+
+    [Fact]
+    public void LineCellsJoinEdgeToEdgeAtEveryAngle()
+    {
+        foreach (var (a, b) in new[]
+        {
+            (new Pos(3, 3), new Pos(3, 3)), (new Pos(3, 3), new Pos(9, 4)), (new Pos(9, 4), new Pos(3, 3)),
+            (new Pos(3, 3), new Pos(8, 12)), (new Pos(8, 12), new Pos(3, 3)), (new Pos(5, 5), new Pos(11, 11)),
+            (new Pos(5, 5), new Pos(0, 9)), (new Pos(5, 5), new Pos(5, 0)),
+        })
+        {
+            var line = CellLines.Between(a, b);
+            Assert.Equal(a, line[0]);
+            Assert.Equal(b, line[^1]);
+            Assert.Equal(Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y) + 1, line.Count);
+            for (int i = 1; i < line.Count; i++)
+            {
+                Assert.Equal(1, Math.Abs(line[i].X - line[i - 1].X) + Math.Abs(line[i].Y - line[i - 1].Y));
+            }
+        }
     }
 
     [Fact]
@@ -154,7 +194,7 @@ public class SessionFeatureTests
         game.Map.SetRoad(12, 18, game.DefaultRoad);
         game.Touch();
         session.PlaceCursor(new Pos(10, 18));
-        session.BeginRoadLine(game.Map.Content.Roads.Get("Avenue"));
+        session.BeginRoadLine(game.Map.Content.Roads.Get(DefaultRoads.CobbledName));
         session.UpdateDrag(new Pos(12, 18));
         Assert.Equal(new Quote(2, 1_300, 1), session.Preview!.Quote);
         Assert.Contains("gaps", session.Preview.Name);
@@ -398,7 +438,7 @@ public class SessionFeatureTests
         Assert.True(session.Game.Paused);
         Assert.True(session.GuideVisible);
         Assert.False(session.CanUndo);
-        Assert.Contains("first city", session.Prompt!.Title);
+        Assert.Null(session.Prompt);
         session.ClosePrompt();
         session.QuickSave();
         session.PlaceCursor(new Pos(20, 18));
@@ -416,8 +456,7 @@ public class SessionFeatureTests
         var session = new GameSession(TestCity.Flat(), showGuide: true);
         Assert.True(session.Game.Paused);
         Assert.True(session.GuideVisible);
-        Assert.NotNull(session.Prompt);
-        session.SelectPrompt(0);
+        Assert.Null(session.Prompt);
         session.SetSpeed(GameSpeed.Fast);
         session.ShowReport();
         double before = session.Game.ElapsedDays;
@@ -484,7 +523,7 @@ public class SessionFeatureTests
         FillHomes(session.Game, 9, people: 2);
         session.SetMessage("");
         FillHomes(session.Game, 10, people: 2);
-        Assert.Contains("shops and factories unlocked", session.Message);
+        Assert.Contains("markets and workshops unlocked", session.Message);
         session.Game.Designate(new CellRect(10, 21, 20, 1), ZoneType.Residential);
         session.Game.AdvanceWeek();
         session.ShowReport();

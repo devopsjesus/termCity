@@ -1,7 +1,8 @@
 # TermCity
 
-A DOS-terminal-styled city builder built with **Godot .NET and C# on .NET 10**.
-Zone land, connect streets, and grow a city in a desktop window on Windows, macOS, or Linux.
+A DOS-terminal-styled city builder built with **Godot .NET and C# on .NET 10**, set in the **Middle Ages**.
+Raise a hamlet into a chartered city: lay out tracks and burgage plots, build a lord's castle, feed your people through
+the farming year, and keep the crown's reeve paid. It runs in a desktop window on Windows, macOS, or Linux.
 Godot is the game's only frontend; no interactive console is required.
 
 For architecture, extension points, builds, exports, and tests, see the
@@ -33,6 +34,7 @@ Game options follow Godot's `--` separator:
 | `--size <size>` | `small`, `medium`, `large`, `SF`, `LA`, `SD`, `CHI`, `STL`, or `WIDTHxHEIGHT`; default `small` |
 | `--load [file]` | Load a city; without a path, use the quick-save |
 | `--fps <n>` | Render frame cap, 5-60; default 30 |
+| `--reduced-motion` | Disable all terminal effects (sprites, shakes, ambient life) |
 | `--dump-map` | Print the generated/loaded map as text and exit; works headlessly |
 | `-h`, `--help` | Print game options and exit; works headlessly |
 
@@ -51,6 +53,21 @@ Random cities start paused with a first-city guide. Connect roads to an existing
 edge, zone nearby homes with **R**, and resume with **P**. A connected road serves land within
 two cells; water blocks service from spreading across it. Disconnected roads are amber.
 
+Press **F6** (or Esc > Guide) for the GUIDE, a tabbed dialog (Start, Zones, Roads, Services, Population, Happiness,
+Economy; Left/Right or a click switches tab) that explains how each thing you place drives the town's population.
+**F1** is only the short table of controls. Placing a zone, road or building makes a soft click-clack keyboard sound
+(it is silenced with **Esc > Music**, and when the window is unfocused).
+
+### Services, budget and the full city engine
+
+New games run the full rules: homes and businesses need **power and water** (build plants, pumps and towers), residents
+want a **fire watch, a sheriff, an apothecary, a chantry school and a village green** as the town grows, and a lord's
+**castle** to keep the peace. People must be fed: the harvest sets the grain in store, a bad year brings famine, and
+plague, raiders and fires are real dangers. Jobs matter and the treasury (in gold) has to balance, with the crown's
+tribute due each Michaelmas. Open **City menu > Budget, taxes and loans** to set service funding, tithes and loans, and
+**City health report** for every indicator. Details and tuning are in [docs/POPULATION.md](docs/POPULATION.md); the setting,
+the service mapping and ideas for the future are in [docs/MEDIEVAL.md](docs/MEDIEVAL.md).
+
 ### Zones and growth
 
 - **Residential (R):** households build homes and add adults, children, and seniors to the population.
@@ -62,8 +79,8 @@ two cells; water blocks service from spreading across it. Disconnected roads are
   and tax income for 2-3 game weeks. Restore their original zone before the deadline to keep them.
 - **D/Delete** previews demolition. It is free, with no refunds.
 
-Roads cost money: a street starts at **$500 per cell**, an avenue at **$900**, and a highway at
-**$1,500**. Upgrades charge the difference; hills multiply construction costs by 1.5.
+Roads cost money: a street starts at **500g per cell**, an avenue at **900g**, and a highway at
+**1,500g**. Upgrades charge the difference; hills multiply construction costs by 1.5.
 Road/building menus include registered player-placeable types. Default content has no
 player-placeable service buildings, and the building menu explains this.
 
@@ -154,10 +171,10 @@ city saves. No external recording, audio asset, or audio package is required.
 |---|---|
 | Move cursor | Arrow keys |
 | Jump a screen | Ctrl+arrows, Home/End/PageUp/PageDown |
-| Extend selection | Shift+arrows |
+| Extend selection | Shift+arrows, or Shift+click (grows the selection to whole rows and columns up to the clicked cell) |
 | Keyboard selection mode | `S`, move, `S` to finish |
 | Pan | Left-drag, middle-drag, wheel, two-finger trackpad scroll |
-| Select with mouse | Shift/Ctrl/Alt+left-drag |
+| Select with mouse | Left-drag; Shift+click extends; Ctrl/Alt+left-drag starts a new box |
 | Area menu | Right-click, Enter, or `M` |
 | Zone homes / shops / factories | `R` / `C` / `I` |
 | Dezone | `U` |
@@ -172,8 +189,9 @@ city saves. No external recording, audio asset, or audio package is required.
 | Minimap navigation | Click/drag |
 | Edge scrolling | `E` toggles hover scrolling; selection drags always edge-scroll |
 | Help / font settings | F1 or `?` / F3 |
+| Terminal effects high / low / off | `V` (or Esc > Effects) |
 | Quick-save / quick-load | F5 / F9 |
-| First-city guide | F6 |
+| Guide (tabs: how to play, population, economy) | F6 |
 | Weekly report / growth report | F7 / F8 |
 | City menu | Esc during normal gameplay |
 | Input/loop diagnostics | F12 (keyboard-only) |
@@ -193,34 +211,40 @@ Zoom levels are **0.25x, 0.5x, 1x, and 2x**. Coarse zoom samples 4x4 or 2x2 map-
 | `small` | 160x96 | Default random map |
 | `medium` | 320x192 | Random map |
 | `large` | 640x384 | Random map |
-| `SF` | 640x384 | San Francisco/Bay Area |
-| `LA` | 640x384 | Los Angeles |
-| `SD` | 640x384 | San Diego |
-| `CHI` | 640x384 | Chicago |
-| `STL` | 640x384 | St. Louis |
+| `SF` | 640x384 | San Francisco: a walled peninsula on the strait |
+| `LA` | 640x384 | Los Angeles: a sprawling coastal bay town |
+| `SD` | 640x384 | San Diego: a harbour town on dry, burnable hills |
+| `CHI` | 640x384 | Chicago: a cold lakeside freight town |
+| `STL` | 640x384 | St. Louis: a flood-prone river town |
 
 Custom sizes range from 80x24 to 640x384. Named presets are case-insensitive.
-Random maps include hills, forests, water systems, highways/interchanges, and existing bridges.
+Random maps include hills, forests, water systems, existing bridges and highways/interchanges. Highways run
+straight out of each interchange, then at any angle (not just right angles) between them, and bridges stay straight.
+Every road type (track, road, avenue, highway and any added later) is drawn as smooth curves that round every bend and
+merge into junctions with fillets, deliberately breaking out of the glyph grid like the terminal effects do. The road
+bed is opaque: no terrain, trees or water show inside the lines, while the terrain background stays outside them.
+Roads never run side by side: a new road meets another only end-on or at a crossing, and junctions keep a cell apart, and generated maps are cleaned of 2x2 road blocks and tiny fragments.
+At a junction the highest-ranked road runs whole through it, and a road that meets another at a slant curves in alongside it like a slip road.
+Zooming out keeps the smoothed roads but much thinner and fainter with each step (side streets drop out at the widest zooms), so they stay a backdrop to the terrain, while highways keep a thin double yellow line; the minimap and map overlays stay pixelated with box glyphs.
+Cars, walkers and birds are deliberately slow, and cars and walkers follow the drawn curve, including angled roads.
+Fish leap from the water and whales surface (with a spout) in the open sea only; rivers, lakes and bays get leaping fish and the occasional rise of bubbles, but never whales.
 
 City scenarios are **stylized, north-up regional approximations**, not current land-use datasets
 or street-accurate GIS maps. They include occupied R/C/I districts, residents, roads and tax income:
 
-- **SF:** Pacific/bay, Marin, East Bay, Alcatraz, Angel/Treasure/Yerba Buena Islands, Alameda,
-  Lake Merced, Presidio/Golden Gate Park and city hills. Residential west/south, downtown/SoMa
-  commerce, southeastern waterfront/Port of Oakland industry, and populated surrounding communities.
-- **LA:** Pacific coast, LA River, Santa Monica/San Gabriel mountains, Griffith Park, downtown,
-  Hollywood/Santa Monica commerce, Westside housing, and Vernon/Long Beach industry.
-- **SD:** Mission/San Diego bays, Coronado, coastal/inland hills, Balboa Park, downtown,
-  residential neighborhoods, and working-waterfront/National City industry.
-- **CHI:** Lake Michigan, Chicago River branches, flat inland terrain, lakefront parks, the Loop,
-  North Side housing, and South/West Side industrial corridors.
-- **STL:** Mississippi/Missouri/Meramec rivers, western rolling terrain, Forest Park, downtown,
-  South City housing, and riverfront/Metro East industry.
+- **SF:** the peninsula city on the strait: sea walls, hills, harbours and islands, with
+  dense houses, a market quarter, a southeastern port and populated suburbs around it.
+- **LA:** a broad coast and bay, a river, ranges behind it, a wide scatter of districts.
+- **SD:** two bays, hills and a green hill park; water is scarce and fires run in dry hills.
+- **CHI:** a lake and its river branches, flat ground, a market quarter and busy yards.
+- **STL:** rivers and a floodplain, a minster park and riverside trades.
+
+Old saves keep loading: the original scenario names inside save files are still recognised.
 
 Scenarios start paused without the automatic first-city guide; F6 still offers it explicitly.
 Geography and districts stay fixed across seeds; seeds vary households and future growth.
 Save/load preserves the map. Restart/new-city actions retain the selected scenario.
-Older medium-sized SF saves load at their original dimensions; restarting generates the large map.
+Older medium-sized San Francisco saves load at their original dimensions; restarting generates the large map.
 
 ## Saving and loading
 

@@ -5,11 +5,13 @@ using TermCity.Core.Util;
 namespace TermCity.Core.World;
 
 /// <summary>
-/// Lays down the pre-existing road network as a sparse highway system: a few interchanges linked by long straight
-/// highways, entering the map through gateways on its edges. Highways turn through clean 90-degree bends, chamfered
-/// corners, or a diagonal jog between two parallel runs. Diagonals are drawn as double-line staircases. Every junction is an interchange with three or four
-/// arms; highways never touch or run alongside each other except at an interchange. A few short streets leave the
-/// interchanges as starting points for the player's own roads. Most of the map is left empty for the player.
+/// Lays down the pre-existing road network as a sparse highway system: a few interchanges linked by long highways,
+/// entering the map through gateways on its edges. Every interchange has straight arms along the four compass points; away
+/// from them a highway is free to run at any angle (as a staircase of road cells that the renderer smooths into a straight
+/// diagonal), easing out of one arm and into the next. Where water is crossed the bridge stays straight, and where an
+/// angled link will not fit, a clean L or Z of right-angle corners is used instead. Every junction is an interchange with
+/// three or four arms; highways never touch or run alongside each other except at an interchange. A few short streets leave
+/// the interchanges as starting points for the player's own roads. Most of the map is left empty for the player.
 /// </summary>
 public static class HighwayGenerator
 {
@@ -64,6 +66,22 @@ public static class HighwayGenerator
         // No bend may sit closer than this to an interchange or to another bend.
         private const int MinLeg = 4;
 
+        // An interchange within this many columns (rows) of another's column (row) is snapped to it exactly.
+        private const int SnapX = 3;
+        private const int SnapY = 2;
+
+        // Every arm leaves its interchange straight for this many cells before an angled highway may turn away: long
+        // enough that the junction itself stays square. Columns are narrower than rows are tall, so the lead is longer.
+        private const int LeadX = 5;
+        private const int LeadY = 3;
+
+        // The biggest turn an angled highway makes between a lead and its diagonal, as the cosine of the angle.
+        private const double MaxTurnCos = 0.5;
+
+        // Rows and columns around an interchange where its own arms may run close together.
+        private const int ForkX = 6;
+        private const int ForkY = 4;
+
         private const int MaxBridgeRun = 8;
         private const int MaxBridgeTotal = 16;
 
@@ -90,7 +108,7 @@ public static class HighwayGenerator
             _refs = new byte[_width * _height];
             _zone = new int[_width * _height];
             Array.Fill(_zone, -1);
-            _highway = _map.Content.Roads.Find(DefaultRoads.HighwayName) ?? _map.Content.Roads.OrderBy(r => r.Rank).Last();
+            _highway = _map.Content.Roads.Find(DefaultRoads.KingsRoadName) ?? _map.Content.Roads.OrderBy(r => r.Rank).Last();
             _street = _map.Content.Roads.Default;
         }
 
@@ -170,6 +188,18 @@ public static class HighwayGenerator
             {
                 int x = _rng.Next(EdgeMargin, _width - EdgeMargin);
                 int y = _rng.Next(EdgeMargin - 2, _height - (EdgeMargin - 2));
+
+                // Highways only bend cleanly, so near-aligned interchanges are lined up exactly: the link between them
+                // is then a straight highway rather than an awkward little offset. Cells are about twice as tall as
+                // wide, so the vertical snap distance is shorter. Any near miss left over (it could not be snapped
+                // without clashing with another node) is rejected, as no clean route would fit between them.
+                x = SnapTo(x, _nodes.Select(n => n.X), SnapX);
+                y = SnapTo(y, _nodes.Select(n => n.Y), SnapY);
+                if (_nodes.Any(n => (n.X != x && Math.Abs(n.X - x) < SnapX) || (n.Y != y && Math.Abs(n.Y - y) < SnapY)))
+                {
+                    continue;
+                }
+
                 if (!WindowIsOpen(x, y))
                 {
                     continue;
@@ -195,6 +225,23 @@ public static class HighwayGenerator
                     }
                 }
             }
+        }
+
+        /// <summary>The nearest existing coordinate if it is a little off (but not equal to) the candidate, else the candidate.</summary>
+        private static int SnapTo(int value, IEnumerable<int> existing, int distance)
+        {
+            int best = value, bestGap = distance;
+            foreach (int e in existing)
+            {
+                int gap = Math.Abs(e - value);
+                if (gap > 0 && gap < bestGap)
+                {
+                    best = e;
+                    bestGap = gap;
+                }
+            }
+
+            return best;
         }
 
         private bool WindowIsOpen(int x, int y)
@@ -372,22 +419,36 @@ public static class HighwayGenerator
             }
 
             var (dx, dy) = Dirs[port];
-            var cells = new List<Pos> { new(node.X, node.Y) };
-            int x = node.X, y = node.Y;
-            do
-            {
-                x += dx;
-                y += dy;
-                cells.Add(new Pos(x, y));
-            }
-            while (InBounds(x, y) && !OnBoundary(x, y));
-
-            if (!InBounds(x, y))
+            int lead = Lead(port);
+            var p1 = new Pos(node.X + dx * lead, node.Y + dy * lead);
+            if (!InBounds(p1.X, p1.Y) || OnBoundary(p1.X, p1.Y))
             {
                 return null;
             }
 
-            return Valid(cells, [], node, null, MaxBridgeTotal, MaxBridgeRun)
+            // The edge cell straight ahead, or one off to the side: an angled run to it, within what turns gently.
+            var edge = new Pos(dx != 0 ? (dx > 0 ? _width - 1 : 0) : p1.X, dy != 0 ? (dy > 0 ? _height - 1 : 0) : p1.Y);
+            int along = dx != 0 ? Math.Abs(edge.X - p1.X) : Math.Abs(edge.Y - p1.Y);
+            double reach = 0.75 * along * (dx != 0 ? CellW / CellH : CellH / CellW);
+            int drift = reach >= 1 && _rng.Chance(0.75) ? _rng.Next(-(int)reach, (int)reach + 1) : 0;
+            if (dx != 0)
+            {
+                edge = new Pos(edge.X, Math.Clamp(edge.Y + drift, 1, _height - 2));
+            }
+            else
+            {
+                edge = new Pos(Math.Clamp(edge.X + drift, 1, _width - 2), edge.Y);
+            }
+
+            var cells = Expand([new Pos(node.X, node.Y), p1, edge]);
+            int end = cells.FindIndex(c => OnBoundary(c.X, c.Y));
+            if (end < 0)
+            {
+                return null;
+            }
+
+            cells.RemoveRange(end + 1, cells.Count - end - 1);
+            return Valid(cells, [p1], node, null, MaxBridgeTotal, MaxBridgeRun, separate: true)
                 ? new Route(node, port, null, -1, cells, _highway)
                 : null;
         }
@@ -495,40 +556,28 @@ public static class HighwayGenerator
 
         private Route? BestRoute(Node a, Node b)
         {
-            // Some routes keep sharp 90-degree corners and some use diagonals, so the network is not all one style.
-            bool orthogonalOnly = _rng.Chance(0.3);
-
             Route? best = null;
             int bestScore = int.MaxValue;
-            foreach (var (corners, portA, portB) in Candidates(a, b))
+            foreach (var (corners, portA, portB, turn) in Candidates(a, b))
             {
                 if (a.Used[portA] || b.Used[portB])
                 {
                     continue;
                 }
 
-                bool diagonal = HasDiagonal(corners);
-                if (diagonal && orthogonalOnly)
-                {
-                    continue;
-                }
-
                 var cells = Expand(corners);
-                if (!Valid(cells, corners.Skip(1).SkipLast(1).ToList(), a, b, MaxBridgeTotal, MaxBridgeRun))
+                bool angled = corners.Count == 4 && corners[1].X != corners[2].X && corners[1].Y != corners[2].Y;
+                if (!Valid(cells, corners.Skip(1).SkipLast(1).ToList(), a, b, MaxBridgeTotal, MaxBridgeRun, separate: angled))
                 {
                     continue;
                 }
 
                 int water = cells.Count(c => !Open(c.X, c.Y));
+                int bends = angled ? 0 : corners.Count - 2;
 
-                // Diagonal runs are never drawn over water: a bridge should run straight.
-                if (diagonal && water > 0)
-                {
-                    continue;
-                }
-
-                // A staircase takes as many cells as the square corner it replaces, so a small bonus keeps diagonals common.
-                int score = cells.Count + 6 * water + BendCost(corners) - (diagonal ? 3 : 0);
+                // Angled routes are the norm; right-angle ones are what is left when water or crowding rules them out.
+                // A small seeded jitter decides between otherwise equal routes.
+                int score = cells.Count + 6 * water + 8 * bends + turn + _rng.Next(0, 4);
                 if (score < bestScore)
                 {
                     bestScore = score;
@@ -539,34 +588,12 @@ public static class HighwayGenerator
             return best;
         }
 
-        private static bool HasDiagonal(IReadOnlyList<Pos> corners)
-        {
-            for (int i = 1; i < corners.Count; i++)
-            {
-                if (corners[i].X != corners[i - 1].X && corners[i].Y != corners[i - 1].Y)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        /// <summary>A 90-degree corner is costlier than a gentler 45-degree one.</summary>
-        private static int BendCost(IReadOnlyList<Pos> corners)
-        {
-            int cost = 0;
-            for (int i = 1; i < corners.Count - 1; i++)
-            {
-                int ax = Math.Sign(corners[i].X - corners[i - 1].X), ay = Math.Sign(corners[i].Y - corners[i - 1].Y);
-                int bx = Math.Sign(corners[i + 1].X - corners[i].X), by = Math.Sign(corners[i + 1].Y - corners[i].Y);
-                cost += ax * bx + ay * by == 0 ? 8 : 4;
-            }
-
-            return cost;
-        }
-        /// <summary>Straight, L-shaped and Z-shaped Manhattan routes between two interchanges, with the arms they use.</summary>
-        private static IEnumerable<(List<Pos> Corners, int PortA, int PortB)> Candidates(Node a, Node b)
+        /// <summary>
+        /// Routes between two interchanges, with the arms they use. Straight when the two line up; otherwise angled (an
+        /// arm out of each, joined by a diagonal) and, for the cases where those cannot be used, L- and Z-shaped
+        /// right-angle routes whose legs are all at least MinLeg long. The last number is a small penalty for sharp turns.
+        /// </summary>
+        private static IEnumerable<(List<Pos> Corners, int PortA, int PortB, int Turn)> Candidates(Node a, Node b)
         {
             int dx = b.X - a.X, dy = b.Y - a.Y;
             int sx = Math.Sign(dx), sy = Math.Sign(dy);
@@ -575,14 +602,41 @@ public static class HighwayGenerator
 
             if (dx == 0)
             {
-                yield return ([new(a.X, a.Y), new(b.X, b.Y)], verticalOut, (verticalOut + 2) % 4);
+                yield return ([new(a.X, a.Y), new(b.X, b.Y)], verticalOut, (verticalOut + 2) % 4, 0);
                 yield break;
             }
 
             if (dy == 0)
             {
-                yield return ([new(a.X, a.Y), new(b.X, b.Y)], horizontalOut, (horizontalOut + 2) % 4);
+                yield return ([new(a.X, a.Y), new(b.X, b.Y)], horizontalOut, (horizontalOut + 2) % 4, 0);
                 yield break;
+            }
+
+            foreach (int portA in new[] { horizontalOut, verticalOut })
+            {
+                foreach (int arrival in new[] { horizontalOut, verticalOut })
+                {
+                    int portB = (arrival + 2) % 4;
+                    var p1 = new Pos(a.X + Dirs[portA].Dx * Lead(portA), a.Y + Dirs[portA].Dy * Lead(portA));
+                    var p2 = new Pos(b.X + Dirs[portB].Dx * Lead(portB), b.Y + Dirs[portB].Dy * Lead(portB));
+                    int ddx = p2.X - p1.X, ddy = p2.Y - p1.Y;
+                    if (ddx * sx < 0 || ddy * sy < 0 || (ddx == 0 && ddy == 0))
+                    {
+                        continue;
+                    }
+
+                    // Turns are measured on screen, where a column is narrower than a row is tall.
+                    double length = Math.Sqrt(Sq(ddx * CellW) + Sq(ddy * CellH));
+                    double cosOut = (Dirs[portA].Dx * ddx * CellW * CellW + Dirs[portA].Dy * ddy * CellH * CellH) / (length * Pixels(Dirs[portA]));
+                    double cosIn = (Dirs[arrival].Dx * ddx * CellW * CellW + Dirs[arrival].Dy * ddy * CellH * CellH) / (length * Pixels(Dirs[arrival]));
+                    if (cosOut < MaxTurnCos || cosIn < MaxTurnCos)
+                    {
+                        continue;
+                    }
+
+                    int turn = (int)Math.Round((Math.Acos(Math.Min(1, cosOut)) + Math.Acos(Math.Min(1, cosIn))) * 180 / Math.PI / 6);
+                    yield return ([new(a.X, a.Y), p1, p2, new(b.X, b.Y)], portA, portB, turn);
+                }
             }
 
             int ax = Math.Abs(dx), ay = Math.Abs(dy);
@@ -590,110 +644,91 @@ public static class HighwayGenerator
             // L: along x first, then along y. Arrives at b from above (north) or below (south).
             if (ax >= MinLeg && ay >= MinLeg)
             {
-                yield return ([new(a.X, a.Y), new(b.X, a.Y), new(b.X, b.Y)], horizontalOut, sy > 0 ? North : South);
+                yield return ([new(a.X, a.Y), new(b.X, a.Y), new(b.X, b.Y)], horizontalOut, sy > 0 ? North : South, 8);
 
                 // L: along y first, then along x. Arrives at b from the west or east.
-                yield return ([new(a.X, a.Y), new(a.X, b.Y), new(b.X, b.Y)], verticalOut, sx > 0 ? West : East);
-            }
-
-            // Chamfered L: the same two legs, but the corner is cut with a short 45-degree diagonal.
-            foreach (int k in new[] { 2, 3, 5 })
-            {
-                if (ax - k >= MinLeg && ay - k >= MinLeg)
-                {
-                    yield return ([new(a.X, a.Y), new(b.X - sx * k, a.Y), new(b.X, a.Y + sy * k), new(b.X, b.Y)], horizontalOut, sy > 0 ? North : South);
-                    yield return ([new(a.X, a.Y), new(a.X, b.Y - sy * k), new(a.X + sx * k, b.Y), new(b.X, b.Y)], verticalOut, sx > 0 ? West : East);
-                }
-            }
-
-            // Diagonal jog: a straight run, a 45-degree diagonal that shifts the road sideways, and another straight run.
-            if (ax >= ay + 2 * MinLeg && ay >= 2)
-            {
-                foreach (double fraction in new[] { 0.25, 0.5, 0.75 })
-                {
-                    int lead = MinLeg + (int)Math.Round((ax - ay - 2 * MinLeg) * fraction);
-                    yield return ([new(a.X, a.Y), new(a.X + sx * lead, a.Y), new(a.X + sx * (lead + ay), b.Y), new(b.X, b.Y)], horizontalOut, (horizontalOut + 2) % 4);
-                }
-            }
-
-            if (ay >= ax + 2 * MinLeg && ax >= 2)
-            {
-                foreach (double fraction in new[] { 0.25, 0.5, 0.75 })
-                {
-                    int lead = MinLeg + (int)Math.Round((ay - ax - 2 * MinLeg) * fraction);
-                    yield return ([new(a.X, a.Y), new(a.X, a.Y + sy * lead), new(b.X, a.Y + sy * (lead + ax)), new(b.X, b.Y)], verticalOut, (verticalOut + 2) % 4);
-                }
+                yield return ([new(a.X, a.Y), new(a.X, b.Y), new(b.X, b.Y)], verticalOut, sx > 0 ? West : East, 8);
             }
 
             // Z: x, then y, then x.
-            if (ax >= 2 * MinLeg && ay >= 3)
+            if (ax >= 2 * MinLeg && ay >= MinLeg)
             {
                 foreach (double fraction in new[] { 0.3, 0.5, 0.7 })
                 {
                     int mx = a.X + (int)Math.Round(dx * fraction);
                     if (Math.Abs(mx - a.X) >= MinLeg && Math.Abs(b.X - mx) >= MinLeg)
                     {
-                        yield return ([new(a.X, a.Y), new(mx, a.Y), new(mx, b.Y), new(b.X, b.Y)], horizontalOut, (horizontalOut + 2) % 4);
+                        yield return ([new(a.X, a.Y), new(mx, a.Y), new(mx, b.Y), new(b.X, b.Y)], horizontalOut, (horizontalOut + 2) % 4, 16);
                     }
                 }
             }
 
             // Z: y, then x, then y.
-            if (ay >= 2 * MinLeg && ax >= 3)
+            if (ay >= 2 * MinLeg && ax >= MinLeg)
             {
                 foreach (double fraction in new[] { 0.3, 0.5, 0.7 })
                 {
                     int my = a.Y + (int)Math.Round(dy * fraction);
                     if (Math.Abs(my - a.Y) >= MinLeg && Math.Abs(b.Y - my) >= MinLeg)
                     {
-                        yield return ([new(a.X, a.Y), new(a.X, my), new(b.X, my), new(b.X, b.Y)], verticalOut, (verticalOut + 2) % 4);
+                        yield return ([new(a.X, a.Y), new(a.X, my), new(b.X, my), new(b.X, b.Y)], verticalOut, (verticalOut + 2) % 4, 16);
                     }
                 }
             }
         }
 
+        private const double CellW = 12, CellH = 22;
+
+        private static double Sq(double v) => v * v;
+
+        private static int Lead(int port) => port is East or West ? LeadX : LeadY;
+
+        private static double Pixels((int Dx, int Dy) dir) => dir.Dx != 0 ? CellW : CellH;
+
         /// <summary>
-        /// The cells along a route. A diagonal segment becomes a staircase of ordinary road cells (one step right or
-        /// left, then one up or down), so it joins up through the normal four-way connections and is drawn with the
-        /// same double-line glyphs as the rest of the highway. Each diagonal step therefore takes two cells.
+        /// The cells along a route, leg by leg between consecutive corners. A leg along a row or column is straight; any
+        /// other leg is a staircase of four-connected cells whose steps are spread evenly along the line.
         /// </summary>
         private static List<Pos> Expand(IReadOnlyList<Pos> corners)
         {
             var cells = new List<Pos> { corners[0] };
             for (int i = 1; i < corners.Count; i++)
             {
-                int sx = Math.Sign(corners[i].X - corners[i - 1].X);
-                int sy = Math.Sign(corners[i].Y - corners[i - 1].Y);
-                bool diagonal = sx != 0 && sy != 0;
-                var p = corners[i - 1];
-                while (p != corners[i])
+                int ax = Math.Abs(corners[i].X - corners[i - 1].X), ay = Math.Abs(corners[i].Y - corners[i - 1].Y);
+                int sx = Math.Sign(corners[i].X - corners[i - 1].X), sy = Math.Sign(corners[i].Y - corners[i - 1].Y);
+                int x = corners[i - 1].X, y = corners[i - 1].Y, stepsX = 0, stepsY = 0;
+                while (stepsX < ax || stepsY < ay)
                 {
-                    if (diagonal)
+                    // Move along whichever axis is further behind where the straight line would have it.
+                    bool alongX = stepsY >= ay || (stepsX < ax && (stepsX + 0.5) * ay <= (stepsY + 0.5) * ax);
+                    if (alongX)
                     {
-                        p = new Pos(p.X + sx, p.Y);
-                        cells.Add(p);
-                        p = new Pos(p.X, p.Y + sy);
-                        cells.Add(p);
+                        x += sx;
+                        stepsX++;
                     }
                     else
                     {
-                        p = new Pos(p.X + sx, p.Y + sy);
-                        cells.Add(p);
+                        y += sy;
+                        stepsY++;
                     }
+
+                    cells.Add(new Pos(x, y));
                 }
             }
 
             return cells;
         }
+
         /// <summary>
         /// A route is valid if it stays on the map, crosses only a limited stretch of water (as a bridge), puts its bends
         /// and interchanges on dry ground, and keeps clear of every other highway and interchange.
         /// </summary>
-        private bool Valid(IReadOnlyList<Pos> cells, IReadOnlyList<Pos> bends, Node a, Node? b, int maxWater, int maxRun)
+        private bool Valid(IReadOnlyList<Pos> cells, IReadOnlyList<Pos> bends, Node a, Node? b, int maxWater, int maxRun, bool separate = false)
         {
             int water = 0, run = 0;
-            foreach (var c in cells)
+            for (int n = 0; n < cells.Count; n++)
             {
+                var c = cells[n];
                 if (!InBounds(c.X, c.Y))
                 {
                     return false;
@@ -705,6 +740,11 @@ public static class HighwayGenerator
                 }
                 else if (++water > maxWater || ++run > maxRun)
                 {
+                    return false;
+                }
+                else if (n > 0 && n < cells.Count - 1 && !Straight(cells[n - 1], c, cells[n + 1]))
+                {
+                    // A bridge never bends.
                     return false;
                 }
 
@@ -720,9 +760,36 @@ public static class HighwayGenerator
                 {
                     return false;
                 }
+
+                // Two arms of one interchange may share its middle but must then fan out, not run side by side.
+                if (separate && inOwnWindow && !Near(c, a) && (b is null || !Near(c, b)) && Touching(c.X, c.Y))
+                {
+                    return false;
+                }
             }
 
             return bends.All(p => Open(p.X, p.Y)) && Open(cells[^1].X, cells[^1].Y);
+        }
+
+        private static bool Straight(Pos before, Pos at, Pos after) =>
+            (before.X == at.X && at.X == after.X) || (before.Y == at.Y && at.Y == after.Y);
+
+        private static bool Near(Pos c, Node node) => Math.Abs(c.X - node.X) <= ForkX && Math.Abs(c.Y - node.Y) <= ForkY;
+
+        private bool Touching(int x, int y)
+        {
+            for (int dy = -1; dy <= 1; dy++)
+            {
+                for (int dx = -3; dx <= 3; dx++)
+                {
+                    if (InBounds(x + dx, y + dy) && _refs[Index(x + dx, y + dy)] > 0)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
 
         private static bool InWindow(Pos c, Node node) =>

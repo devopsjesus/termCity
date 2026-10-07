@@ -39,7 +39,7 @@ public class CityScenarioTests
             if (game.Map.BuildingLayer[i] == 0) continue;
             Assert.False(game.Map.RoadLayer[i]);
             Assert.True(game.Map.Content.Terrains[game.Map.TerrainLayer[i]].Buildable);
-            Assert.NotEqual(ZoneType.None, game.Map.ZoneLayer[i]);
+            if (!game.Map.Content.Buildings[game.Map.BuildingLayer[i]].IsService) Assert.NotEqual(ZoneType.None, game.Map.ZoneLayer[i]);
         }
         var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
         Assert.Equal(scenario, loaded.Config.Scenario);
@@ -67,10 +67,10 @@ public class CityScenarioTests
     [InlineData("LA", 68, 10, "Hill")]
     [InlineData("SD", 10, 50, "Water")]
     [InlineData("SD", 39, 69, "Water")]
-    [InlineData("SD", 34, 72, "Grass")] // Coronado
+    [InlineData("SD", 34, 72, "Meadow")] // Coronado
     [InlineData("SD", 75, 32, "Hill")]
     [InlineData("CHI", 90, 50, "Water")]
-    [InlineData("CHI", 50, 40, "Grass")]
+    [InlineData("CHI", 50, 40, "Meadow")]
     [InlineData("STL", 70, 50, "Water")] // Mississippi
     [InlineData("STL", 50, 20, "Water")] // Missouri
     [InlineData("STL", 20, 47, "Hill")]
@@ -121,4 +121,26 @@ public class CityScenarioTests
 
     private static Pos At(GameMap map, int x, int y) =>
         new(x * (map.Width - 1) / 100, y * (map.Height - 1) / 100);
+}
+
+public class ScenarioSeedingTests
+{
+    [Theory]
+    [InlineData(CityScenario.SanFrancisco)]
+    [InlineData(CityScenario.LosAngeles)]
+    [InlineData(CityScenario.StLouis)]
+    public void ScenarioCitiesStartPoweredWateredAndServed(CityScenario scenario)
+    {
+        var game = CityGame.New(new GameConfig { Scenario = scenario, MapWidth = 640, MapHeight = 384 });
+        Assert.True(game.Services.Power.Ratio >= 0.99, $"power {game.Services.Power.Ratio}");
+        Assert.True(game.Services.Water.Ratio >= 0.99, $"water {game.Services.Water.Ratio}");
+        foreach (var kind in TermCity.Core.Buildings.ServiceKinds.Area)
+        {
+            Assert.True(game.Indicators.CoverageOf(kind) > 15, $"{kind} cover {game.Indicators.CoverageOf(kind)}");
+        }
+
+        Assert.True(game.Money >= 8 * game.Finance.Expenses);
+        TestCity.Advance(game, 20);
+        Assert.True(game.Money > 0);
+    }
 }

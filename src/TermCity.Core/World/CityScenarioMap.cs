@@ -43,9 +43,9 @@ public static class CityScenarioMap
         var hill = content.Terrains.Get(DefaultTerrains.HillName);
         var water = content.Terrains.Get(DefaultTerrains.WaterName);
         var tree = content.Features.Get(DefaultFeatures.TreeName);
-        var street = content.Roads.Get(DefaultRoads.StreetName);
-        var avenue = content.Roads.Get(DefaultRoads.AvenueName);
-        var highway = content.Roads.Get(DefaultRoads.HighwayName);
+        var street = content.Roads.Get(DefaultRoads.TrackName);
+        var avenue = content.Roads.Get(DefaultRoads.CobbledName);
+        var highway = content.Roads.Get(DefaultRoads.KingsRoadName);
         var buildings = new BuildingType?[4];
         foreach (var zone in Zones.Placeable)
             buildings[(int)zone] = content.Buildings.ForZone(zone)
@@ -62,14 +62,15 @@ public static class CityScenarioMap
                 bool park = !wet && IsPark(config.Scenario, u, v);
                 map.SetTerrain(x, y, wet ? water : elevated ? hill : grass);
                 if (park && CellHash.Pick(x, y, 4) != 0) map.SetFeature(x, y, tree);
-                if (wet || park) continue;
-                var zone = District(config.Scenario, u, v);
-                if (zone == ZoneType.None) continue;
-                if (x % 5 == 0 || y % 5 == 0)
-                    map.SetRoad(x, y, x % 20 == 0 || y % 20 == 0 ? avenue : street);
             }
         }
         foreach (var route in Routes(config.Scenario)) Road(map, highway, route);
+        Grid(map, (x, y) =>
+        {
+            double u = x * 100.0 / (map.Width - 1), v = y * 100.0 / (map.Height - 1);
+            return !IsWater(config.Scenario, u, v) && !IsPark(config.Scenario, u, v) && District(config.Scenario, u, v) != ZoneType.None;
+        }, street, avenue);
+        RoadSeparation.RemoveFragments(map, 16);
 
         for (int y = 0; y < map.Height; y++)
         {

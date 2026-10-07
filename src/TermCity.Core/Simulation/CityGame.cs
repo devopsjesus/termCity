@@ -16,7 +16,27 @@ public sealed record ActionResult(bool Success, string Message, int Cost = 0, in
 /// <summary>What a placement would do: how many cells it affects, what it costs, and how many were skipped as invalid.</summary>
 public sealed record Quote(int Cells, int Cost, int Skipped);
 
-public sealed record WeekReport(int Week, int Income, int NewHouseholds, int NewCommercial, int NewIndustrial);
+public sealed record WeekReport(
+    int Week,
+    int Income,
+    int NewHouseholds,
+    int NewCommercial,
+    int NewIndustrial,
+    int Expenses = 0,
+    int Population = 0,
+    int Births = 0,
+    int Deaths = 0,
+    int MovedIn = 0,
+    int MovedOut = 0,
+    int Events = 0);
+
+/// <summary>What the treasury expects each week: tax in, and what services, roads and the loan cost.</summary>
+public sealed record WeeklyFinance(int Income, int ServiceUpkeep, int RoadUpkeep, int Interest, int Administration = 0)
+{
+    public int Expenses => ServiceUpkeep + RoadUpkeep + Interest + Administration;
+
+    public int Net => Income - Expenses;
+}
 
 public sealed record GrowthState(bool Planned, int Homes, int Shops, int Factories, int WeekHomes, int WeekShops, int WeekFactories);
 
@@ -67,6 +87,16 @@ public sealed class CityGame
     private int _statsVersion = -1;
     private RoadNetwork? _network;
     private CityStats? _stats;
+    private int _serviceVersion;
+    private int _servicesKey = -1;
+    private bool _servicesInsolvent;
+    private CityServices? _services;
+    private int _indicatorsVersion = -1;
+    private CityIndicators? _indicators;
+    private int _financeVersion = -1;
+    private WeeklyFinance? _finance;
+    private CityProfile? _profile;
+    private readonly List<CityEvent> _events = [];
 
     internal CityGame(GameConfig config, GameMap map, GameRandom rng)
     {
@@ -90,14 +120,21 @@ public sealed class CityGame
         content ??= new GameContent();
         var map = config.Scenario != CityScenario.Random ? CityScenarioMap.Generate(config, content)
             : MapGenerator.Generate(config.MapWidth, config.MapHeight, config.Seed, content);
+        RoadSeparation.Apply(map);
         var names = GameRandom.ForStage(config.Seed, "city-name");
         string[] prefixes = ["Oak", "Cedar", "Maple", "Willow", "Pine", "Silver", "Clear", "River"];
         string[] suffixes = ["haven", " Falls", " Ridge", " Creek", "brook", "wood", "view", " Harbor"];
-        return new CityGame(config, map, GameRandom.ForStage(config.Seed, "simulation"))
+        var game = new CityGame(config, map, GameRandom.ForStage(config.Seed, "simulation"))
         {
             CityName = config.Scenario != CityScenario.Random ? CityScenarioMap.Name(config.Scenario)
                 : prefixes[names.Next(prefixes.Length)] + suffixes[names.Next(suffixes.Length)],
         };
+        if (config.Scenario != CityScenario.Random && config.FullRules)
+        {
+            ScenarioSeeder.Seed(game);
+        }
+
+        return game;
     }
 
     public GameConfig Config { get; }
@@ -183,11 +220,15 @@ public sealed class CityGame
 
     public int SupportedCells(ZoneType zone)
     {
-        int homes = Stats.Residential.Occupied;
         if (zone == ZoneType.Residential)
         {
             return int.MaxValue;
         }
+
+        // Dense towers support as many shops as the same people spread over small houses would.
+        int homes = Config.FullRules
+            ? Math.Max(Stats.Households + Stats.Residential.AwaitingRemoval, Stats.Population / 5)
+            : Stats.Residential.Occupied;
 
         if (homes < Config.MinResidentialCells)
         {
@@ -243,6 +284,201 @@ public sealed class CityGame
 
     public Demand Demand => Demand.Compute(Stats, Config);
 
+    public Budget Budget { get; } = new();
+
+    public CityProfile Profile => _profile ??= CityProfile.For(Config.Scenario);
+
+    /// <summary>True once the treasury is overdrawn: services run at half strength and nothing can be built.</summary>
+    public bool Insolvent => Config.FullRules && Money < 0;
+
+    /// <summary>Weeks left of a disease outbreak (0 when there is none).</summary>
+    public int OutbreakWeeksLeft { get; internal set; }
+
+    /// <summary>The season of the farming year (the year starts in midwinter).</summary>
+    public Season Season => Seasons.Of(WeekOfYear, Config.WeeksPerYear);
+
+    /// <summary>Weeks of the town's grain in store: the cushion between a poor harvest and starvation.</summary>
+    public double GrainWeeks { get; internal set; } = 8;
+
+    /// <summary>This year's crop against an ordinary one (1): below about 0.8 is a poor harvest.</summary>
+    public double HarvestQuality { get; internal set; } = 1;
+
+    /// <summary>Share of the town's grain need that went unmet last week, 0-1: above 0 people are going hungry.</summary>
+    public double Hunger { get; internal set; }
+
+    internal bool BuyingGrain { get; set; }
+
+    /// <summary>The highest <see cref="TownRank"/> the town has held, so each promotion is announced once (-1 until first assessed).</summary>
+    public int HighestRank { get; internal set; } = -1;
+
+    /// <summary>Tribute left unpaid in earlier years, added to the next demand.</summary>
+    public int TributeArrears { get; internal set; }
+
+    /// <summary>The town's standing in the realm: see <see cref="Settlement"/>.</summary>
+    public TownRank Rank => Config.FullRules ? Settlement.RankOf(this) : TownRank.Hamlet;
+
+    internal WeekTally Tally { get; } = new();
+
+    /// <summary>Coverage of every area service, smog, and power and water supply. Recomputed when the city layout or budget changes.</summary>
+    public CityServices Services
+    {
+        get
+        {
+            bool insolvent = Insolvent;
+            if (_services is null || _servicesKey != _serviceVersion || _servicesInsolvent != insolvent)
+            {
+                _services = CityServices.Compute(Map, Network, Config, k => Budget.Effective(k, insolvent), Profile.WaterSupply, Profile.PowerDemand);
+                _servicesKey = _serviceVersion;
+                _servicesInsolvent = insolvent;
+            }
+
+            return _services;
+        }
+    }
+
+    /// <summary>How the city is doing: happiness, jobs, crime, traffic and what is driving people in or out.</summary>
+    public CityIndicators Indicators
+    {
+        get
+        {
+            if (_indicators is null || _indicatorsVersion != _version)
+            {
+                _indicators = CityAnalysis.Assess(this);
+                _indicatorsVersion = _version;
+            }
+
+            return _indicators;
+        }
+    }
+
+    public WeeklyFinance Finance
+    {
+        get
+        {
+            if (_finance is null || _financeVersion != _version)
+            {
+                _finance = ComputeFinance();
+                _financeVersion = _version;
+            }
+
+            return _finance;
+        }
+    }
+
+    /// <summary>The most recent things that happened to the city, oldest first.</summary>
+    public IReadOnlyList<CityEvent> Events => _events;
+
+    public event Action<CityEvent>? EventOccurred;
+
+    internal void Report(CityEvent cityEvent)
+    {
+        _events.Add(cityEvent);
+        if (_events.Count > 60)
+        {
+            _events.RemoveAt(0);
+        }
+
+        Tally.Events++;
+        EventOccurred?.Invoke(cityEvent);
+    }
+
+    private WeeklyFinance ComputeFinance()
+    {
+        var stats = Stats;
+        if (!Config.FullRules)
+        {
+            return new WeeklyFinance(stats.WeeklyIncome, 0, 0, 0);
+        }
+
+        var ind = Indicators;
+        double education = 1 + 0.3 * ind.Education / 100;
+        double staffing = 0.5 + 0.5 * ind.JobsFilled;
+        double income = stats.ResidentialIncome * (0.5 + 0.5 * (1 - ind.Unemployment)) +
+            (stats.CommercialIncome + stats.IndustrialIncome) * staffing * education * Settlement.CharterDues(Rank);
+
+        double services = 0;
+        foreach (int i in Map.ServiceCells)
+        {
+            var type = Map.Content.Buildings[Map.BuildingLayer[i]];
+            services += type.WeeklyUpkeep * Budget.Funding(type.Service);
+        }
+
+        double roads = 0;
+        foreach (int i in Map.RoadCells)
+        {
+            roads += Map.Content.Roads[Map.RoadTypeLayer[i]].WeeklyUpkeep;
+        }
+
+        double bureaucracy = Config.AdministrationShare *
+            Math.Clamp((stats.Population - 2_000) / (double)(Config.AdministrationFullAt - 2_000), 0, 1);
+        return new WeeklyFinance(
+            (int)Math.Round(income), (int)Math.Round(services), (int)Math.Round(roads * Budget.Roads),
+            (int)Math.Round(Budget.Loan * Budget.LoanInterestPerWeek), (int)Math.Round(income * bureaucracy));
+    }
+
+    public void SetTax(ZoneType zone, double rate)
+    {
+        Taxes.Set(zone, Math.Clamp(double.IsFinite(rate) ? rate : 0.09, 0, 0.3));
+        Invalidate();
+    }
+
+    /// <summary>Sets how much of its full cost a service is funded (0-1). Lower funding saves money and weakens the service.</summary>
+    public void SetFunding(ServiceKind kind, double level)
+    {
+        if (kind.IsUtility())
+        {
+            return;
+        }
+
+        if (kind == ServiceKind.None)
+        {
+            Budget.Roads = level;
+        }
+        else
+        {
+            Budget.SetFunding(kind, level);
+        }
+
+        Notify(roadsChanged: false, mapChanged: false, servicesChanged: true);
+    }
+
+    public int MaxLoan => Math.Max(0, Config.FullRules ? Budget.LoanWeeksOfIncome * Finance.Income : 0);
+
+    public ActionResult TakeLoan(int amount)
+    {
+        if (!Config.FullRules)
+        {
+            return ActionResult.Fail("Loans are not available in this game.");
+        }
+
+        int room = MaxLoan - Budget.Loan;
+        if (amount <= 0 || amount > room)
+        {
+            return ActionResult.Fail(room <= 0
+                ? "The bank will lend no more until the city earns more."
+                : $"The bank will lend at most {Fmt.Money(room)} more.");
+        }
+
+        Budget.Loan += amount;
+        Money += amount;
+        Notify(roadsChanged: false, mapChanged: false);
+        return ActionResult.Ok($"Borrowed {Fmt.Money(amount)}. Interest is {Budget.LoanInterestPerWeek:P1} a week.", amount);
+    }
+
+    public ActionResult RepayLoan(int amount)
+    {
+        amount = Math.Min(amount, Math.Min(Budget.Loan, Math.Max(0, Money)));
+        if (amount <= 0)
+        {
+            return ActionResult.Fail(Budget.Loan == 0 ? "There is no loan to repay." : "There is no spare gold to repay with.");
+        }
+
+        Budget.Loan -= amount;
+        Money -= amount;
+        Notify(roadsChanged: false, mapChanged: false);
+        return ActionResult.Ok($"Repaid {Fmt.Money(amount)}.", amount);
+    }
+
     /// <summary>Increases whenever what the map looks like may have changed (not on every clock tick).</summary>
     public int MapVersion { get; private set; }
 
@@ -252,12 +488,17 @@ public sealed class CityGame
     /// </summary>
     public void Touch() => Notify(roadsChanged: true);
 
-    private void Notify(bool roadsChanged, bool mapChanged = true)
+    private void Notify(bool roadsChanged, bool mapChanged = true, bool servicesChanged = false)
     {
         _version++;
         if (roadsChanged)
         {
             _roadVersion++;
+        }
+
+        if (roadsChanged || servicesChanged)
+        {
+            _serviceVersion++;
         }
 
         if (mapChanged)
@@ -316,7 +557,7 @@ public sealed class CityGame
         }
 
         int day = Day;
-        int homes = Grow(ZoneType.Residential, Share(_planHomes, day), int.MaxValue);
+        int homes = Config.FullRules ? MoveIn(Share(_planHomes, day)) : Grow(ZoneType.Residential, Share(_planHomes, day), int.MaxValue);
         Invalidate();
 
         int allowedC = SupportedCells(ZoneType.Commercial);
@@ -345,15 +586,33 @@ public sealed class CityGame
             return;
         }
 
-        int income = Stats.WeeklyIncome;
-        Money += income;
+        if (Config.FullRules)
+        {
+            PopulationEngine.RunWeek(this, Tally);
+            Invalidate();
+            Settlement.RunWeek(this);
+            _serviceVersion++;
+        }
+
+        var finance = Finance;
+        int income = finance.Income;
+        bool wasInsolvent = Insolvent;
+        Money += income - finance.Expenses;
+        if (Insolvent && !wasInsolvent)
+        {
+            Report(new CityEvent(Week, EventKind.Finance,
+                "The treasury is overdrawn. Services run at half strength and nothing can be built until you are back in credit.", []));
+        }
+
         Week++;
         Day = 0;
         _planned = false;
-        LastReport = new WeekReport(Week, income, _weekHomes, _weekShops, _weekFactories);
+        LastReport = new WeekReport(
+            Week, income, _weekHomes, _weekShops, _weekFactories, finance.Expenses, Stats.Population,
+            Tally.Births, Tally.Deaths, Tally.MovedIn, Tally.MovedOut, Tally.Events);
         _weekHomes = _weekShops = _weekFactories = 0;
-        Notify(roadsChanged: false, mapChanged: homes + shops + factories + removed > 0 ||
-            LastReport.NewHouseholds + LastReport.NewCommercial + LastReport.NewIndustrial > 0);
+        Tally.Reset();
+        Notify(roadsChanged: false, mapChanged: true, servicesChanged: Config.FullRules);
     }
 
     private int RemoveDezonedBuildings(double elapsedDays)
@@ -386,14 +645,91 @@ public sealed class CityGame
     /// <summary>Decides how many cells may fill this week, from the size of the city as the week begins.</summary>
     private void PlanWeek()
     {
+        if (Config.FullRules)
+        {
+            var ind = Indicators;
+            int effective = Math.Max(Stats.Residential.Filled, Stats.Population / 5);
+            double families = Config.MaxNewResidentialPerWeek + effective * Config.MigrationRatePerWeek;
+            _planHomes = StochasticRound(families * ind.Attraction * Seasons.Travel(Season));
+            int allowedC = SupportedCells(ZoneType.Commercial);
+            int allowedI = SupportedCells(ZoneType.Industrial);
+            _planShops = StochasticRound(WeeklyCap(Config.MaxNewCommercialPerWeek, allowedC) * ind.BusinessClimate);
+            _planFactories = StochasticRound(WeeklyCap(Config.MaxNewIndustrialPerWeek, allowedI) * ind.BusinessClimate);
+            _planned = true;
+            return;
+        }
+
         int filledR = Stats.Residential.Occupied;
-        int allowedC = SupportedCells(ZoneType.Commercial);
-        int allowedI = SupportedCells(ZoneType.Industrial);
+        int allowedCells = SupportedCells(ZoneType.Commercial);
+        int allowedInd = SupportedCells(ZoneType.Industrial);
 
         _planHomes = WeeklyCap(Config.MaxNewResidentialPerWeek, filledR);
-        _planShops = WeeklyCap(Config.MaxNewCommercialPerWeek, allowedC);
-        _planFactories = WeeklyCap(Config.MaxNewIndustrialPerWeek, allowedI);
+        _planShops = WeeklyCap(Config.MaxNewCommercialPerWeek, allowedCells);
+        _planFactories = WeeklyCap(Config.MaxNewIndustrialPerWeek, allowedInd);
         _planned = true;
+    }
+
+    internal int StochasticRound(double value)
+    {
+        int whole = (int)Math.Floor(Math.Max(0, value));
+        return whole + (Rng.Chance(Math.Max(0, value) - whole) ? 1 : 0);
+    }
+
+    /// <summary>
+    /// Full rules: families move in, first into homes with room (the more desirable the lane, the likelier) and then
+    /// into newly built homes. Returns the number of families that arrived.
+    /// </summary>
+    private int MoveIn(int families)
+    {
+        if (families <= 0)
+        {
+            return 0;
+        }
+
+        var vacancies = new List<int>();
+        foreach (int i in Map.ZoneCells(ZoneType.Residential))
+        {
+            byte id = Map.BuildingLayer[i];
+            if (id != 0 && Map.Content.Buildings[id].Capacity - Map.HouseholdLayer[i].Total >= 3 && CityAnalysis.Operating(this, i))
+            {
+                vacancies.Add(i);
+            }
+        }
+
+        vacancies.Sort();
+        int moved = 0;
+        while (moved < families && vacancies.Count > 0)
+        {
+            int a = Rng.Next(vacancies.Count), b = Rng.Next(vacancies.Count);
+            int pick = CityAnalysis.LandValue(this, vacancies[a]) >= CityAnalysis.LandValue(this, vacancies[b]) ? a : b;
+            int cell = vacancies[pick];
+            vacancies[pick] = vacancies[^1];
+            vacancies.RemoveAt(vacancies.Count - 1);
+
+            var home = Map.HouseholdLayer[cell];
+            int room = Map.Content.Buildings[Map.BuildingLayer[cell]].Capacity - home.Total;
+            var family = Household.Migrant(Rng);
+            if (family.Total > room)
+            {
+                family = family.Scaled((double)room / family.Total);
+            }
+
+            if (family.IsEmpty)
+            {
+                continue;
+            }
+
+            Map.HouseholdLayer[cell] = home.Plus(family);
+            Tally.MovedIn += family.Total;
+            moved++;
+        }
+
+        if (moved < families)
+        {
+            moved += Grow(ZoneType.Residential, families - moved, int.MaxValue);
+        }
+
+        return moved;
     }
 
     /// <summary>The part of a week''s total that falls on one day: the shares of all the days add up to the total.</summary>
@@ -445,7 +781,9 @@ public sealed class CityGame
             Map.SetBuilding(p.X, p.Y, building);
             if (zone == ZoneType.Residential)
             {
-                Map.SetHousehold(p.X, p.Y, Household.Random(Rng));
+                var family = Config.FullRules ? Household.Migrant(Rng) : Household.Random(Rng);
+                Map.SetHousehold(p.X, p.Y, family);
+                Tally.MovedIn += family.Total;
             }
 
             filled++;
@@ -477,28 +815,44 @@ public sealed class CityGame
         Map.InBounds(x, y) && Map.TerrainAt(x, y).Buildable && !Map.HasRoad(x, y) &&
         Map.ZoneAt(x, y) == ZoneType.None && Map.BuildingAt(x, y) is null;
 
-    /// <summary>A road can go on open, unbuilt ground, or replace a smaller road type (an upgrade).</summary>
-    public bool CanPlaceRoad(int x, int y, RoadType? type = null)
+    /// <summary>A road can go on open, unbuilt ground, or replace a smaller road type (an upgrade); see <see cref="RoadRules"/>.</summary>
+    public bool CanPlaceRoad(int x, int y, RoadType? type = null) => PlanRoad([new Pos(x, y)], type).Count == 1;
+
+    /// <summary>The cells of a road stroke that can actually be laid, in order, under the rules of <see cref="RoadRules"/>.</summary>
+    public List<Pos> PlanRoad(IEnumerable<Pos> cells, RoadType? type = null) =>
+        RoadRules.Plan(Map, cells as IReadOnlyList<Pos> ?? cells.ToList(), (type ?? DefaultRoad).Rank,
+            (x, y) => Map.TerrainAt(x, y).Buildable && Map.ZoneAt(x, y) == ZoneType.None && Map.BuildingAt(x, y) is null);
+
+    public Quote QuoteRoad(CellRect area, RoadType? type = null) => QuoteRoad(area.Cells(), type);
+
+    public Quote QuoteRoad(IEnumerable<Pos> cells, RoadType? type = null)
     {
-        type ??= DefaultRoad;
-        if (!Map.InBounds(x, y) || !Map.TerrainAt(x, y).Buildable || Map.ZoneAt(x, y) != ZoneType.None || Map.BuildingAt(x, y) is not null)
+        var area = cells as IReadOnlyCollection<Pos> ?? cells.ToList();
+        var plan = PlanRoad(area, type);
+        int total = 0;
+        foreach (var p in plan)
         {
-            return false;
+            total += RoadCostAt(p.X, p.Y, type);
         }
 
-        return Map.RoadTypeAt(x, y) is not { } existing || existing.Rank < type.Rank;
+        int inBounds = area.Count(Map.InBounds);
+        return new Quote(plan.Count, total, inBounds - plan.Count);
     }
 
-    public Quote QuoteRoad(CellRect area, RoadType? type = null) =>
-        QuoteCells(area, (x, y) => CanPlaceRoad(x, y, type), (x, y) => RoadCostAt(x, y, type));
+    /// <summary>Open ground, and for a pump, the shore.</summary>
+    public bool CanPlaceBuilding(BuildingType type, int x, int y) =>
+        CanBuildOn(x, y) && (!type.RequiresWaterNearby || Map.NearWater(x, y, 1));
 
     public Quote QuoteBuilding(BuildingType type, CellRect area) =>
-        QuoteCells(area, CanBuildOn, (x, y) => BuildingCostAt(type, x, y));
+        QuoteCells(area, (x, y) => CanPlaceBuilding(type, x, y), (x, y) => BuildingCostAt(type, x, y));
 
-    private Quote QuoteCells(CellRect area, Func<int, int, bool> valid, Func<int, int, int> cost)
+    private Quote QuoteCells(CellRect area, Func<int, int, bool> valid, Func<int, int, int> cost) =>
+        QuoteCells(area.Cells(), valid, cost);
+
+    private Quote QuoteCells(IEnumerable<Pos> area, Func<int, int, bool> valid, Func<int, int, int> cost)
     {
         int cells = 0, total = 0, skipped = 0;
-        foreach (var p in area.Cells())
+        foreach (var p in area)
         {
             if (!Map.InBounds(p))
             {
@@ -519,8 +873,12 @@ public sealed class CityGame
         return new Quote(cells, total, skipped);
     }
 
-    public ActionResult BuildRoad(CellRect area, RoadType? type = null)
+    public ActionResult BuildRoad(CellRect area, RoadType? type = null) => BuildRoad(area.Cells(), type);
+
+    /// <summary>Builds a road over any set of cells, such as a line at an angle.</summary>
+    public ActionResult BuildRoad(IEnumerable<Pos> cells, RoadType? type = null)
     {
+        var area = cells.ToList();
         type ??= DefaultRoad;
         if (!type.PlayerPlaceable)
         {
@@ -534,13 +892,8 @@ public sealed class CityGame
             return check;
         }
 
-        foreach (var p in area.Cells())
+        foreach (var p in PlanRoad(area, type))
         {
-            if (!CanPlaceRoad(p.X, p.Y, type))
-            {
-                continue;
-            }
-
             Map.SetFeature(p.X, p.Y, null);
             Map.SetRoad(p.X, p.Y, type);
         }
@@ -557,6 +910,11 @@ public sealed class CityGame
             return ActionResult.Fail($"{type.Name} cannot be placed by the player.");
         }
 
+        if (Stats.Population < type.MinPopulation)
+        {
+            return ActionResult.Fail($"A {type.Name} needs a town of {type.MinPopulation:N0} souls; you have {Stats.Population:N0}.");
+        }
+
         var quote = QuoteBuilding(type, area);
         var check = CheckSpend(quote, type.Name.ToLowerInvariant());
         if (check is not null)
@@ -566,7 +924,7 @@ public sealed class CityGame
 
         foreach (var p in area.Cells())
         {
-            if (!CanBuildOn(p.X, p.Y))
+            if (!CanPlaceBuilding(type, p.X, p.Y))
             {
                 continue;
             }
@@ -576,7 +934,7 @@ public sealed class CityGame
         }
 
         Money -= quote.Cost;
-        Notify(roadsChanged: false);
+        Notify(roadsChanged: false, servicesChanged: true);
         return ActionResult.Ok($"Built {quote.Cells} {type.Name}(s) for {Fmt.Money(quote.Cost)}." + SkippedNote(quote), quote.Cost, quote.Cells);
     }
 
@@ -584,7 +942,7 @@ public sealed class CityGame
     {
         if (Money <= 0)
         {
-            return ActionResult.Fail("You are out of money: no more roads or buildings can be placed.");
+            return ActionResult.Fail(Config.FullRules ? "You are out of gold: borrow from the moneylenders or wait for the tithes before building." : "You are out of gold: no more roads or buildings can be placed.");
         }
 
         if (quote.Cells == 0)
@@ -594,7 +952,7 @@ public sealed class CityGame
 
         if (quote.Cost > Money)
         {
-            return ActionResult.Fail($"Not enough money: {quote.Cells} {what} cell(s) cost {Fmt.Money(quote.Cost)} but you have {Fmt.Money(Money)}.");
+            return ActionResult.Fail($"Not enough gold: {quote.Cells} {what} cell(s) cost {Fmt.Money(quote.Cost)} but you have {Fmt.Money(Money)}.");
         }
 
         return null;
@@ -710,20 +1068,37 @@ public sealed class CityGame
             return ActionResult.Fail("Nothing to demolish here.");
         }
 
-        Notify(roadsChanged: roadsRemoved);
+        Notify(roadsChanged: roadsRemoved, servicesChanged: true);
         return ActionResult.Ok($"Demolished {changed} cell(s).", 0, changed);
     }
 
     // ---- Statistics -------------------------------------------------------------------------------------------
 
+    /// <summary>
+    /// What a lord and a market add to the tithe a cell pays: land under a castle's garrison pays up to a sixth more, and
+    /// market stalls and workshops near a market cross or guildhall pay tolls and dues on a bigger trade.
+    /// </summary>
+    private double TitheFactor(CityServices services, ZoneType zone, int i)
+    {
+        if (!Config.FullRules)
+        {
+            return 1;
+        }
+
+        double factor = 1 + 0.15 * services.Coverage(ServiceKind.Defence, i) / 100.0;
+        return zone == ZoneType.Residential ? factor : factor * (1 + 0.25 * services.Coverage(ServiceKind.Trade, i) / 100.0);
+    }
+
     private CityStats ComputeStats()
     {
         var network = Network;
-        int adults = 0, children = 0, seniors = 0, households = 0;
+        var services = Services;
+        int adults = 0, children = 0, seniors = 0, households = 0, vacant = 0;
         Span<int> zoned = stackalloc int[4];
         Span<int> filled = stackalloc int[4];
         Span<int> served = stackalloc int[4];
         Span<int> awaitingRemoval = stackalloc int[4];
+        Span<double> value = stackalloc double[4];
 
         // Visit only zone indexes and the sparse removal queue, not the whole map.
         foreach (var zone in Zones.Placeable)
@@ -737,16 +1112,29 @@ public sealed class CityGame
                     served[z]++;
                 }
 
-                if (Map.BuildingLayer[i] != 0)
+                byte id = Map.BuildingLayer[i];
+                if (id != 0)
                 {
                     filled[z]++;
+                    if (services.IsPowered(Map, i) && services.IsWatered(Map, i))
+                    {
+                        value[z] += Map.Content.Buildings[id].ValueMultiplier * TitheFactor(services, zone, i);
+                    }
+
                     if (zone == ZoneType.Residential)
                     {
                         var h = Map.HouseholdLayer[i];
                         adults += h.Adults;
                         children += h.Children;
                         seniors += h.Seniors;
-                        households++;
+                        if (h.IsEmpty)
+                        {
+                            vacant++;
+                        }
+                        else
+                        {
+                            households++;
+                        }
                     }
                 }
             }
@@ -755,6 +1143,7 @@ public sealed class CityGame
         foreach (var (i, removal) in Map.ZoneRemovals)
         {
             awaitingRemoval[(int)removal.Zone]++;
+            value[(int)removal.Zone] += Map.Content.Buildings[Map.BuildingLayer[i]].ValueMultiplier;
             if (removal.Zone == ZoneType.Residential)
             {
                 var h = Map.HouseholdLayer[i];
@@ -765,10 +1154,12 @@ public sealed class CityGame
             }
         }
 
-        double income = 0;
+        Span<double> income = stackalloc double[4];
+        double total = 0;
         foreach (var zone in Zones.Placeable)
         {
-            income += (filled[(int)zone] + awaitingRemoval[(int)zone]) * Zones.Get(zone).WeeklyValue * Taxes.Get(zone);
+            income[(int)zone] = value[(int)zone] * Zones.Get(zone).WeeklyValue * Taxes.Get(zone);
+            total += income[(int)zone];
         }
 
         return new CityStats(
@@ -776,7 +1167,8 @@ public sealed class CityGame
             Count(ZoneType.Residential, zoned, filled, served, awaitingRemoval),
             Count(ZoneType.Commercial, zoned, filled, served, awaitingRemoval),
             Count(ZoneType.Industrial, zoned, filled, served, awaitingRemoval),
-            Map.RoadCount, network.ConnectedRoadCount, (int)Math.Round(income, MidpointRounding.AwayFromZero));
+            Map.RoadCount, network.ConnectedRoadCount, (int)Math.Round(total, MidpointRounding.AwayFromZero),
+            vacant, income[(int)ZoneType.Residential], income[(int)ZoneType.Commercial], income[(int)ZoneType.Industrial]);
 
         static ZoneCount Count(
             ZoneType zone,
