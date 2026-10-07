@@ -86,10 +86,29 @@ public class ClockTests
     public void CalendarRollsOverEveryFiftyTwoWeeks()
     {
         var game = TestCity.Flat();
+        int startingYear = game.Year;
         TestCity.Advance(game, 52);
-        Assert.Equal(2, game.Year);
+        Assert.Equal(startingYear + 1, game.Year);
         Assert.Equal(1, game.WeekOfYear);
     }
+
+    [Fact]
+    public void NewCitiesStartInTheCurrentYear()
+    {
+        int before = DateTime.Now.Year;
+        var game = TestCity.Flat();
+        Assert.InRange(game.Year, before, DateTime.Now.Year);
+        Assert.Equal(game.Year, game.Config.StartingYear);
+    }
+
+    [Theory]
+    [InlineData(0, "[>......]")]
+    [InlineData(2, "[==>....]")]
+    [InlineData(6, "[======>]")]
+    [InlineData(-1, "[>......]")]
+    [InlineData(7, "[======>]")]
+    public void SharedWeekBarMarksEachDay(int day, string expected) =>
+        Assert.Equal(expected, Fmt.WeekBar(day, 7));
 
     [Fact]
     public void GrowthIsSpreadOverTheDaysOfTheWeekAndTaxesArriveAtTheEnd()
@@ -177,10 +196,10 @@ public class ClockTests
     [Fact]
     public void TheWeekBarHasOneCharacterPerDay()
     {
-        Assert.Equal("[>......]", TermCity.App.Views.HudView.WeekBar(0, 7));
-        Assert.Equal("[===>...]", TermCity.App.Views.HudView.WeekBar(3, 7));
-        Assert.Equal("[======>]", TermCity.App.Views.HudView.WeekBar(6, 7));
-        Assert.Equal(9, TermCity.App.Views.HudView.WeekBar(2, 7).Length);
+        Assert.Equal("[>......]", Fmt.WeekBar(0, 7));
+        Assert.Equal("[===>...]", Fmt.WeekBar(3, 7));
+        Assert.Equal("[======>]", Fmt.WeekBar(6, 7));
+        Assert.Equal(9, Fmt.WeekBar(2, 7).Length);
     }
 }
 public class SessionTests

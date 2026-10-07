@@ -21,7 +21,7 @@ public sealed class HillGenerator : ITerrainGenerator
         {
             for (int x = 0; x < map.Width; x++)
             {
-                // Terminal cells are about twice as tall as wide, so squash x to keep blobs round.
+                // Display cells are about twice as tall as wide, so squash x to keep blobs round.
                 values[y * map.Width + x] = noise.Fractal(x * Frequency * 0.5, y * Frequency, 3);
             }
         }

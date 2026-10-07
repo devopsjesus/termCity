@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   csharp:
-    name: C# (${{ matrix.os }})
+    name: Core and Godot unit tests (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -21,4 +21,24 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
-      - run: dotnet test TermCity.slnx -c Release
+      - run: dotnet build TermCity.slnx -c Release
+      - run: dotnet test TermCity.slnx -c Release --no-build
+
+  godot:
+    name: Godot desktop smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - name: Install Godot .NET
+        run: |
+          curl --fail --location --retry 3 -o "$RUNNER_TEMP/godot.zip" \
+            https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_mono_linux_x86_64.zip
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
+      - run: dotnet build godot/TermCity.Godot.csproj
+      - name: Run engine integration checks
+        run: |
+          "$RUNNER_TEMP/godot/Godot_v4.7.2-stable_mono_linux_x86_64/Godot_v4.7.2-stable_mono_linux.x86_64" \
+            --headless --path godot -- --smoke-test --seed 42 --size large

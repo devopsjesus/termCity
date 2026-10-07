@@ -15,14 +15,6 @@ public enum MessageKind
     Error,
 }
 
-/// <summary>The headed sections of the side panel, each of which can be collapsed.</summary>
-public enum PanelSection
-{
-    Demand,
-    City,
-    Zones,
-}
-
 /// <summary>
 /// Everything about the player's view of the game that is not simulation state: the cursor, the selected area,
 /// the scrolled camera and the status message. Pure logic with no UI dependency so it is fully testable.
@@ -49,8 +41,8 @@ public sealed partial class GameSession
         if (showGuide)
         {
             Game.Paused = true;
-            GuideVisible = !Game.GuideDismissed;
-            ShowGuide();
+            GuideVisible = Game.Config.Scenario == CityScenario.Random && !Game.GuideDismissed;
+            if (Game.Config.Scenario == CityScenario.Random) ShowGuide();
         }
     }
 
@@ -95,18 +87,14 @@ public sealed partial class GameSession
     public CellRect ViewRect => new(CameraX, CameraY, VisibleCellsX, VisibleCellsY);
 
     // ---- Zoom -------------------------------------------------------------------------------------------------
-    // Level 0 draws one map cell per character. Negative levels zoom out: each character stands for a square block of
-    // 2 or 4 cells. Level +1 zooms in: each map cell is drawn two characters wide.
+    // Negative levels sample square blocks; at +1 the renderer enlarges each cell in both axes.
 
     public int ZoomLevel { get; private set; }
 
     /// <summary>Map cells (per side) summarised by one character when zoomed out; 1 otherwise.</summary>
     public int Stride => ZoomLevel < 0 ? 1 << -ZoomLevel : 1;
 
-    /// <summary>Characters wide that one map cell is drawn when zoomed in; 1 otherwise.</summary>
-    public int SpanX => ZoomLevel > 0 ? 2 : 1;
-
-    public int VisibleCellsX => ZoomLevel < 0 ? ViewWidth * Stride : (ViewWidth + SpanX - 1) / SpanX;
+    public int VisibleCellsX => ViewWidth * Stride;
 
     public int VisibleCellsY => ZoomLevel < 0 ? ViewHeight * Stride : ViewHeight;
 
@@ -114,7 +102,7 @@ public sealed partial class GameSession
     public string ZoomLabel => ZoomLevel switch
     {
         < 0 => (1.0 / Stride).ToString("0.###", CultureInfo.InvariantCulture) + "x",
-        > 0 => $"{SpanX}x",
+        > 0 => "2x",
         _ => "1x",
     };
 
@@ -145,7 +133,7 @@ public sealed partial class GameSession
         Changed?.Invoke();
     }
 
-    private int ViewOffsetX(int viewX) => ZoomLevel < 0 ? viewX * Stride : viewX / SpanX;
+    private int ViewOffsetX(int viewX) => viewX * Stride;
 
     private int ViewOffsetY(int viewY) => ZoomLevel < 0 ? viewY * Stride : viewY;
 
@@ -177,7 +165,7 @@ public sealed partial class GameSession
         return new CellRect(left, top, right - left + 1, bottom - top + 1);
     }
 
-    /// <summary>Raised diagnostics for input, shown in the message bar (F12) to help work out what a terminal sends.</summary>
+    /// <summary>Input diagnostics shown in the status bar (F12).</summary>
     public bool InputDebug { get; private set; }
 
     /// <summary>Milliseconds between the last two ticks of the application loop (about 20 when it is keeping up).</summary>
@@ -222,22 +210,6 @@ public sealed partial class GameSession
     /// <summary>Whether there is a recent message to show (otherwise the status line shows the cell under the cursor).</summary>
     public bool MessageVisible => Message.Length > 0 && Environment.TickCount64 - _messageAt < MessageDurationMs;
 
-    // ---- Side panel sections -----------------------------------------------------------------------------------
-
-    private readonly HashSet<PanelSection> _collapsed = [];
-
-    public bool IsCollapsed(PanelSection section) => _collapsed.Contains(section);
-
-    public void ToggleSection(PanelSection section)
-    {
-        if (!_collapsed.Remove(section))
-        {
-            _collapsed.Add(section);
-        }
-
-        Changed?.Invoke();
-    }
-
     // ---- Camera -----------------------------------------------------------------------------------------------
 
     public void SetViewport(int width, int height)
@@ -265,19 +237,8 @@ public sealed partial class GameSession
         }
     }
 
-    /// <summary>Scrolls by a number of on-screen characters, whatever the zoom level.</summary>
-    public void ScrollChars(int dx, int dy)
-    {
-        if (ZoomLevel < 0)
-        {
-            ScrollCamera(dx * Stride, dy * Stride);
-        }
-        else
-        {
-            // Zoomed in, a cell is wider than a character: round away from zero so any request still moves the map.
-            ScrollCamera(Math.Sign(dx) * ((Math.Abs(dx) + SpanX - 1) / SpanX), dy);
-        }
-    }
+    /// <summary>Scrolls by a number of visible cells at the current zoom.</summary>
+    public void ScrollChars(int dx, int dy) => ScrollCamera(dx * Stride, dy * Stride);
 
     /// <summary>
     /// When on, resting the mouse pointer close to the edge of the map view scrolls the map. Off by default: it is easy
@@ -608,8 +569,8 @@ public sealed partial class GameSession
     {
         ReplaceGame(CityGame.New(config));
         Game.Paused = true;
-        GuideVisible = true;
-        ShowGuide();
+        GuideVisible = Game.Config.Scenario == CityScenario.Random;
+        if (GuideVisible) ShowGuide();
     }
 
     private void ReplaceGame(CityGame game)
@@ -621,7 +582,7 @@ public sealed partial class GameSession
         Game = game;
         Game.Changed += OnGameChanged;
         InitializeFeedback();
-        GuideVisible = !game.GuideDismissed;
+        GuideVisible = game.Config.Scenario == CityScenario.Random && !game.GuideDismissed;
         _autosaveElapsed = 0;
         Anchor = null;
         Selection = null;

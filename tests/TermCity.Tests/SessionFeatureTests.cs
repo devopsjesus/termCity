@@ -14,6 +14,29 @@ public class SessionFeatureTests
         Path.Combine(Path.GetTempPath(), "termcity-session-" + Guid.NewGuid().ToString("N") + ".json"));
 
     [Fact]
+    public void RenamingIsBoundedPersistedAndMarksTheCityDirty()
+    {
+        var session = Session();
+        string initial = session.Game.CityName;
+        Assert.True(CityGame.IsValidCityName(initial));
+        Assert.Equal(initial, TestCity.Flat().CityName);
+        string snapshot = SaveGameStore.Serialize(session.Game);
+        Assert.False(session.Game.RenameCity(new string('X', 17)).Success);
+        Assert.False(session.Game.RenameCity("").Success);
+        Assert.False(session.Game.RenameCity("Bad\nName").Success);
+        Assert.False(session.Game.RenameCity("\uD800").Success);
+        Assert.Equal(snapshot, SaveGameStore.Serialize(session.Game));
+        Assert.True(session.QuickSave());
+        Assert.False(session.HasUnsavedChanges);
+        int mapVersion = session.Game.MapVersion;
+        Assert.True(session.Game.RenameCity("1234567890123456").Success);
+        Assert.True(session.HasUnsavedChanges);
+        Assert.Equal(mapVersion, session.Game.MapVersion);
+        Assert.Equal("1234567890123456", SaveGameStore.Deserialize(SaveGameStore.Serialize(session.Game)).CityName);
+        File.Delete(session.SavePath);
+    }
+
+    [Fact]
     public void PreviewDoesNotSpendOrAdvanceAndConfirmationCanBeUndone()
     {
         var session = Session();

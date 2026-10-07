@@ -86,8 +86,7 @@ public static class DefaultTerrains
     public static TerrainType Grass() => new()
     {
         Name = GrassName,
-        // Mostly plain dots: every cell whose glyph differs from its neighbour has to be rewritten when the map scrolls,
-        // so a busy texture makes scrolling much more expensive for the terminal.
+        // Mostly plain dots keep the ground texture quiet beside roads, buildings and animated features.
         Glyphs = [.. Enumerable.Repeat("·", 33), ",", "'", "\""],
         Foreground = Rgb.Hex(0x4f8f4a),
         Background = Rgb.Hex(0x16301a),

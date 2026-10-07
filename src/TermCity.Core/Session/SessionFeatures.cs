@@ -270,7 +270,7 @@ public sealed partial class GameSession
     public void RequestQuit() => GuardProgress("Quit", () => QuitRequested?.Invoke());
 
     public void RequestNewCity(bool restart) => GuardProgress(restart ? "Restart this seed" : "New city", () =>
-        NewGame(Game.Config with { Seed = restart ? Game.Config.Seed : Random.Shared.Next() }));
+        NewGame(Game.Config with { Seed = restart ? Game.Config.Seed : Random.Shared.Next(), StartingYear = null }));
 
     public void RequestLoad(string path)
     {

@@ -18,7 +18,7 @@ public class ZoomTests
     }
 
     [Fact]
-    public void ZoomOutShowsMoreOfTheMapAndZoomInShowsLess()
+    public void ZoomOutSamplesMoreCellsAndZoomLabelsMatchTheRenderer()
     {
         var s = NewSession();
         Assert.Equal(80, s.ViewRect.Width);
@@ -34,7 +34,7 @@ public class ZoomTests
 
         s.SetZoom(0);
         s.ZoomBy(1);
-        Assert.Equal(40, s.VisibleCellsX);
+        Assert.Equal(80, s.VisibleCellsX);
         Assert.Equal(24, s.VisibleCellsY);
         Assert.Equal("2x", s.ZoomLabel);
         s.SetZoom(0);
@@ -102,7 +102,7 @@ public class ZoomTests
         s.ScrollChars(1, 0);
         Assert.Equal(x + 1, s.CameraX);
         s.ScrollChars(-5, 0);
-        Assert.Equal(x - 2, s.CameraX);
+        Assert.Equal(x - 4, s.CameraX);
     }
 
     [Fact]

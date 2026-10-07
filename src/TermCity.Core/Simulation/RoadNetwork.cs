@@ -85,15 +85,17 @@ public sealed class RoadNetwork
             buildable[terrain.Id] = terrain.Buildable;
         }
 
-        var frontier = new List<int>(connectedCells);
-        foreach (int i in frontier)
+        int connectedCount = connectedCells.Count;
+        foreach (int i in connectedCells)
         {
             served[i] = true;
         }
 
+        var frontier = connectedCells;
+        var next = new List<int>();
         for (int step = 0; step < serviceReach && frontier.Count > 0; step++)
         {
-            var next = new List<int>();
+            next.Clear();
             foreach (int index in frontier)
             {
                 int x = index % width, y = index / width;
@@ -114,10 +116,10 @@ public sealed class RoadNetwork
                 }
             }
 
-            frontier = next;
+            (frontier, next) = (next, frontier);
         }
 
-        return new RoadNetwork(connected, served, connectedCells.Count);
+        return new RoadNetwork(connected, served, connectedCount);
     }
 
     public static readonly (int Dx, int Dy)[] Neighbors = [(0, -1), (1, 0), (0, 1), (-1, 0)];

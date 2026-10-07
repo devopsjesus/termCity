@@ -2,7 +2,7 @@ namespace TermCity.Core.Session;
 
 /// <summary>
 /// Turns "the pointer is near the edge of the map view" into camera movement. The closer the pointer is to the
-/// edge the faster the map scrolls. Pure logic (no UI), so it can be tested without a terminal.
+/// edge the faster the map scrolls. Pure logic (no UI), so it can be tested without a display.
 /// </summary>
 public sealed class EdgeScroller
 {
