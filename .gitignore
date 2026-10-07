@@ -2,7 +2,5 @@ bin/
 obj/
 .vs/
 *.user
-rust/target/
-rust/target-*/
 godot/.godot/
 godot/exports/

@@ -52,7 +52,7 @@ public sealed class TerminalGrid
         int beat = (int)(AnimationSeconds / BeatSeconds);
         float step = (1 - Math.Abs(beat - 2)) * 1.5f;
         float direction = ((position.X ^ position.Y) & 1) == 0 ? 1 : -1;
-        // Godot's screen Y axis is the inverse of Bevy's world Y axis.
+        // Screen Y increases downward, so vertical motion uses the inverted step.
         return kind == AnimationKind.Hill ? (0, -step * direction) : (-step * direction, 0);
     }
 
