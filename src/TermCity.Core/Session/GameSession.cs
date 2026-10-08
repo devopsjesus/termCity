@@ -13,6 +13,7 @@ public enum MessageKind
     Info,
     Success,
     Error,
+    Warning,
 }
 
 /// <summary>
@@ -49,6 +50,8 @@ public sealed partial class GameSession
     public CityGame Game { get; private set; }
 
     public string SavePath { get; }
+
+    public string SaveDisplayPath => DisplayPath(SavePath);
 
     public Pos Cursor { get; private set; }
 
@@ -352,6 +355,12 @@ public sealed partial class GameSession
             return;
         }
 
+        if (BuildingToolActive)
+        {
+            MoveBuildingPlacement(Cursor.Offset(dx, dy));
+            return;
+        }
+
         if (extend && Anchor is null)
         {
             Anchor = Cursor;
@@ -462,7 +471,7 @@ public sealed partial class GameSession
 
     public void ClearSelection()
     {
-        CancelPreview();
+        ClearPreview();
         Anchor = null;
         Selection = null;
         SelectionChanged?.Invoke();
@@ -493,9 +502,11 @@ public sealed partial class GameSession
 
     public ActionResult Demolish() => Execute(() => Game.Demolish(ActiveArea));
 
-    public ActionResult PlaceBuilding(BuildingType type) => Execute(() => Game.PlaceBuilding(type, ActiveArea));
+    public ActionResult PlaceBuilding(BuildingType type) => Execute(() => Game.PlaceBuilding(type, ActiveArea),
+        Game.PlanBuildings(type, ActiveArea).Select(area => Game.BuildingPlacementWarning(type, area))
+            .FirstOrDefault(warning => warning is not null));
 
-    private ActionResult Execute(Func<ActionResult> action)
+    private ActionResult Execute(Func<ActionResult> action, string? warning = null)
     {
         string snapshot = SaveGameStore.Serialize(Game);
         double at = Game.ElapsedDays;
@@ -506,10 +517,10 @@ public sealed partial class GameSession
             _undoAt = at;
         }
 
-        return Complete(result);
+        return Complete(result, warning);
     }
 
-    private ActionResult Complete(ActionResult result)
+    private ActionResult Complete(ActionResult result, string? warning = null)
     {
         if (result.Success)
         {
@@ -518,7 +529,12 @@ public sealed partial class GameSession
             Placed?.Invoke();
         }
 
-        SetMessage(result.Message, result.Success ? MessageKind.Success : MessageKind.Error);
+        if (result.Success && warning is not null)
+        {
+            result = result with { Message = result.Message + " Warning: " + warning };
+        }
+        SetMessage(result.Message, !result.Success ? MessageKind.Error :
+            warning is not null ? MessageKind.Warning : MessageKind.Success);
         return result;
     }
 
@@ -586,8 +602,9 @@ public sealed partial class GameSession
 
     private void ReplaceGame(CityGame game)
     {
-        CancelPreview();
+        ClearPreview();
         Prompt = null;
+        _promptHistory.Clear();
         _undoSnapshot = null;
         Game.Changed -= OnGameChanged;
         Game = game;

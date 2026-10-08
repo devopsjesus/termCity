@@ -13,7 +13,7 @@ public sealed partial class GameSession
     {
         if (!Game.Config.FullRules)
         {
-            ShowPrompt("Treasury", "Classic rules have one flat tithe and no running costs.", [new("Back", ShowSessionMenu)]);
+            ShowPrompt("Treasury", "Classic rules have one flat tithe and no running costs.", [new("Back", CancelPrompt)]);
             return;
         }
 
@@ -45,7 +45,7 @@ public sealed partial class GameSession
             [Fmt.Money(10_000), $"From the moneylenders: owed {Fmt.Money(Game.Budget.Loan)}, limit {Fmt.Money(Game.MaxLoan)}"]));
         choices.Add(new("Repay", () => { SetMessage(Game.RepayLoan(10_000).Message); ShowBudgetMenu(); },
             [Fmt.Money(10_000), "Pay back part of the loan"]));
-        choices.Add(new("Back", ShowSessionMenu, ["", "Return to the city menu"]));
+        choices.Add(new("Back", CancelPrompt, ["", "Return to the previous menu"]));
         ShowPrompt("Treasury, tithes and loans",
             $"Tithes and rents {Fmt.Money(finance.Income)}/wk, services {Fmt.Money(finance.ServiceUpkeep)}, roads {Fmt.Money(finance.RoadUpkeep)}, " +
             $"usury {Fmt.Money(finance.Interest)}, net {Fmt.Money(finance.Net)}/wk. Fuel and water are always paid in full.",
@@ -86,5 +86,5 @@ public sealed partial class GameSession
     }
 
     public void ShowHealthReport() =>
-        ShowPrompt("City health", CityReport.Health(Game), [new("Close", ClosePrompt)]);
+        ShowPrompt("City health", CityReport.Health(Game), [new("Close", CancelPrompt)]);
 }

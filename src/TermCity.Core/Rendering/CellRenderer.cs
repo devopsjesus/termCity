@@ -10,13 +10,14 @@ public readonly record struct CellVisual(string Glyph, Rgb Foreground, Rgb Backg
 public static class CellRenderer
 {
     private static readonly Rgb BuildingBackground = Rgb.Hex(0x2b2b30);
-    public static readonly Rgb DisconnectedRoad = Rgb.Hex(0xe8a33d);
+    public static readonly Rgb DisconnectedRoad = Rgb.Hex(0xff7777);
 
     /// <param name="vectorRoads">
     /// When the caller draws roads as curves (see <see cref="RoadVectorLayer"/>), their cells are left as bare ground
     /// so the glyph does not show through.
     /// </param>
-    public static CellVisual Render(CityGame game, int x, int y, MapOverlay overlay = MapOverlay.Off, bool vectorRoads = false)
+    public static CellVisual Render(CityGame game, int x, int y, MapOverlay overlay = MapOverlay.Off,
+        bool vectorRoads = false, bool buildingArt = true)
     {
         var map = game.Map;
         var terrain = map.TerrainAt(x, y);
@@ -42,7 +43,8 @@ public static class CellRenderer
 
         if (building is not null)
         {
-            glyph = building.GlyphAt(x, y);
+            var footprint = map.BuildingFootprintAt(x, y);
+            glyph = buildingArt ? building.FootprintGlyphAt(footprint, x, y) : building.GlyphAt(x, y);
             fg = building.Foreground;
             if (zone == ZoneType.None)
             {

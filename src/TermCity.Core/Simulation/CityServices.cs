@@ -104,7 +104,7 @@ public sealed class CityServices
             var kind = type.Service;
             buildings[(int)kind]++;
             upkeep += type.WeeklyUpkeep;
-            bool working = network.IsServed(index);
+            bool working = map.BuildingIsServed(index, network.IsServed);
             if (!working)
             {
                 continue;
@@ -213,7 +213,7 @@ public sealed class CityServices
             return;
         }
 
-        int radius = 3 + 2 * Math.Abs(amount);
+        int radius = PollutionRadius(amount);
         int r2 = radius * radius;
         int strength = Math.Abs(amount) * 9 + 14;
         bool clean = amount < 0;
@@ -244,9 +244,12 @@ public sealed class CityServices
                 {
                     field[i] = (byte)Math.Min(100, field[i] + add);
                 }
+
             }
         }
     }
+
+    public static int PollutionRadius(int amount) => amount == 0 ? 0 : 3 + 2 * Math.Abs(amount);
 }
 
 /// <summary>Supply against demand for a utility. A ratio of 1 or more means everyone is served.</summary>

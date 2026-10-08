@@ -54,6 +54,11 @@ something more important (fires outrank coins). Scheduled callbacks are bounded 
 2. reads game events (fires, floods, earthquakes, outbreaks, abandonment, milestones, the weekly tax report);
 3. keeps one `AmbientLife` effect running over the visible region.
 
+Game pause freezes traffic (cars and pedestrians) and birds, including spawning and wing animation,
+without clearing existing actors. They resume from their frozen positions. Smoke, water life,
+one-shot effects and terrain decoration continue; the director sets `AmbientLife.TrafficAndBirdsPaused`
+from the attached game's pause state rather than stopping the whole effect clock.
+
 Safeguards: more than 1500 changed cells at once (loading a save, a new city) is treated as a resync and produces no
 effects; nothing is spawned while zoomed out (`Stride != 1`), because one glyph then represents many cells; and the
 director updates after the session, so a change is detected before the frame that draws it (no flicker).
@@ -102,6 +107,12 @@ Limits of per-glyph scaling:
 
 `V` cycles High, Low, Off (also under Esc > Effects) and the choice is saved in `display.cfg`. Start with
 `--reduced-motion` to force effects off for the whole session; the toggle then only explains that.
+
+Esc > Celebrations independently controls decorative population-milestone confetti. It defaults to
+Off and is saved alongside the effect level. These bursts do not represent damage or disasters.
+Disabling celebrations clears running confetti without stopping construction, demolition, ambient
+life. Enabling them does not replay previously reached milestones.
+Weekly taxes update the treasury and reports without spawning floating dollar or cent symbols.
 
 ## Verification status
 

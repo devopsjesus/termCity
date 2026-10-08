@@ -213,6 +213,12 @@ public sealed class EffectSystem
         Rebuild();
     }
 
+    public void ClearCelebrations()
+    {
+        _effects.RemoveAll(effect => effect is ConfettiEffect);
+        Rebuild();
+    }
+
     private void RunDueCallbacks()
     {
         while (true)

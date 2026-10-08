@@ -66,7 +66,7 @@ public class MenuAndGuideTests
         var session = Session();
         session.ShowGuide();
         var tabs = session.Prompt!.Tabs!;
-        Assert.Equal(["Start", "Zones", "Roads", "Services", "Population", "Happiness", "Economy"], tabs.Select(t => t.Title));
+        Assert.Equal(["Start", "Zones", "Roads", "Services", "Population", "Happiness", "Economy", "Glossary"], tabs.Select(t => t.Title));
         Assert.Equal(tabs[0].Text, session.Prompt.Text);
         session.CycleTab(1);
         Assert.Equal(1, session.Prompt.ActiveTab);
@@ -95,7 +95,10 @@ public class MenuAndGuideTests
         Assert.False(session.GuideVisible);
         session.ShowGuide();
         Assert.False(session.GuideVisible);
-        Assert.Single(session.Prompt!.Choices);
+        Assert.Equal("Enable guide", session.Prompt!.Choices[1].Label);
+        session.SelectPrompt(1);
+        Assert.True(session.GuideVisible);
+        Assert.False(session.Game.GuideDismissed);
     }
 
     [Fact]
@@ -120,8 +123,70 @@ public class MenuAndGuideTests
         string text = HelpContent.Text();
         Assert.StartsWith("KEY", text);
         Assert.Contains("Shift+click", text);
+        Assert.Contains("F10", text);
         Assert.Contains("GUIDE", HelpContent.Footer);
         Assert.True(text.Split('\n').Length < 40);
         Assert.All(text.Split('\n'), line => Assert.True(line.Length <= 90, line));
+    }
+
+    [Fact]
+    public void PlaceableMenuHelpUsesRegisteredStatsAndActualAreaIconsWithoutActivating()
+    {
+        var session = Session();
+        session.ShowAreaMenu();
+        session.SelectPrompt(2);
+        var prompt = session.Prompt!;
+        foreach (var building in session.Game.Map.Content.Buildings.Where(b => b.PlayerPlaceable))
+        {
+            int index = prompt.Choices.ToList().FindIndex(c => c.Label == building.Name);
+            prompt.HelpIndex = index;
+            var help = prompt.ActiveHelp!;
+            Assert.Equal(ChoiceHelpContent.Icons(building.Glyphs), help.Icons);
+            Assert.Equal(building.Description, help.Description);
+            Assert.Contains(Fmt.Money(building.Cost), help.Details);
+            Assert.Contains("Upkeep:", help.Details);
+            if (building.Capacity > 0) Assert.Contains($"Capacity: {building.Capacity:N0}", help.Details);
+            if (building.Radius > 0)
+            {
+                Assert.Contains($"Radius: {building.Radius} cells", help.Details);
+                Assert.Contains($"strength: {building.Strength}/100", help.Details);
+            }
+            if (building.RequiresWaterNearby) Assert.Contains("nearby open water", help.Details);
+            Assert.Contains("connected road access", help.Details);
+            foreach (var area in TermCity.Core.Rendering.AreaOfEffect.ForBuilding(building, new(0, 0)))
+            {
+                Assert.Contains(ChoiceHelpContent.Icons(area.Glyphs), help.Details);
+                Assert.Contains($"radius {area.Radius} cells", help.Details);
+            }
+            Assert.Same(prompt, session.Prompt);
+            Assert.Null(session.Preview);
+        }
+        session.ShowAreaMenu();
+        session.SelectPrompt(1);
+        foreach (var choice in session.Prompt!.Choices.Where(c => c.Label != "Back"))
+        {
+            Assert.NotNull(choice.Help);
+            Assert.Contains("Traffic capacity:", choice.Help!.Details);
+        }
+    }
+
+    [Fact]
+    public void GlossaryIncludesEveryRegisteredTypeAndEffectGlyph()
+    {
+        var session = Session();
+        string glossary = GuideContent.Glossary(session.Game);
+        foreach (var building in session.Game.Map.Content.Buildings)
+            Assert.Contains(building.Name, glossary);
+        foreach (var road in session.Game.Map.Content.Roads)
+            Assert.Contains(road.Name, glossary);
+        foreach (var terrain in session.Game.Map.Content.Terrains)
+            Assert.Contains(terrain.Name, glossary);
+        foreach (var feature in session.Game.Map.Content.Features)
+            Assert.Contains(feature.Name, glossary);
+        foreach (string glyph in TermCity.Core.Effects.EffectGlyphs.All().Distinct())
+            Assert.Contains(glyph, glossary);
+        Assert.Contains("area-of-effect", glossary);
+        Assert.Contains("context", glossary);
+        Assert.Contains("money animations are not active in gameplay", glossary);
     }
 }

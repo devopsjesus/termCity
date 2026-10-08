@@ -166,7 +166,7 @@ public class RoadCurveTests
     }
 
     [Fact]
-    public void BranchStopsShortOfTheRoadItJoins()
+    public void BranchReachesTheCentreOfTheRoadItJoins()
     {
         var (game, king) = Blank();
         for (int x = 5; x <= 20; x++) game.Map.SetRoad(x, 10, king);
@@ -175,7 +175,40 @@ public class RoadCurveTests
         Assert.Equal(2, paths.Count);
         var stem = paths.Single(p => p.Xs.All(x => Math.Abs(x - CentreX(12)) < 1e-6));
         double top = stem.Ys.Min();
-        Assert.Equal(CentreY(10) + RoadCurves.JunctionSetback, top, 6);
+        Assert.Equal(CentreY(10), top, 6);
+    }
+
+    [Theory]
+    [InlineData(0, 1, 1)]
+    [InlineData(1, 1, 1)]
+    [InlineData(2, 1, 1)]
+    [InlineData(3, 1, 1)]
+    [InlineData(0, 2, 1)]
+    [InlineData(1, 2, 1)]
+    [InlineData(2, 2, 1)]
+    [InlineData(3, 2, 1)]
+    [InlineData(0, 1, 2)]
+    [InlineData(0, 1, 4)]
+    public void DirtTrackThreeWayJunctionsMergeWithoutAnEndCap(int rotation, int scale, int stride)
+    {
+        var (game, _) = Blank();
+        var track = game.Map.Content.Roads.Get(DefaultRoads.TrackName);
+        (int X, int Y)[] directions = [(0, -1), (1, 0), (0, 1), (-1, 0)];
+        game.Map.SetRoad(12, 12, track);
+        for (int arm = 0; arm < directions.Length; arm++)
+        {
+            if (arm == rotation) continue;
+            var (dx, dy) = directions[arm];
+            for (int step = 1; step <= 10; step++)
+                game.Map.SetRoad(12 + dx * step, 12 + dy * step, track);
+        }
+
+        var paths = Paths(game);
+        Assert.Equal(2, paths.Count);
+        Assert.All(paths, path => Assert.Contains(Enumerable.Range(0, path.Count), i =>
+            Math.Abs(path.Xs[i] - CentreX(12)) < 1e-6 &&
+            Math.Abs(path.Ys[i] - CentreY(12)) < 1e-6));
+        AssertDrawnRoadsConnected(game, scale, stride);
     }
 
     [Fact]
@@ -190,6 +223,96 @@ public class RoadCurveTests
         var whole = Assert.Single(kings);
         Assert.Equal(5 * W, whole.Xs.Min(), 6);
         Assert.Equal(21 * W, whole.Xs.Max(), 6);
+    }
+
+    [Theory]
+    [InlineData(0, 1, 1)]
+    [InlineData(1, 1, 1)]
+    [InlineData(2, 1, 1)]
+    [InlineData(3, 1, 1)]
+    [InlineData(0, 2, 1)]
+    [InlineData(0, 1, 2)]
+    [InlineData(0, 1, 4)]
+    public void OpposingStreetAndHighwayBendsStayVisuallyConnected(int rotation, int scale, int stride)
+    {
+        var (game, king) = Blank();
+        var track = game.Map.Content.Roads.Get(DefaultRoads.TrackName);
+        (int X, int Y)[] directions = [(0, -1), (1, 0), (0, 1), (-1, 0)];
+        game.Map.SetRoad(12, 12, king);
+        for (int arm = 0; arm < directions.Length; arm++)
+        {
+            var (dx, dy) = directions[arm];
+            var type = arm == (rotation + 1) % 4 || arm == (rotation + 2) % 4 ? king : track;
+            for (int step = 1; step <= 10; step++)
+                game.Map.SetRoad(12 + dx * step, 12 + dy * step, type);
+        }
+
+        AssertDrawnRoadsConnected(game, scale, stride);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void ReportedSeedHasNoVisibleGapBetweenStreetsAndHighways(int scale)
+    {
+        var game = CityGame.New(new GameConfig { Seed = 1981019679, MapWidth = 160, MapHeight = 96 });
+        Assert.Equal(game.Map.RoadCells.Count, game.Network.ConnectedRoadCount);
+        AssertDrawnRoadsConnected(game, scale);
+    }
+
+    private static void AssertDrawnRoadsConnected(CityGame game, int scale = 1, int stride = 1)
+    {
+        var layer = new RoadVectorLayer();
+        layer.Sync(game);
+        int chunksX = (game.Map.Width + RoadVectorLayer.ChunkCells * stride - 1) / (RoadVectorLayer.ChunkCells * stride);
+        int chunksY = (game.Map.Height + RoadVectorLayer.ChunkCells * stride - 1) / (RoadVectorLayer.ChunkCells * stride);
+        int chunkWidth = RoadVectorLayer.ChunkCells * W * scale;
+        int chunkHeight = RoadVectorLayer.ChunkCells * H * scale;
+        int width = chunksX * chunkWidth, height = chunksY * chunkHeight;
+        var painted = new bool[width * height];
+        int count = 0, start = -1;
+        for (int cy = 0; cy < chunksY; cy++)
+        {
+            for (int cx = 0; cx < chunksX; cx++)
+            {
+                if (layer.Render(cx, cy, scale, stride) is not { } chunk) continue;
+                for (int y = 0; y < chunk.Height; y++)
+                {
+                    for (int x = 0; x < chunk.Width; x++)
+                    {
+                        if (chunk.Rgba[(y * chunk.Width + x) * 4 + 3] <= 32) continue;
+                        int index = (cy * chunkHeight + y) * width + cx * chunkWidth + x;
+                        painted[index] = true;
+                        count++;
+                        start = index;
+                    }
+                }
+            }
+        }
+
+        Assert.True(start >= 0, "No road pixels were rendered.");
+        var queue = new Queue<int>();
+        queue.Enqueue(start);
+        painted[start] = false;
+        int reached = 0;
+        (int X, int Y)[] neighbours = [(0, -1), (1, 0), (0, 1), (-1, 0)];
+        while (queue.TryDequeue(out int cell))
+        {
+            reached++;
+            int x = cell % width, y = cell / width;
+            foreach (var (dx, dy) in neighbours)
+            {
+                int nx = x + dx, ny = y + dy;
+                if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+                int next = ny * width + nx;
+                if (!painted[next]) continue;
+                painted[next] = false;
+                queue.Enqueue(next);
+            }
+        }
+
+        Assert.True(reached == count,
+            $"Only {reached} of {count} road pixels are joined at scale {scale}, stride {stride}.");
     }
 
     [Fact]
@@ -261,6 +384,42 @@ public class RoadCurveTests
 
     private static byte[] Pixel(RoadChunk chunk, double px, double py, int scale = 1) =>
         chunk.Rgba.AsSpan((((int)Math.Floor(py * scale)) * chunk.Width + (int)Math.Floor(px * scale)) * 4, 4).ToArray();
+
+    [Theory]
+    [InlineData(DefaultRoads.TrackName, 1)]
+    [InlineData(DefaultRoads.TrackName, 2)]
+    [InlineData(DefaultRoads.CobbledName, 1)]
+    [InlineData(DefaultRoads.CobbledName, 2)]
+    [InlineData(DefaultRoads.KingsRoadName, 1)]
+    [InlineData(DefaultRoads.KingsRoadName, 2)]
+    [InlineData(DefaultRoads.KingsRoadName, 1, 2)]
+    [InlineData(DefaultRoads.KingsRoadName, 1, 4)]
+    public void EveryDisconnectedRoadTypeUsesRedInsteadOfHighwayAmber(string name, int scale, int stride = 1)
+    {
+        var (game, _) = Blank();
+        var type = game.Map.Content.Roads.Get(name);
+        for (int x = 5; x <= 14; x++) game.Map.SetRoad(x, 5, type);
+        game.Touch();
+        var glyph = CellRenderer.Render(game, 8, 5);
+        Assert.Equal(CellRenderer.DisconnectedRoad, glyph.Foreground);
+        Assert.True(glyph.Foreground.R > glyph.Foreground.G * 1.5);
+        Assert.True(glyph.Foreground.R > glyph.Foreground.B * 1.5);
+
+        var layer = new RoadVectorLayer();
+        layer.Sync(game);
+        Assert.All(layer.Paths, path => Assert.False(path.Connected));
+        var chunk = layer.Render(0, 0, scale, stride)!;
+        double offset = stride == 1 ? RoadVectorLayer.LineOffset : RoadVectorLayer.HighwayLineOffset;
+        var line = Pixel(chunk, CentreX(8) / stride, CentreY(5) / stride - offset, scale);
+        Assert.True(line[0] > line[1] * 1.5 && line[0] > line[2] * 1.5,
+            $"Disconnected {name} line was ({line[0]}, {line[1]}, {line[2]}).");
+
+        for (int x = 0; x < 5; x++) game.Map.SetRoad(x, 5, type);
+        game.Touch();
+        Assert.Equal(type.Foreground, CellRenderer.Render(game, 8, 5).Foreground);
+        layer.Sync(game);
+        Assert.All(layer.Paths, path => Assert.True(path.Connected));
+    }
 
     [Fact]
     public void RoadBedAndEdgeLinesAreDrawn()

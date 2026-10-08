@@ -98,7 +98,7 @@ public class SessionFeatureTests
     }
 
     [Fact]
-    public void CustomBuildingPreviewQuotesTerrainAndSupportsUndo()
+    public void BuildingPlacementIgnoresSelectionMovesAndSupportsUndo()
     {
         var session = Session();
         var game = session.Game;
@@ -117,14 +117,84 @@ public class SessionFeatureTests
         session.EndSelection();
         string before = SaveGameStore.Serialize(game);
         session.PreviewBuilding(building);
-        Assert.Equal(new Quote(2, 2_500, 0), session.Preview!.Quote);
+        Assert.Null(session.Selection);
+        Assert.Equal(new CellRect(11, 18, 1, 1), session.Preview!.Area);
+        Assert.Equal(new Quote(1, 1_500, 0), session.Preview.Quote);
+        session.MoveCursor(-1, 0);
+        Assert.Equal(new CellRect(10, 18, 1, 1), session.Preview.Area);
+        Assert.Null(session.BuildingPlacementError);
         Assert.Equal(50_000, game.Money);
         Assert.True(session.ConfirmPreview().Success);
-        Assert.Equal(47_500, game.Money);
+        Assert.Equal(49_000, game.Money);
+        Assert.Same(building, game.Map.BuildingAt(10, 18));
         session.RequestUndo();
         session.SelectPrompt(0);
         session.Game.Paused = false;
         Assert.Equal(before, SaveGameStore.Serialize(session.Game));
+    }
+
+    [Fact]
+    public void BuildingPlacementExplainsWhyTheCurrentFootprintIsBlocked()
+    {
+        var session = Session();
+        var building = session.Game.Map.Content.Buildings.Get("Town Well");
+        session.Game.Map.SetRoad(10, 18, session.Game.Map.Content.Roads.Default);
+        session.Game.Touch();
+        session.PlaceCursor(new Pos(10, 18));
+
+        session.PreviewBuilding(building);
+
+        Assert.True(session.BuildingToolActive);
+        Assert.Contains("road blocks", session.BuildingPlacementError);
+        Assert.False(session.ConfirmPreview().Success);
+        Assert.NotNull(session.Preview);
+    }
+
+    [Theory]
+    [InlineData("Woodlot")]
+    [InlineData("Town Well")]
+    [InlineData("Aqueduct")]
+    public void DisconnectedUtilitiesWarnBeforeAndAfterPlacementButRemainAllowed(string name)
+    {
+        var session = new GameSession(TestCity.Flat(config: new GameConfig(), rules: CityRules.Full));
+        var game = session.Game;
+        var type = game.Map.Content.Buildings.Get(name);
+        game.Map.SetTerrain(29, 5, game.Map.Content.Terrains.Get("Water"));
+        game.Touch();
+        session.PlaceCursor(new Pos(30, 5));
+        int money = game.Money;
+        session.PreviewBuilding(type);
+
+        Assert.Null(session.BuildingPlacementError);
+        Assert.Contains("inactive", session.BuildingPlacementWarning);
+        Assert.Contains("edge-connected road", session.BuildingPlacementWarning);
+        Assert.Contains($"{Fmt.Money(type.WeeklyUpkeep)}/week", session.BuildingPlacementWarning);
+        Assert.Equal(money, game.Money);
+        var placed = session.ConfirmPreview();
+        Assert.True(placed.Success, placed.Message);
+        Assert.Contains("Warning:", placed.Message);
+        Assert.Equal(MessageKind.Warning, session.MessageKind);
+        Assert.Equal(0, game.Services.ActiveCounts[(int)type.Service]);
+        Assert.Contains("INACTIVE", CellInspector.Summary(game, new Pos(30, 5)));
+
+        var road = game.BuildRoad(new CellRect(30, 7, 1, 14));
+        Assert.True(road.Success, road.Message);
+        Assert.Equal(1, game.Services.ActiveCounts[(int)type.Service]);
+        Assert.Null(game.BuildingPlacementWarning(type, game.Map.BuildingFootprintAt(30, 5)));
+        Assert.Contains("Active", CellInspector.Summary(game, new Pos(30, 5)));
+    }
+
+    [Fact]
+    public void ConnectedUtilitiesPlaceWithoutAnInactiveWarning()
+    {
+        var session = new GameSession(TestCity.Flat(config: new GameConfig(), rules: CityRules.Full));
+        session.PlaceCursor(new Pos(10, 18));
+        var type = session.Game.Map.Content.Buildings.Get("Woodlot");
+        session.PreviewBuilding(type);
+        Assert.Null(session.BuildingPlacementWarning);
+        Assert.True(session.ConfirmPreview().Success);
+        Assert.Equal(MessageKind.Success, session.MessageKind);
+        Assert.DoesNotContain("Warning:", session.Message);
     }
 
     [Theory]
@@ -403,8 +473,7 @@ public class SessionFeatureTests
         Assert.DoesNotContain("continu", session.Prompt.Text, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("Save and quit", session.Prompt.Choices[0].Label);
         Assert.Equal("Quit without saving", session.Prompt.Choices[1].Label);
-        Assert.Contains("Quick-save file:", session.Prompt.Footer);
-        Assert.Contains(Path.GetFileName(session.SavePath), session.Prompt.Footer);
+        Assert.Null(session.Prompt.Footer);
         session.SelectPrompt(2);
         Assert.False(quit);
         session.RequestQuit();
@@ -418,6 +487,62 @@ public class SessionFeatureTests
         session.RequestQuit();
         session.SelectPrompt(1);
         Assert.True(quit);
+    }
+
+    [Theory]
+    [InlineData("Quit")]
+    [InlineData("New")]
+    [InlineData("Restart")]
+    [InlineData("Load")]
+    public void SaveGuardsDoNotIncludeTheQuickSavePath(string action)
+    {
+        var session = Session();
+        switch (action)
+        {
+            case "Quit": session.RequestQuit(); break;
+            case "New": session.RequestNewCity(restart: false); break;
+            case "Restart": session.RequestNewCity(restart: true); break;
+            case "Load": session.RequestLoad(session.SavePath); break;
+        }
+        Assert.NotNull(session.Prompt);
+        Assert.True(session.Prompt.IsSaveDialog);
+        Assert.Null(session.Prompt.Footer);
+        Assert.DoesNotContain(session.SavePath, session.Prompt.Text);
+        Assert.DoesNotContain("Quick-save file:", session.Prompt.Text);
+        session.CancelPrompt();
+        Assert.Null(session.Prompt);
+    }
+
+    [Fact]
+    public void OnlySaveDialogsRequestTheQuickSavePath()
+    {
+        var session = Session();
+        session.ShowSessionMenu();
+        Assert.False(session.Prompt!.IsSaveDialog);
+        session.RequestQuit();
+        Assert.True(session.Prompt!.IsSaveDialog);
+        session.CancelPrompt();
+        Assert.False(session.Prompt!.IsSaveDialog);
+        session.ShowLoadMenu();
+        Assert.False(session.Prompt!.IsSaveDialog);
+        session.ShowAreaMenu();
+        Assert.False(session.Prompt!.IsSaveDialog);
+    }
+
+    [Fact]
+    public void QuickSaveDisplayPathAbbreviatesTheHomeDirectory()
+    {
+        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var session = new GameSession(TestCity.Flat(), Path.Combine(home, "city.json"));
+        Assert.Equal("~" + Path.DirectorySeparatorChar + "city.json", session.SaveDisplayPath);
+    }
+
+    [Fact]
+    public void QuickSaveDisplayPathPreservesPathsOutsideTheHomeDirectory()
+    {
+        string path = Path.Combine(Path.GetPathRoot(Path.GetFullPath("."))!, "termcity-saves", "city.json");
+        var session = new GameSession(TestCity.Flat(), path);
+        Assert.Equal(path, session.SaveDisplayPath);
     }
 
     [Fact]
@@ -475,7 +600,8 @@ public class SessionFeatureTests
         var session = files.Session();
         FillHomes(session.Game, 20, people: 5);
         Assert.Equal(100, session.Game.HighestMilestone);
-        Assert.Contains("milestone: 100", session.Message);
+        Assert.Contains("City Grew! Hamlet: 100", session.Message);
+        Assert.Equal("City Grew!", session.Prompt!.Title);
         session.QuickSave();
         Assert.True(session.LoadFrom(session.SavePath));
         session.SetMessage("");
@@ -492,6 +618,7 @@ public class SessionFeatureTests
     [InlineData(100)]
     [InlineData(500)]
     [InlineData(1_000)]
+    [InlineData(2_500)]
     [InlineData(5_000)]
     [InlineData(10_000)]
     public void EveryMilestoneTriggersAtItsExactPopulation(int threshold)

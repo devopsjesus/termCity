@@ -77,7 +77,7 @@ public sealed class RoadVectorLayer
         var map = game.Map;
         _map = map;
         _network = network;
-        _paths = RoadCurves.Extract(map, (x, y) => network.IsConnected(map, x, y));
+        _paths = network.DrawnPaths;
         Revision++;
         return true;
     }

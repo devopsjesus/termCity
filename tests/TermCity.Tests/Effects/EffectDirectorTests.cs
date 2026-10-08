@@ -210,22 +210,48 @@ public class EffectDirectorTests
     }
 
     [Fact]
-    public void MilestonesThrowConfettiAndTaxDayDropsCoins()
+    public void MilestonesThrowConfettiButTaxDaySpawnsNoMoneyAnimations()
     {
         var (game, system, director) = Setup();
+        system.Settings.Celebrations = true;
         game.HighestMilestone = 1000;
         director.Update(0.016);
         Assert.Single(system.Effects.OfType<ConfettiEffect>());
 
         game.LastReport = new WeekReport(5, 120, 0, 0, 0);
         director.Update(0.016);
-        Assert.Single(system.Effects.OfType<CoinsEffect>());
+        Assert.Empty(system.Effects.OfType<CoinsEffect>());
 
         director.Update(0.016);
         Assert.Single(system.Effects.OfType<ConfettiEffect>());
-        Assert.Single(system.Effects.OfType<CoinsEffect>());
+        Assert.Empty(system.Effects.OfType<CoinsEffect>());
         Run(director, 6);
         Assert.Equal(0, system.ActiveEffects);
+    }
+
+    [Fact]
+    public void CelebrationsAreOffByDefaultAndDoNotReplayWhenEnabled()
+    {
+        var (game, system, director) = Setup();
+        Assert.False(system.Settings.Celebrations);
+        game.HighestMilestone = 1000;
+        director.Update(0.016);
+        Assert.Empty(system.Effects.OfType<ConfettiEffect>());
+        system.Settings.Celebrations = true;
+        director.Update(0.016);
+        Assert.Empty(system.Effects.OfType<ConfettiEffect>());
+        game.HighestMilestone = 5000;
+        director.Update(0.016);
+        Assert.Single(system.Effects.OfType<ConfettiEffect>());
+        game.LastReport = new WeekReport(5, 120, 0, 0, 0);
+        director.Update(0.016);
+        system.Settings.Celebrations = false;
+        system.ClearCelebrations();
+        Assert.Empty(system.Effects.OfType<ConfettiEffect>());
+        Assert.Empty(system.Effects.OfType<CoinsEffect>());
+        game.HighestMilestone = 10000;
+        director.Update(0.016);
+        Assert.Empty(system.Effects.OfType<ConfettiEffect>());
     }
 
     [Fact]
@@ -235,6 +261,27 @@ public class EffectDirectorTests
         game.LastReport = new WeekReport(5, 0, 0, 0, 0);
         director.Update(0.016);
         Assert.Empty(system.Effects.OfType<CoinsEffect>());
+    }
+
+    [Fact]
+    public void WeeklyTaxesStillArriveWithoutMoneyAnimations()
+    {
+        var game = TestCity.Flat();
+        var type = game.Map.Content.Buildings.ForZone(ZoneType.Residential)!;
+        game.Map.SetZone(30, 19, ZoneType.Residential);
+        game.Map.SetBuilding(30, 19, type);
+        game.Map.SetHousehold(30, 19, new Household(2, 2, 0));
+        game.Touch();
+        var system = new EffectSystem(1);
+        using var director = new EffectDirector(system) { Ambient = false };
+        director.Attach(game);
+        int money = game.Money;
+        var report = game.AdvanceWeek();
+        director.Update(0.5);
+        Assert.True(report.Income > 0);
+        Assert.Equal(money + report.Income, game.Money);
+        Assert.Equal(0, director.TotalSpawned);
+        Assert.Empty(system.Sprites);
     }
 
     [Fact]
@@ -399,6 +446,58 @@ public class EffectDirectorTests
         director.Ambient = true;
         Run(director, 3);
         Assert.Contains(system.Effects, e => e is AmbientLife);
+    }
+
+    [Fact]
+    public void InitiallyPausedCitiesDoNotSpawnTrafficOrBirdsUntilResumed()
+    {
+        var game = TestCity.Flat();
+        game.Paused = true;
+        var system = new EffectSystem(1);
+        using var director = new EffectDirector(system);
+        director.Attach(game);
+        Run(director, 10);
+        var life = Assert.Single(system.Effects.OfType<AmbientLife>());
+        Assert.True(life.TrafficAndBirdsPaused);
+        Assert.Equal(0, life.Cars);
+        Assert.Equal(0, life.Birds);
+        game.Paused = false;
+        Run(director, 10);
+        Assert.False(life.TrafficAndBirdsPaused);
+        Assert.True(life.Cars > 0 && life.Birds > 0);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void GamePauseFreezesExistingTrafficAndBirdsWithoutClearingThem(bool attachSession)
+    {
+        var (game, system, director) = Setup(ambient: true);
+        using (director)
+        {
+            if (attachSession)
+            {
+                var session = new GameSession(game);
+                session.CenterOn(new Pos(40, 20));
+                director.Attach(session);
+            }
+            Run(director, 10);
+            var life = Assert.Single(system.Effects.OfType<AmbientLife>());
+            Assert.True(life.Cars > 0 && life.Birds > 0);
+            var before = system.Sprites.ToArray();
+            game.Paused = true;
+            for (int i = 0; i < 120; i++)
+            {
+                director.Update(1.0 / 30);
+                Assert.Same(life, Assert.Single(system.Effects.OfType<AmbientLife>()));
+                Assert.True(life.TrafficAndBirdsPaused);
+                Assert.Equal(before, system.Sprites.ToArray());
+            }
+            game.Paused = false;
+            director.Update(0.1);
+            Assert.False(life.TrafficAndBirdsPaused);
+            Assert.False(before.SequenceEqual(system.Sprites));
+        }
     }
 
     [Fact]

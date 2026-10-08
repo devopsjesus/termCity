@@ -28,7 +28,7 @@ internal static class PopulationEngine
     private const double ChildrenGrowUpPerWeek = 1.0 / 624;
     private const double AdultsRetirePerWeek = 1.0 / 1976;
 
-    private static readonly int[] UpgradePopulation = [0, 1_500, 9_000];
+    private static readonly int[] UpgradePopulation = [0, 500, 5_000];
     private static readonly double[] UpgradeLandValue = [0, 38, 60];
     private static readonly double[] DowngradeLandValue = [0, 22, 40];
 
@@ -207,7 +207,7 @@ internal static class PopulationEngine
         var services = game.Services;
         var buildings = map.Content.Buildings;
         double scale = Math.Sqrt(game.Profile.DensityAppetite);
-        int population = game.Stats.Population;
+        int population = Math.Max(game.HighestMilestone, game.Stats.Population);
         bool utilities = services.Power.Ratio >= 0.98 && services.Water.Ratio >= 0.98;
         var grown = new List<int>();
         int fallen = 0;

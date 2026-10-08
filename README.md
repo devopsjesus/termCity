@@ -24,6 +24,18 @@ Replace `godot` with your Godot .NET executable's full path if it is not on `PAT
 On macOS, a typical path is `/Applications/Godot_mono.app/Contents/MacOS/godot`.
 The bundled map font loads directly from the project, without requiring an existing import cache.
 
+On Windows, Compatibility rendering uses **ANGLE / Direct3D11** to reduce native OpenGL resize
+stalls without switching to Vulkan. macOS and Linux retain their existing rendering drivers.
+To explicitly fall back to native OpenGL, put `--rendering-driver opengl3` before the game's `--` separator:
+
+```powershell
+godot --path godot --rendering-driver opengl3 -- --seed 42
+```
+
+Rapid live-edge resizing can still hang the game on some Windows systems, retaining mouse capture
+until another application gains focus. Scripted resize checks do not establish live-drag stability.
+Until this is resolved, avoid rapid edge dragging; native OpenGL is an alternative but may resize slowly.
+
 ### Startup options
 
 Game options follow Godot's `--` separator:
@@ -49,14 +61,52 @@ leave a visible error in the dialog. When loading, the saved map/configuration o
 
 ## How to play
 
-Random cities start paused with a first-city guide. Connect roads to an existing highway or a map
-edge, zone nearby homes with **R**, and resume with **P**. A connected road serves land within
-two cells; water blocks service from spreading across it. Disconnected roads are amber.
+Random cities start paused with a next-step first-city guide. Connect a short track to an existing highway or a map
+edge and zone 20-30 nearby homes with **R**, leaving open service plots. **Before resuming with P**,
+build a road-connected **Woodlot (8,000g)** and **Town Well (4,000g)** through Enter > Services.
+Together they cost 12,000g and 60g/week, leaving 38,000g of the starting 50,000g before road costs.
+A connected road serves land within
+two cells; water blocks service from spreading across it. Disconnected roads are red.
+
+At 10 occupied homes, zone shops and workshops with **C/I**. Put smoky workshops in a separate
+district, not among homes. Save for the largest happiness complaint rather than buying every service
+at once. Budget can reduce local-service funding to 75% (about 84% effectiveness). Keep at least
+8,000g for replacing a lost Woodlot, plus reserves for winter grain, tribute and expansion. Extend
+short tracks when districts run out of room; empty zoned plots can be dezoned with **U** for services.
+
+### City Grew! milestones
+
+These achievements use the **highest population reached**, not the current population. Each new
+city size opens a **City Grew!** dialog that pauses simulation, names everything newly available
+and gives advice. **F7** lists reached and upcoming gates. Falling population does not relock buildings.
+
+| Population | Milestone | Newly available |
+|---|---|---|
+| 100 | Hamlet | Tavern |
+| 500 | Village | Stone Keep, Hospice, Parish Church; level-2 redevelopment |
+| 1,000 | Market Town | Gaol, Infirmary, Monastery, Guildhall |
+| 2,500 | Borough | Castle |
+| 5,000 | City | Cathedral; level-3 redevelopment |
+| 10,000 | Great City | Final achievement; all city-size gates open |
+
+Density still requires suitable land value, supplies, road class and a lord's seat (a motte for
+level 2; a keep and cobbles for level 3). Smaller essential services remain available from the start.
+Service menus show locked buildings and their thresholds; previews and placement enforce the same gates.
+**F6 > Dismiss tip** switches off coaching, **not milestones or unlock gates**.
+**F6 > Enable guide** turns coaching back on. Achievements and the guide preference survive save/load.
+For repeated small/medium/large playthrough results and balance refinements, see
+[the playtest report](docs/PLAYTEST.md).
 
 Press **F6** (or Esc > Guide) for the GUIDE, a tabbed dialog (Start, Zones, Roads, Services, Population, Happiness,
 Economy; Left/Right or a click switches tab) that explains how each thing you place drives the town's population.
 **F1** is only the short table of controls. Placing a zone, road or building makes a soft click-clack keyboard sound
-(it is silenced with **Esc > Music**, and when the window is unfocused).
+(it is silenced with **Esc > Sound**, and when the window is unfocused).
+**Esc > Audio controls** provides separate Music and Sound volume sliders (0-100%) and mute buttons.
+New audio preferences default to 70% music and 60% sound; existing saved volume choices are retained.
+Muting retains each volume setting; the controls are saved between runs. Music continues during
+gameplay pauses and dialogs, but pauses when the window loses focus.
+Population milestones can trigger decorative confetti bursts, not damage or disasters.
+They are off by default; **Esc > Celebrations** toggles them independently of other visual effects.
 
 ### Services, budget and the full city engine
 
@@ -81,8 +131,24 @@ the service mapping and ideas for the future are in [docs/MEDIEVAL.md](docs/MEDI
 
 Roads cost money: a street starts at **500g per cell**, an avenue at **900g**, and a highway at
 **1,500g**. Upgrades charge the difference; hills multiply construction costs by 1.5.
-Road/building menus include registered player-placeable types. Default content has no
-player-placeable service buildings, and the building menu explains this.
+The crown maintains the King's Road, so it has no weekly upkeep; dirt tracks and cobbled roads
+still cost 1g and 2g per cell each week at full funding.
+Road/building menus include registered player-placeable types. Service menus show each building's
+footprint: a Sheriff's Hall occupies 2x1 cells, a Parish Church 2x2, and a Castle 4x3.
+Larger buildings fill their footprint with type-specific ASCII art at normal and close zoom,
+including roofs, walls, church crosses, aqueduct arches and castle battlements.
+Coarse zoom and older single-cell buildings retain the representative building glyph.
+A click previews a whole building; larger selections tile complete, non-overlapping buildings.
+Blocked footprints are skipped as a whole. Cost, upkeep and service supply are per building,
+not per occupied cell; demolition of any part removes the entire building.
+Existing single-cell buildings in older saves keep their original footprint.
+
+Selected area services and smoke/clean-air sources show faint white pixelated range circles,
+including during valid placement previews. Selecting any cell of a building's footprint shows
+its ranges; moving the selection away hides them. Their radii match the simulation's reach and scale with zoom.
+The rings are translucent white; fully opaque glyphs beneath each source's outermost circle
+identify its effects, side by side for multiple effects.
+Terminal cells are taller than they are wide, so a circular cell-distance range appears elliptical.
 
 Placement previews show valid/skipped cells and the price. **Enter/Y** confirms and **Esc/N**
 cancels; insufficient funds leave the city unchanged. **T** starts a straight street line:
@@ -128,13 +194,15 @@ than one cell and any current message.
 About 10% of visible hills, trees, and water animate at 80 BPM (one step every 0.75 seconds).
 Hills move vertically; trees and water move horizontally. The chosen tiles remain stable while
 scrolling, adjacent tiles move oppositely, and only glyphs move: backgrounds and hit targets stay fixed.
-Bridges do not animate. Decoration continues while gameplay is paused and stops while unfocused.
+Bridges do not animate. Terrain decoration continues while gameplay is paused; cars, pedestrians,
+and birds (including wing animation) pause and resume with the game. All decoration stops while unfocused.
 
 ### City name
 
 **Double-click** the city name to rename it, up to **16 characters**. A full-character blinking
 block caret appears only while editing; the text remains right-aligned, with backspacing shifting
-the remaining text toward the stationary cursor. TermCity and the header geometry stay fixed.
+the remaining text toward the stationary cursor. A reserved character cell keeps the full block
+visible at the right edge. TermCity and the header geometry stay fixed.
 
 Delete/Backspace removes characters. Ctrl+A/Command+A selects all. Enter or clicking outside commits;
 Esc cancels. Editing pauses the game and restores its previous clock state afterwards.
@@ -154,6 +222,14 @@ Names are stored in city saves; legacy cities without a name display **New City*
   character-widths** of padding on each side, capped to the window. Inner vertical padding is
   **2 pixels**, in addition to the frame inset. Long content wraps/scrolls and dialogs stay centered.
 - Changing an option keeps that item highlighted, including repeated music toggles.
+- Options are unnumbered. Press the **underlined letter** to select an option: first letters are
+  preferred, with another letter used for collisions. Large menus may show **[Shift]** beside an
+  option; use Shift plus its underlined letter.
+- Dialogs capture keyboard input so gameplay shortcuts cannot run behind them. Text fields retain
+  normal editing and volume sliders retain their native arrow controls.
+- **Esc**, **Cancel**, and **Back** return to the previous menu and restore its highlighted option.
+  Cancelling a menu-launched placement preview returns to the originating submenu; completing it
+  returns to the city. Esc closes a root menu.
 
 ### Music
 
@@ -161,7 +237,7 @@ Quiet **54 BPM Greensleeves** uses an original FM/chiptune arrangement of the tr
 public-domain melody. The opening theme is always the same. Later complete verse/refrain
 phrases modulate to related keys and vary their voicing and arpeggios, rather than replaying a fixed loop.
 
-Use **Esc > Music: ON/OFF** to mute or resume it. Music continues during game pauses/dialogs but
+Use **F10** or **Esc > Music: ON/OFF** to mute or resume it. Music continues during game pauses/dialogs but
 pauses when unfocused. Font and music preferences are remembered in `display.cfg`, separately from
 city saves. No external recording, audio asset, or audio package is required.
 
@@ -190,6 +266,7 @@ city saves. No external recording, audio asset, or audio package is required.
 | Edge scrolling | `E` toggles hover scrolling; selection drags always edge-scroll |
 | Help / font settings | F1 or `?` / F3 |
 | Terminal effects high / low / off | `V` (or Esc > Effects) |
+| Mute / unmute music | F10 |
 | Quick-save / quick-load | F5 / F9 |
 | Guide (tabs: how to play, population, economy) | F6 |
 | Weekly report / growth report | F7 / F8 |
@@ -199,7 +276,8 @@ city saves. No external recording, audio asset, or audio package is required.
 
 Ctrl/Command zoom shortcuts are accepted. Pinch and fractional two-finger gestures preserve the
 pointer's map anchor. Close dialogs or finish name/path editing before using gameplay zoom.
-Esc closes a dialog or cancels an edit/preview instead of opening another menu.
+Esc returns to the previous menu, closes a root dialog, or cancels an edit/preview instead of
+opening another menu.
 
 Zoom levels are **0.25x, 0.5x, 1x, and 2x**. Coarse zoom samples 4x4 or 2x2 map-cell blocks;
 2x doubles both tile and glyph dimensions, preserving the normal ratio and one-cell selection.
@@ -251,6 +329,8 @@ Older medium-sized San Francisco saves load at their original dimensions; restar
 **F5** writes a quick-save; **F9** requests a load. Unsaved progress is guarded before loading,
 starting another city, or quitting: save and continue, continue without saving, or cancel.
 A failed save prevents the guarded action.
+The quick-save path stays at the **bottom right**, on the same row as cell information, rather than
+inside confirmation dialogs. Long text is clipped to keep both sides visible; hover for the full path.
 
 Godot stores files in its `TermCityGodot` user-data directory:
 

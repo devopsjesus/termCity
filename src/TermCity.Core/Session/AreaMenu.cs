@@ -12,7 +12,7 @@ public sealed partial class GameSession
         ["ROAD", "ACTION", TableColumn.Right("CELLS"), TableColumn.Right("BLOCKED"), TableColumn.Right("COST")];
 
     private static readonly IReadOnlyList<TableColumn> BuildingMenuColumns =
-        ["BUILDING", TableColumn.Right("CELLS"), TableColumn.Right("COST"), "NEEDS"];
+        ["BUILDING", TableColumn.Right("CELLS"), TableColumn.Right("COST"), TableColumn.Right("UPKEEP/WK"), "NEEDS"];
 
     public void ShowAreaMenu()
     {
@@ -25,16 +25,18 @@ public sealed partial class GameSession
             new("Demolish", () => { ClosePrompt(); PreviewDemolish(); }, ["Clear the area, free of charge"]),
             new("Deselect", () => { ClosePrompt(); ClearSelection(); }, ["Drop the selection"]),
             new("City menu", ShowSessionMenu, ["Save, load, budget, guide"]),
-            new("Back", ClosePrompt, ["Return to the city"]),
+            new("Back", CancelPrompt, ["Return to the previous menu"]),
         ], columns: AreaMenuColumns);
     }
 
     private void ShowZoneMenu()
     {
         var choices = Zones.Placeable.Select(zone => new SessionChoice(
-            Zones.Get(zone).Name, () => { ClosePrompt(); Zone(zone); }, ["free", ZoneBlurb(zone)])).ToList();
+            Zones.Get(zone).Name, () => { ClosePrompt(); Zone(zone); }, ["free", ZoneBlurb(zone)],
+            new(Zones.Get(zone).EmptyGlyph, ZoneBlurb(zone),
+                $"Zoning is free. Invites buildings to grow within {Game.Config.RoadServiceReach} cells of a road; it does not build immediately."))).ToList();
         choices.Add(new("Dezone", () => { ClosePrompt(); Dezone(); }, ["free", "Buildings leave over 2 to 3 weeks"]));
-        choices.Add(new("Back", ShowAreaMenu, ["", "Return to the area menu"]));
+        choices.Add(new("Back", CancelPrompt, ["", "Return to the area menu"]));
         ShowPrompt("Zone selected area", "Zoning is free. Connect roads for growth.", choices, columns: ZoneMenuColumns);
     }
 
@@ -53,11 +55,12 @@ public sealed partial class GameSession
         {
             var quote = Game.QuoteRoad(ActiveArea, road);
             choices.Add(new(road.Name, () => { ClosePrompt(); PreviewRoad(road); },
-                ["Fill area", quote.Cells.ToString(), quote.Skipped.ToString(), Fmt.Money(quote.Cost)]));
-            choices.Add(new(road.Name, () => { ClosePrompt(); BeginRoadLine(road); }, ["Draw line", "", "", ""]));
+                ["Fill area", quote.Cells.ToString(), quote.Skipped.ToString(), Fmt.Money(quote.Cost)], ChoiceHelpContent.Road(Game, road, false)));
+            choices.Add(new(road.Name, () => { ClosePrompt(); BeginRoadLine(road); }, ["Draw line", "", "", ""],
+                ChoiceHelpContent.Road(Game, road, true)));
         }
 
-        choices.Add(new("Back", ShowAreaMenu, ["Return to the area menu", "", "", ""]));
+        choices.Add(new("Back", CancelPrompt, ["Return to the area menu", "", "", ""]));
         ShowPrompt("Roads", "Choose a road type, then fill the area or draw a straight line.", choices, columns: RoadMenuColumns);
     }
 
@@ -66,13 +69,20 @@ public sealed partial class GameSession
         var choices = Game.Map.Content.Buildings.Where(b => b.PlayerPlaceable).Select(building =>
         {
             var quote = Game.QuoteBuilding(building, ActiveArea);
-            string needs = building.MinPopulation > Game.Stats.Population ? $"{building.MinPopulation:N0} souls" : string.Empty;
-            return new SessionChoice(building.Name, () => { ClosePrompt(); PreviewBuilding(building); },
-                [quote.Cells.ToString(), Fmt.Money(quote.Cost), needs]);
+            bool unlocked = CityProgression.IsUnlocked(Game, building);
+            string needs = $"{building.Width}x{building.Height}" +
+                (!unlocked ? $"; LOCKED {CityProgression.RequiredPopulation(building):N0} souls" : string.Empty);
+            return new SessionChoice(building.Name, () =>
+            {
+                if (CityProgression.IsUnlocked(Game, building)) ClosePrompt();
+                PreviewBuilding(building);
+            }, [unlocked ? quote.Cells.ToString() : "-", unlocked ? Fmt.Money(quote.Cost) : Fmt.Money(building.Cost),
+                Fmt.Money(Game.Config.FullRules ? (int)Math.Round(building.WeeklyUpkeep * Game.Budget.Funding(building.Service)) : 0), needs],
+                ChoiceHelpContent.Building(Game, building));
         }).ToList();
         bool empty = choices.Count == 0;
-        choices.Add(new("Back", ShowAreaMenu, ["", "", "Return to the area menu"]));
-        ShowPrompt("Service buildings", empty ? "No service buildings are registered." : "Choose a building to preview.", choices,
+        choices.Add(new("Back", CancelPrompt, ["", "", "", "Return to the area menu"]));
+        ShowPrompt("Service buildings", empty ? "No service buildings are registered." : "Choose a building, then click or press Enter to place it.", choices,
             columns: BuildingMenuColumns);
     }
 }

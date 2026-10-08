@@ -506,7 +506,22 @@ public sealed class CityGame
             MapVersion++;
         }
 
+        UpdateMilestones();
         Changed?.Invoke();
+    }
+
+    private void UpdateMilestones()
+    {
+        int population = Map.ZoneCells(ZoneType.Residential)
+            .Where(i => Map.BuildingLayer[i] != 0).Sum(i => Map.HouseholdLayer[i].Total) +
+            Map.ZoneRemovals.Where(r => r.Value.Zone == ZoneType.Residential).Sum(r => Map.HouseholdLayer[r.Key].Total);
+        var reached = CityProgression.Milestones
+            .Where(m => m.Population > HighestMilestone && m.Population <= population).ToArray();
+        if (reached.Length > 0)
+        {
+            HighestMilestone = reached[^1].Population;
+            Report(new CityEvent(Week, EventKind.Milestone, CityProgression.Announcement(this, reached), [], Bad: false));
+        }
     }
 
     // ---- Time -------------------------------------------------------------------------------------------------
@@ -573,6 +588,7 @@ public sealed class CityGame
         _weekFactories += factories;
         Day++;
         int removed = RemoveDezonedBuildings((long)Week * Config.DaysPerWeek + Day);
+        UpdateMilestones();
 
         if (Day < Config.DaysPerWeek)
         {
@@ -760,7 +776,7 @@ public sealed class CityGame
         var candidates = new List<int>();
         foreach (int i in Map.ZoneCells(zone))
         {
-            if (Map.BuildingLayer[i] == 0 && network.IsServed(i))
+            if (Map.BuildingLayer[i] == 0 && network.IsServed(i) && !network.RoadOverlapsCell(i))
             {
                 candidates.Add(i);
             }
@@ -809,11 +825,14 @@ public sealed class CityGame
         return (int)Math.Round(Config.RoadCostPerCell * Math.Max(0, type.CostMultiplier - existing) * terrain);
     }
 
-    public int BuildingCostAt(BuildingType type, int x, int y) => (int)Math.Round(type.Cost * Map.TerrainAt(x, y).BuildCostModifier);
+    public int BuildingCostAt(BuildingType type, int x, int y) =>
+        (int)Math.Round(type.Cost * new CellRect(x, y, type.Width, type.Height).Cells()
+            .Average(p => Map.TerrainAt(p.X, p.Y).BuildCostModifier));
 
     public bool CanBuildOn(int x, int y) =>
         Map.InBounds(x, y) && Map.TerrainAt(x, y).Buildable && !Map.HasRoad(x, y) &&
-        Map.ZoneAt(x, y) == ZoneType.None && Map.BuildingAt(x, y) is null;
+        Map.ZoneAt(x, y) == ZoneType.None && Map.BuildingAt(x, y) is null &&
+        !Network.RoadOverlapsCell(Map.Index(x, y));
 
     /// <summary>A road can go on open, unbuilt ground, or replace a smaller road type (an upgrade); see <see cref="RoadRules"/>.</summary>
     public bool CanPlaceRoad(int x, int y, RoadType? type = null) => PlanRoad([new Pos(x, y)], type).Count == 1;
@@ -840,11 +859,98 @@ public sealed class CityGame
     }
 
     /// <summary>Open ground, and for a pump, the shore.</summary>
-    public bool CanPlaceBuilding(BuildingType type, int x, int y) =>
-        CanBuildOn(x, y) && (!type.RequiresWaterNearby || Map.NearWater(x, y, 1));
+    public bool CanPlaceBuilding(BuildingType type, int x, int y)
+    {
+        var footprint = new CellRect(x, y, type.Width, type.Height);
+        return CityProgression.IsUnlocked(this, type) && footprint.Cells().All(p => CanBuildOn(p.X, p.Y)) &&
+            (!type.RequiresWaterNearby || footprint.Cells().Any(p => Map.NearWater(p.X, p.Y, 1)));
+    }
 
-    public Quote QuoteBuilding(BuildingType type, CellRect area) =>
-        QuoteCells(area, (x, y) => CanPlaceBuilding(type, x, y), (x, y) => BuildingCostAt(type, x, y));
+    public string? BuildingPlacementError(BuildingType type, int x, int y)
+    {
+        if (!type.PlayerPlaceable)
+        {
+            return $"{type.Name} cannot be placed by the player.";
+        }
+        if (!CityProgression.IsUnlocked(this, type))
+        {
+            return $"{type.Name} is locked until City Grew! at {CityProgression.RequiredPopulation(type):N0} souls.";
+        }
+
+        var footprint = new CellRect(x, y, type.Width, type.Height);
+        if (footprint.Cells().Any(p => !Map.InBounds(p)))
+        {
+            return $"Move the {type.Name} fully inside the map.";
+        }
+        if (footprint.Cells().Any(p => !Map.TerrainAt(p.X, p.Y).Buildable))
+        {
+            return $"{type.Name} needs buildable ground.";
+        }
+        if (footprint.Cells().Any(p => Map.HasRoad(p.X, p.Y)))
+        {
+            return $"A road blocks the {type.Name}; choose open ground.";
+        }
+        if (footprint.Cells().Any(p => Network.RoadOverlapsCell(Map.Index(p.X, p.Y))))
+        {
+            return $"An angled road crosses part of the {type.Name}'s footprint; choose whole, clear cells.";
+        }
+        if (footprint.Cells().Any(p => Map.ZoneAt(p.X, p.Y) != ZoneType.None))
+        {
+            return $"A zone blocks the {type.Name}; dezone it or choose open ground.";
+        }
+        if (footprint.Cells().Any(p => Map.BuildingAt(p.X, p.Y) is not null))
+        {
+            return $"Another building blocks the {type.Name}; choose open ground.";
+        }
+        if (type.RequiresWaterNearby && !footprint.Cells().Any(p => Map.NearWater(p.X, p.Y, 1)))
+        {
+            return $"{type.Name} must be placed beside water.";
+        }
+        if (Money <= 0)
+        {
+            return Config.FullRules
+                ? "You are out of gold: borrow from the moneylenders or wait for the tithes before building."
+                : "You are out of gold: no more buildings can be placed.";
+        }
+
+        int cost = BuildingCostAt(type, x, y);
+        return cost > Money
+            ? $"Not enough gold: {type.Name} costs {Fmt.Money(cost)} but you have {Fmt.Money(Money)}."
+            : null;
+    }
+
+    public string? BuildingPlacementWarning(BuildingType type, CellRect area)
+    {
+        if (!Config.FullRules || type.Service == ServiceKind.None ||
+            area.Cells().Any(p => Map.InBounds(p) && Network.IsServed(Map.Index(p.X, p.Y))))
+        {
+            return null;
+        }
+
+        return $"{type.Name} will be inactive: connect its footprint to an edge-connected road. " +
+            $"It still costs {Fmt.Money((int)Math.Round(type.WeeklyUpkeep * Budget.Funding(type.Service)))}/week.";
+    }
+
+    public CellRect BuildingPlacementArea(BuildingType type, CellRect area) =>
+        new(area.X, area.Y, Math.Max(area.Width, type.Width), Math.Max(area.Height, type.Height));
+
+    public IReadOnlyList<CellRect> PlanBuildings(BuildingType type, CellRect area)
+    {
+        area = BuildingPlacementArea(type, area);
+        var plan = new List<CellRect>();
+        for (int y = area.Y; y + type.Height - 1 <= area.Bottom; y += type.Height)
+            for (int x = area.X; x + type.Width - 1 <= area.Right; x += type.Width)
+                if (CanPlaceBuilding(type, x, y)) plan.Add(new(x, y, type.Width, type.Height));
+        return plan;
+    }
+
+    public Quote QuoteBuilding(BuildingType type, CellRect area)
+    {
+        var plan = PlanBuildings(type, area);
+        int cells = plan.Sum(p => p.Area);
+        return new(cells, plan.Sum(p => BuildingCostAt(type, p.X, p.Y)),
+            BuildingPlacementArea(type, area).Cells().Count(Map.InBounds) - cells);
+    }
 
     private Quote QuoteCells(CellRect area, Func<int, int, bool> valid, Func<int, int, int> cost) =>
         QuoteCells(area.Cells(), valid, cost);
@@ -910,9 +1016,9 @@ public sealed class CityGame
             return ActionResult.Fail($"{type.Name} cannot be placed by the player.");
         }
 
-        if (Stats.Population < type.MinPopulation)
+        if (!CityProgression.IsUnlocked(this, type))
         {
-            return ActionResult.Fail($"A {type.Name} needs a town of {type.MinPopulation:N0} souls; you have {Stats.Population:N0}.");
+            return ActionResult.Fail($"{type.Name} is locked until City Grew! at {CityProgression.RequiredPopulation(type):N0} souls; you have {Stats.Population:N0}.");
         }
 
         var quote = QuoteBuilding(type, area);
@@ -922,20 +1028,12 @@ public sealed class CityGame
             return check;
         }
 
-        foreach (var p in area.Cells())
-        {
-            if (!CanPlaceBuilding(type, p.X, p.Y))
-            {
-                continue;
-            }
-
-            Map.SetFeature(p.X, p.Y, null);
-            Map.SetBuilding(p.X, p.Y, type);
-        }
+        var plan = PlanBuildings(type, area);
+        foreach (var footprint in plan) Map.SetBuildingFootprint(type, footprint);
 
         Money -= quote.Cost;
         Notify(roadsChanged: false, servicesChanged: true);
-        return ActionResult.Ok($"Built {quote.Cells} {type.Name}(s) for {Fmt.Money(quote.Cost)}." + SkippedNote(quote), quote.Cost, quote.Cells);
+        return ActionResult.Ok($"Built {plan.Count} {type.Name}(s), occupying {quote.Cells} cells, for {Fmt.Money(quote.Cost)}." + SkippedNote(quote), quote.Cost, quote.Cells);
     }
 
     private ActionResult? CheckSpend(Quote quote, string what)
@@ -1041,23 +1139,29 @@ public sealed class CityGame
     }
 
     /// <summary>Clears roads, zones, buildings and natural features. Free, no refunds.</summary>
-    public ActionResult Demolish(CellRect area)
+    public IReadOnlySet<Pos> DemolitionCells(IEnumerable<Pos> cells)
     {
+        var targets = new HashSet<Pos>();
+        foreach (var p in cells.Where(Map.InBounds))
+            foreach (var cell in Map.BuildingFootprintAt(p.X, p.Y).Cells()) targets.Add(cell);
+        return targets;
+    }
+
+    public ActionResult Demolish(CellRect area) => Demolish(area.Cells());
+
+    public ActionResult Demolish(IEnumerable<Pos> cells)
+    {
+        var targets = DemolitionCells(cells);
         int changed = 0;
         bool roadsRemoved = false;
-        foreach (var p in area.Cells())
+        // Count first: clearing any part of a service building removes its entire footprint.
+        foreach (var p in targets)
         {
-            if (!Map.InBounds(p))
-            {
-                continue;
-            }
-
             bool hadRoad = Map.HasRoad(p.X, p.Y);
             bool something = hadRoad || Map.ZoneAt(p.X, p.Y) != ZoneType.None ||
                              Map.BuildingAt(p.X, p.Y) is not null || Map.FeatureAt(p.X, p.Y) is not null;
             if (something)
             {
-                Map.ClearCell(p.X, p.Y);
                 roadsRemoved |= hadRoad;
                 changed++;
             }
@@ -1068,6 +1172,7 @@ public sealed class CityGame
             return ActionResult.Fail("Nothing to demolish here.");
         }
 
+        foreach (var p in targets) Map.ClearCell(p.X, p.Y);
         Notify(roadsChanged: roadsRemoved, servicesChanged: true);
         return ActionResult.Ok($"Demolished {changed} cell(s).", 0, changed);
     }

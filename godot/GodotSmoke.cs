@@ -1,4 +1,5 @@
 using TermCity.Core.Roads;
+using TermCity.Core.Effects;
 using Godot;
 using TermCity.Core.Rendering;
 using System.Diagnostics;
@@ -20,20 +21,27 @@ internal static class GodotSmoke
             await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
             await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
         }
-        async Task KeyEvent(Key code, bool ctrl = false, uint unicode = 0, bool meta = false, Key physical = Key.None)
+        async Task KeyEvent(Key code, bool ctrl = false, uint unicode = 0, bool meta = false, Key physical = Key.None,
+            bool shift = false)
         {
             Input.ParseInputEvent(new InputEventKey { Keycode = code, PhysicalKeycode = physical,
-                Pressed = true, CtrlPressed = ctrl, MetaPressed = meta, Unicode = unicode });
+                Pressed = true, CtrlPressed = ctrl, MetaPressed = meta, Unicode = unicode, ShiftPressed = shift });
             Input.ParseInputEvent(new InputEventKey { Keycode = code, PhysicalKeycode = physical,
-                Pressed = false, CtrlPressed = ctrl, MetaPressed = meta, Unicode = unicode });
+                Pressed = false, CtrlPressed = ctrl, MetaPressed = meta, Unicode = unicode, ShiftPressed = shift });
             await Frames();
         }
         await Frames();
         host.GetWindow().EmitSignal(Window.SignalName.FocusEntered);
-        Require(host.AdvanceMusicPhrase() && host.MusicPhraseCount == 2,
-            "Music did not transition from the fixed theme to a newly synthesized phrase.");
+        Require(host.MusicVolume == Main.DefaultMusicVolume && host.SoundVolume == Main.DefaultSoundVolume &&
+            host.MusicVolume < 100 && host.SoundVolume < 100, "Default audio levels were not reduced.");
+        Require(!host.CelebrationsEnabled && !host.Effects.Settings.Celebrations,
+            "Celebration bursts must be off by default.");
+        int skips = host.MusicSkips;
+        // Longer than the entire buffer: the render loop cannot help during this stall.
+        Thread.Sleep(1500);
+        Require(host.MusicSkips == skips, "Music starved while the main thread was stalled.");
         Require(host.GetNode<AudioStreamPlayer>("CityMusic").Playing,
-            "Music player stopped when the phrase changed.");
+            "Music player stopped while the main thread was stalled.");
         IEnumerable<Node> Descendants(Node node)
         {
             foreach (var child in node.GetChildren())
@@ -154,8 +162,36 @@ internal static class GodotSmoke
             nameLabel.GetParent().GetParent().GetParent<Control>().GetGlobalRect() == headerBounds &&
             editor.Alignment == HorizontalAlignment.Right &&
             Math.Abs(editor.GetGlobalRect().End.X - nameLabel.GetGlobalRect().End.X) < 1 &&
-            editor.GetThemeConstant("caret_width") >= characterWidth,
+            editor.GetThemeConstant("caret_width") >= characterWidth &&
+            editor.GetThemeStylebox("normal").GetMargin(Side.Right) >= characterWidth &&
+            editor.GetThemeStylebox("focus").GetMargin(Side.Right) >= characterWidth,
             "Renaming must pause and keep its right-aligned block caret without changing title/header geometry.");
+        if (DisplayServer.GetName() != "headless")
+        {
+            editor.CaretBlink = false;
+            await Frames();
+            await host.ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+            using var image = host.GetViewport().GetTexture().GetImage();
+            var scale = new Vector2(image.GetWidth() / host.Size.X, image.GetHeight() / host.Size.Y);
+            float caretWidth = editor.GetThemeConstant("caret_width");
+            float caretHeight = font.GetHeight(nameSize);
+            var caretCell = new Rect2(editor.GlobalPosition +
+                new Vector2(editor.Size.X - caretWidth + 2, (editor.Size.Y - caretHeight) / 2 + 2),
+                new Vector2(caretWidth - 4, caretHeight - 4));
+            var caretColor = editor.GetThemeColor("caret_color");
+            int solid = 0, pixels = 0;
+            for (int y = (int)Math.Ceiling(caretCell.Position.Y * scale.Y); y < caretCell.End.Y * scale.Y; y++)
+                for (int x = (int)Math.Ceiling(caretCell.Position.X * scale.X); x < caretCell.End.X * scale.X; x++)
+                {
+                    var pixel = image.GetPixel(x, y);
+                    if (Math.Abs(pixel.R - caretColor.R) < 0.02f &&
+                        Math.Abs(pixel.G - caretColor.G) < 0.02f && Math.Abs(pixel.B - caretColor.B) < 0.02f) solid++;
+                    pixels++;
+                }
+            Require(pixels > 0 && solid >= pixels * 0.95,
+                $"Rename caret is not a solid full-cell block: {solid}/{pixels} pixels.");
+            editor.CaretBlink = true;
+        }
         await KeyEvent(Key.A, ctrl: true);
         int mapVersionBeforeName = session.Game.MapVersion;
         foreach (char character in "Rivertown") await KeyEvent(Key.None, unicode: character);
@@ -191,6 +227,32 @@ internal static class GodotSmoke
         session.UpdateDrag(new Pos(14, 12));
         session.EndSelection();
         var status = Descendants(host).OfType<Label>().Single(l => l.Name == "Status");
+        var savePathLabel = Descendants(host).OfType<Label>().Single(l => l.Name == "QuickSavePath");
+        void CheckStatusPath()
+        {
+            if (session.Prompt?.IsSaveDialog != true)
+            {
+                Require(!savePathLabel.IsVisibleInTree(), "Quick-save path must be hidden outside save dialogs.");
+                return;
+            }
+            Require(savePathLabel.IsVisibleInTree() &&
+                savePathLabel.Text == $"Quick-save: {session.SaveDisplayPath}" &&
+                savePathLabel.TooltipText == Path.GetFullPath(session.SavePath) &&
+                savePathLabel.HorizontalAlignment == HorizontalAlignment.Right &&
+                savePathLabel.GetParent() == status.GetParent() &&
+                Math.Abs(savePathLabel.GlobalPosition.Y - status.GlobalPosition.Y) < 1 &&
+                Math.Abs(savePathLabel.GetGlobalRect().End.X - host.Size.X) < 1 &&
+                Math.Abs(savePathLabel.GetParent<Control>().GetGlobalRect().End.Y - host.Size.Y) < 1 &&
+                savePathLabel.GetParent<Control>().GetGlobalRect().Encloses(savePathLabel.GetGlobalRect()) &&
+                status.GetGlobalRect().End.X <= savePathLabel.GlobalPosition.X &&
+                savePathLabel.Size.X <= host.Size.X / 2 + 1 &&
+                status.Size.X >= host.Size.X / 2 - 8,
+                $"Quick-save path must remain at the bottom right beside cell information without overlap or overflow. " +
+                $"Window={host.Size}, status={status.GetGlobalRect()}, path={savePathLabel.GetGlobalRect()}, " +
+                $"row={savePathLabel.GetParent<Control>().GetGlobalRect()}, text='{savePathLabel.Text}', " +
+                $"tooltip='{savePathLabel.TooltipText}'.");
+        }
+        Require(!savePathLabel.IsVisibleInTree(), "Quick-save path must be hidden during gameplay.");
         Require(status.Text.StartsWith(CellInspector.Summary(session.Game, session.Cursor), StringComparison.Ordinal) &&
             status.Text.Contains("Selection 3x1 (3 cells)", StringComparison.Ordinal),
             "Multi-cell selection details are not beside the cell details in the bottom status line.");
@@ -198,17 +260,39 @@ internal static class GodotSmoke
         session.PlaceCursor(originalCursor);
 
         await KeyEvent(Key.F10);
-        Require(session.Prompt is null, "F10 must no longer open the Godot city menu.");
+        Require(session.Prompt is null && !host.MusicEnabled && host.SoundEnabled &&
+            host.GetNode<AudioStreamPlayer>("CityMusic").StreamPaused &&
+            host.MusicVolume == Main.DefaultMusicVolume && host.SoundVolume == Main.DefaultSoundVolume,
+            "F10 must mute only music without changing volumes or opening a menu.");
+        await KeyEvent(Key.F10);
+        Require(host.MusicEnabled && !host.GetNode<AudioStreamPlayer>("CityMusic").StreamPaused,
+            "F10 did not unmute music.");
         await KeyEvent(Key.Escape);
         Require(session.Prompt?.Title == "City menu", "Native Esc did not open the menu.");
+        Require(!savePathLabel.IsVisibleInTree(), "Quick-save path must be hidden in the city menu.");
+        session.RequestQuit();
+        await Frames();
+        Require(session.Prompt is { Title: "Quit", Footer: null }, "Save confirmation still includes the quick-save path.");
+        CheckStatusPath();
+        var pathPointer = savePathLabel.GetGlobalRect().GetCenter();
+        host.GetViewport().PushInput(new InputEventMouseMotion
+        {
+            Position = pathPointer, GlobalPosition = pathPointer,
+        }, true);
+        await Frames();
+        var saveDialog = Descendants(host).OfType<PanelContainer>().Single(panel => panel.Name == "CityDialog");
+        Require(saveDialog.GetParent<Control>().TooltipText == savePathLabel.TooltipText,
+            "The quick-save path tooltip is blocked while a save confirmation is open.");
+        await KeyEvent(Key.Escape);
+        Require(!savePathLabel.IsVisibleInTree(), "Quick-save path must hide when the save dialog closes.");
         var cityMenu = Descendants(host).OfType<PanelContainer>().Single(p => p.Name == "CityDialog" && p.IsVisibleInTree());
         float largeMenuHeight = cityMenu.Size.Y;
-        var menuButtons = Descendants(cityMenu).OfType<Button>().ToArray();
+        var menuButtons = Descendants(cityMenu).OfType<Button>().Where(b => b.IsVisibleInTree()).ToArray();
         Require(menuButtons.All(b => b.Alignment == HorizontalAlignment.Left),
             "Menu choices must be left-aligned.");
         float menuCharacter = host.Theme.DefaultFont.GetStringSize("M", fontSize: host.Theme.DefaultFontSize).X;
         var menuTable = TextTable.ForPrompt(session.Prompt!)!.Value;
-        float longestMenuLabel = menuTable.Rows.Append(menuTable.Header).Select(row => "00. " + row)
+        float longestMenuLabel = menuTable.Rows.Append(menuTable.Header)
             .Append(session.Prompt.Title)
             .Max(text => host.Theme.DefaultFont.GetStringSize(text, fontSize: host.Theme.DefaultFontSize).X);
         float expectedMenuWidth = Math.Min(longestMenuLabel + menuCharacter * 10 + host.GetThemeStylebox("normal", "Button").GetMargin(Side.Left) * 2, host.Size.X - 64) + 24;
@@ -226,6 +310,19 @@ internal static class GodotSmoke
             "Menu must have two pixels of inner top/bottom padding.");
         Require(Math.Abs(cityMenu.GetGlobalRect().GetCenter().Y - host.Size.Y / 2) < 1,
             "Menu must remain vertically centered after fitting its content.");
+        Require(menuButtons.All(button => button is MnemonicButton mnemonic &&
+            mnemonic.UnderlineIndex >= 0 && mnemonic.UnderlineIndex < mnemonic.Text.Length &&
+            !char.IsDigit(mnemonic.Text[0])), "Menu options must have underlined letters instead of number prefixes.");
+        var trappedMenu = session.Prompt;
+        var trappedCursor = session.Cursor;
+        int trappedZoom = session.ZoomLevel;
+        bool trappedDebug = session.InputDebug;
+        await KeyEvent(Key.Key9);
+        await KeyEvent(Key.F12);
+        await KeyEvent(Key.Equal, ctrl: true);
+        Require(ReferenceEquals(session.Prompt, trappedMenu) && session.Cursor == trappedCursor &&
+            session.ZoomLevel == trappedZoom && session.InputDebug == trappedDebug,
+            "Unassigned menu keys leaked into gameplay or activated numbered options.");
         int musicChoice = session.Prompt!.Choices.ToList().FindIndex(c => c.Label == "Music");
         Require(musicChoice >= 0, "City menu is missing the music toggle.");
         for (int item = 0; item < musicChoice; item++) await KeyEvent(Key.Down);
@@ -249,6 +346,63 @@ internal static class GodotSmoke
             clickedLabel.Contains("Music", StringComparison.Ordinal) && clickedLabel.EndsWith(" OFF", StringComparison.Ordinal),
             "Clicking a changed music item did not keep its highlight.");
         await KeyEvent(Key.Enter);
+        Require(host.SoundEnabled, "Muting music also muted placement sounds.");
+        int celebrationsChoice = session.Prompt!.Choices.ToList().FindIndex(c => c.Label == "Celebrations");
+        Require(celebrationsChoice >= 0, "City menu is missing the celebrations toggle.");
+        session.SelectPrompt(celebrationsChoice);
+        Require(host.CelebrationsEnabled && host.Effects.Settings.Celebrations, "Celebrations toggle did not enable bursts.");
+        session.SelectPrompt(celebrationsChoice);
+        Require(!host.CelebrationsEnabled && !host.Effects.Settings.Celebrations, "Celebrations toggle did not disable bursts.");
+        int audioChoice = session.Prompt!.Choices.ToList().FindIndex(c => c.Label == "Audio controls");
+        Require(audioChoice >= 0, "City menu is missing the audio controls.");
+        session.SelectPrompt(audioChoice);
+        await Frames();
+        var musicVolume = Descendants(host).OfType<HSlider>().Single(s => s.Name == "MusicVolume");
+        var soundVolume = Descendants(host).OfType<HSlider>().Single(s => s.Name == "SoundVolume");
+        var musicMute = Descendants(host).OfType<Button>().Single(b => b.Name == "MusicMute");
+        var soundMute = Descendants(host).OfType<Button>().Single(b => b.Name == "SoundMute");
+        var audioModal = Descendants(host).OfType<PanelContainer>()
+            .Single(p => p.Name == "CityDialog" && p.IsVisibleInTree());
+        Require(audioModal.Position.X >= 0 && audioModal.Position.Y >= 0 &&
+            audioModal.Position.X + audioModal.Size.X <= host.Size.X &&
+            audioModal.Position.Y + audioModal.Size.Y <= host.Size.Y,
+            "Audio controls extend outside the window.");
+        Require(audioModal.GetGlobalRect().Encloses(musicMute.GetGlobalRect()) &&
+            audioModal.GetGlobalRect().Encloses(soundMute.GetGlobalRect()),
+            "Audio mute buttons are clipped.");
+        musicVolume.Value = 37;
+        soundVolume.Value = 62;
+        Require(host.MusicVolume == 37 && host.SoundVolume == 62, "Independent audio sliders did not update volume.");
+        musicVolume.GrabFocus();
+        await KeyEvent(Key.Left);
+        Require(host.MusicVolume == 36 && host.SoundVolume == 62,
+            $"Keyboard volume adjustment affected the wrong channel: music={host.MusicVolume}, sound={host.SoundVolume}, focus={host.GetViewport().GuiGetFocusOwner()}.");
+        musicMute.EmitSignal(Button.SignalName.Pressed);
+        Require(!host.MusicEnabled && host.SoundEnabled && musicMute.Text == "Unmute",
+            "Music mute also disabled sounds or did not update its button.");
+        musicMute.EmitSignal(Button.SignalName.Pressed);
+        soundMute.EmitSignal(Button.SignalName.Pressed);
+        Require(host.MusicEnabled && !host.SoundEnabled && soundMute.Text == "Unmute",
+            "Sound mute also disabled music or did not update its button.");
+        soundMute.EmitSignal(Button.SignalName.Pressed);
+        Require(host.MusicVolume == 36 && host.SoundVolume == 62, "Mute changed the saved volume levels.");
+        await KeyEvent(Key.M);
+        Require(!host.MusicEnabled && host.SoundEnabled, "Music mute mnemonic affected the wrong channel.");
+        await KeyEvent(Key.M);
+        await KeyEvent(Key.U);
+        Require(host.MusicEnabled && !host.SoundEnabled, "Sound mute mnemonic affected the wrong channel.");
+        await KeyEvent(Key.U);
+        musicVolume.Value = 0;
+        Require(host.MusicEnabled && host.GetNode<AudioStreamPlayer>("CityMusic").StreamPaused,
+            "Zero music volume must be silent without changing the mute preference.");
+        musicVolume.Value = Main.DefaultMusicVolume;
+        soundVolume.Value = Main.DefaultSoundVolume;
+        Require(!host.GetNode<AudioStreamPlayer>("CityMusic").StreamPaused, "Raising zero volume did not resume music.");
+        await KeyEvent(Key.Escape);
+        Require(session.Prompt?.Title == "City menu" &&
+            host.GetViewport().GuiGetFocusOwner() is Button { Text: var restoredAudio } &&
+            restoredAudio.StartsWith("Audio controls", StringComparison.Ordinal),
+            "Cancelling audio controls did not restore the parent menu and focused option.");
         await KeyEvent(Key.Escape);
         await KeyEvent(Key.Escape);
         await Frames();
@@ -271,7 +425,9 @@ internal static class GodotSmoke
         Require(Descendants(host).OfType<Label>().Any(l => l.IsVisibleInTree() && l.Text.StartsWith("Load failed:", StringComparison.Ordinal)),
             "Load failure is hidden behind the modal.");
         await KeyEvent(Key.Escape);
-        Require(session.Prompt is null, "Native Escape did not dismiss the path dialog.");
+        Require(session.Prompt?.Title == "Load city", "Native Escape did not return from the path dialog to the load menu.");
+        await KeyEvent(Key.Escape);
+        Require(session.Prompt is null, "Native Escape did not close the root load menu.");
         string beforeCancel = SaveGameStore.Serialize(session.Game);
         session.PreviewDemolish();
         await Frames();
@@ -282,9 +438,80 @@ internal static class GodotSmoke
         Require(session.Preview is null, "Preview Enter did not select the focused cancel button.");
         Require(beforeCancel == SaveGameStore.Serialize(session.Game), "Focused cancel changed the city.");
         session.ShowSessionMenu();
-        await KeyEvent(Key.Key9);
-        Require(session.Prompt?.Title == "Weekly report and milestones", "Numbered menu shortcuts failed.");
+        int reportChoice = session.Prompt!.Choices.ToList().FindIndex(choice => choice.Label == "Report");
+        var reportShortcut = session.Prompt.Shortcuts[reportChoice];
+        await KeyEvent((Key)reportShortcut.Letter, shift: reportShortcut.Shift);
+        Require(session.Prompt?.Title == "Weekly report and milestones", "Underlined menu shortcut failed.");
         await KeyEvent(Key.Escape);
+        Require(session.Prompt?.Title == "City menu" &&
+            host.GetViewport().GuiGetFocusOwner() is Button { Text: var restoredReport } &&
+            restoredReport.StartsWith("Report", StringComparison.Ordinal),
+            "Cancelling the report did not restore its parent and focus.");
+        await KeyEvent(Key.Escape);
+        int shiftedChoice = -1;
+        session.ShowAreaMenu();
+        session.SelectPrompt(2);
+        await Frames();
+        var servicePrompt = session.Prompt!;
+        string beforeHelp = SaveGameStore.Serialize(session.Game);
+        await KeyEvent(Key.Enter, shift: true);
+        Require(ReferenceEquals(servicePrompt, session.Prompt) && session.Preview is null &&
+            servicePrompt.HelpIndex == servicePrompt.SelectedIndex &&
+            SaveGameStore.Serialize(session.Game) == beforeHelp,
+            "Shift+Enter must inspect a choice without activation or simulation changes.");
+        var helpPanel = Descendants(host).OfType<ScrollContainer>().Single(n => n.Name == "ChoiceHelpPanel");
+        var helpText = Descendants(host).OfType<Label>().Single(n => n.Name == "ChoiceHelpText");
+        var focusedChoice = (Button)host.GetViewport().GuiGetFocusOwner();
+        Require(helpPanel.IsVisibleInTree() && helpPanel.GlobalPosition.X >=
+            focusedChoice.GetGlobalRect().End.X && helpText.Text.Contains("Upkeep:", StringComparison.Ordinal),
+            "Contextual help must appear to the right with service details.");
+        int clickedIndex = 1;
+        var clickedChoice = Descendants(host).OfType<Button>().First(b =>
+            b.TooltipText.StartsWith(servicePrompt.Choices[clickedIndex].Label + " (", StringComparison.Ordinal));
+        Vector2 helpClick = clickedChoice.GetGlobalRect().GetCenter();
+        foreach (bool pressed in new[] { true, false })
+            host.GetViewport().PushInput(new InputEventMouseButton
+            {
+                ButtonIndex = MouseButton.Left, Pressed = pressed, ShiftPressed = true,
+                Position = helpClick, GlobalPosition = helpClick,
+            }, true);
+        await Frames();
+        Require(ReferenceEquals(servicePrompt, session.Prompt) && session.Preview is null &&
+            servicePrompt.HelpIndex == clickedIndex,
+            $"Native Shift+click must open option help without activation: same={ReferenceEquals(servicePrompt, session.Prompt)}, preview={session.Preview?.Name}, help={servicePrompt.HelpIndex}, click={helpClick}, button={clickedChoice.GetGlobalRect()}.");
+        bool helpHeadless = DisplayServer.GetName() == "headless";
+        var helpWindowSize = helpHeadless ? host.GetWindow().ContentScaleSize : host.GetWindow().Size;
+        if (helpHeadless) host.GetWindow().ContentScaleSize = new Vector2I(640, 480);
+        else host.GetWindow().Size = new Vector2I(640, 480);
+        await Frames();
+        var helpDialog = Descendants(host).OfType<PanelContainer>().Single(n => n.Name == "CityDialog");
+        Require(helpDialog.GetGlobalRect().Position.X >= 0 && helpDialog.GetGlobalRect().End.X <= host.Size.X + 1 &&
+            helpDialog.GetGlobalRect().Position.Y >= 0 && helpDialog.GetGlobalRect().End.Y <= host.Size.Y + 1 &&
+            helpPanel.Size.X > 0 && helpText.AutowrapMode != TextServer.AutowrapMode.Off,
+            "Compact contextual help must stay in the window and retain scrollable, wrapped text.");
+        if (helpHeadless) host.GetWindow().ContentScaleSize = helpWindowSize;
+        else host.GetWindow().Size = helpWindowSize;
+        await Frames();
+        focusedChoice.GrabFocus();
+        await KeyEvent(Key.Enter);
+        Require(session.Preview?.Building?.Name == servicePrompt.Choices[0].Label,
+            "Plain Enter must still activate the focused placement choice after contextual help.");
+        await KeyEvent(Key.Escape);
+        Require(ReferenceEquals(servicePrompt, session.Prompt), "Help must preserve placement menu history.");
+        for (int index = 0; index < session.Prompt!.Shortcuts.Count; index++)
+            if (session.Prompt.Shortcuts[index].Shift) { shiftedChoice = index; break; }
+        if (shiftedChoice >= 0)
+        {
+            var shortcut = session.Prompt.Shortcuts[shiftedChoice];
+            string buildingName = session.Prompt.Choices[shiftedChoice].Label;
+            await KeyEvent((Key)shortcut.Letter, shift: true);
+            Require(session.Preview?.Building?.Name == buildingName, "Shift mnemonic selected the wrong service building.");
+            await KeyEvent(Key.Escape);
+            Require(session.Prompt?.Title == "Service buildings" && session.Prompt.SelectedIndex == shiftedChoice,
+                "Preview cancellation did not restore the service menu and focus.");
+        }
+        session.ClosePrompt();
+        session.CancelPreview();
 
         var mapCenter = new Pos(session.Game.Map.Width / 2, session.Game.Map.Height / 2);
         session.PlaceCursor(mapCenter);
@@ -480,6 +707,7 @@ internal static class GodotSmoke
         if (headless) window.ContentScaleSize = new Vector2I(640, 480);
         else window.Size = new Vector2I(640, 480);
         await Frames();
+        CheckStatusPath();
         session.ShowSessionMenu();
         await Frames();
         var finances = Descendants(host).OfType<Label>().Single(l => l.Name == "Budget");
@@ -498,13 +726,43 @@ internal static class GodotSmoke
         if (headless) window.ContentScaleSize = originalSize;
         else window.Size = originalSize;
         await Frames();
+        if (!headless && OS.GetName() == "Windows")
+        {
+            GD.Print("TERMCITY_WINDOWS_RESIZE_BEGIN");
+            bool angle = RenderingServer.GetCurrentRenderingDriverName() == "opengl3_angle";
+            string beforeResize = SaveGameStore.Serialize(session.Game);
+            foreach (var size in new[] { new Vector2I(800, 600), new Vector2I(1920, 1040) })
+            {
+                var timer = Stopwatch.StartNew();
+                window.Size = size;
+                await Frames();
+                CheckStatusPath();
+                Require(!angle || timer.Elapsed.TotalMilliseconds < 1000,
+                    $"Window resize stalled for {timer.Elapsed.TotalMilliseconds:F0} ms.");
+            }
+            var maximize = Stopwatch.StartNew();
+            window.Mode = Window.ModeEnum.Maximized;
+            await Frames();
+            CheckStatusPath();
+            Require(!angle || maximize.Elapsed.TotalMilliseconds < 1000,
+                $"Maximize stalled for {maximize.Elapsed.TotalMilliseconds:F0} ms.");
+            window.Mode = Window.ModeEnum.Windowed;
+            window.Size = originalSize;
+            await Frames();
+            double nativeWorst = await WindowsResizeSmoke.Run(window);
+            await Frames();
+            CheckStatusPath();
+            Require(!angle || nativeWorst < 1000, $"Native edge resize stalled for {nativeWorst:F0} ms.");
+            Require(beforeResize == SaveGameStore.Serialize(session.Game), "Resizing changed city data.");
+            GD.Print($"TERMCITY_WINDOWS_RESIZE_OK driver={RenderingServer.GetCurrentRenderingDriverName()} native_worst={nativeWorst:F0}ms");
+        }
         string cityBeforeFontChange = SaveGameStore.Serialize(session.Game);
         host.SetFontSize(Main.DefaultFontSize);
         await KeyEvent(Key.F3);
         Require(session.Prompt?.Title == "Font size", "F3 did not open the font dialog.");
         await Frames();
         var smallDialog = Descendants(host).OfType<PanelContainer>().Single(p => p.Name == "CityDialog" && p.IsVisibleInTree());
-        var compactScroll = Descendants(smallDialog).OfType<ScrollContainer>().Single();
+        var compactScroll = Descendants(smallDialog).OfType<ScrollContainer>().Single(s => s.IsVisibleInTree());
         float compactContentHeight = Math.Min(compactScroll.GetChild<Control>(0).GetCombinedMinimumSize().Y,
             host.Size.Y - 96);
         Require(smallDialog.Size.Y < largeMenuHeight &&
@@ -564,6 +822,8 @@ internal static class GodotSmoke
         await Frames();
         Require(split.SidebarWidth >= CitySplit.MinimumSidebar - 1, "Sidebar fell below its minimum.");
         session.SelectPrompt(0);
+        Require(session.Prompt?.Title == "City menu", "Sidebar OK did not return to the city menu.");
+        await KeyEvent(Key.Escape);
         await Frames();
         var dragger = split.GetDragAreaControls()[0];
         var dragPoint = dragger.GetGlobalRect().GetCenter();
@@ -589,6 +849,7 @@ internal static class GodotSmoke
         {
             host.SetFontSize(fontSize);
             await Frames();
+            CheckStatusPath();
             Require(host.GetWindow().ContentScaleFactor == fontSize / 16f,
                 "Font setting did not scale the interface and map together.");
             Require(host.Map.Grid.Columns == (int)(host.Map.Size.X / TerminalGrid.CellWidth) &&
@@ -625,7 +886,41 @@ internal static class GodotSmoke
         await KeyEvent(Key.Escape);
         host.SetFontSize(Main.DefaultFontSize);
         await Frames();
-        await VerifyEffects(host, Frames, KeyEvent);
+        await VerifyEffects(host, Frames, (code, ctrl, unicode, meta, physical) => KeyEvent(code, ctrl, unicode, meta, physical));
+        session.ClosePrompt();
+        session.SetZoom(0);
+        var green = session.Game.Map.Content.Buildings.Get("Village Green");
+        var areaSpot = Enumerable.Range(0, session.Game.Map.Width * session.Game.Map.Height)
+            .Select(session.Game.Map.PosOf)
+            .OrderBy(p => Math.Abs(p.X - session.Game.Map.Width / 2) + Math.Abs(p.Y - session.Game.Map.Height / 2))
+            .First(p => session.Game.CanPlaceBuilding(green, p.X, p.Y));
+        session.Game.Map.SetBuildingFootprint(green, new(areaSpot.X, areaSpot.Y, green.Width, green.Height));
+        session.Game.Touch();
+        session.PlaceCursor(areaSpot);
+        host.Map.Invalidate(true);
+        session.CenterOn(areaSpot);
+        await Frames();
+        if (!headless) Require(host.Map.AreasDrawn >= 2, "Service and clean-air circles were not drawn.");
+        foreach (var p in session.Game.Map.BuildingFootprintAt(areaSpot.X, areaSpot.Y).Cells())
+        {
+            var screen = new Pos(p.X - session.CameraX, p.Y - session.CameraY);
+            Require(host.Map.Grid.VisualAt(session, screen.X, screen.Y)?.Glyph.Contains('\n') == true,
+                "Larger building cells are not filled with ASCII art.");
+        }
+        session.PlaceCursor(new Pos(areaSpot.X + green.Width, areaSpot.Y));
+        await Frames();
+        if (!headless) Require(host.Map.AreasDrawn == 0, "Unselected buildings still show range circles.");
+        session.PlaceCursor(new Pos(areaSpot.X + green.Width - 1, areaSpot.Y + green.Height - 1));
+        await Frames();
+        if (!headless) Require(host.Map.AreasDrawn >= 2, "Selecting a non-anchor footprint cell did not show its circles.");
+        int zoomSkips = host.MusicSkips;
+        for (int i = 0; i < 12; i++)
+        {
+            host.Map.ZoomBy(i % 2 == 0 ? -1 : 1);
+            session.ScrollChars(i % 2 == 0 ? 3 : -3, 1);
+            await Frames();
+        }
+        Require(host.MusicSkips == zoomSkips, "Music skipped while zooming and scrolling.");
         if (File.Exists(session.SavePath)) File.Delete(session.SavePath);
     }
 
@@ -873,17 +1168,19 @@ internal static class GodotSmoke
         {
             Press(key);
             Require(session.Prompt?.Title == title, $"{key} did not open {title}.");
-            Press(Key.R);
-            if (key != Key.F1) Require(session.Prompt?.Title == title, "Report allowed a background action.");
+            bool debug = session.InputDebug;
+            Press(Key.F12);
+            Require(session.Prompt?.Title == title && session.InputDebug == debug, "Dialog allowed a background action.");
             if (session.Prompt is not null) Press(Key.Escape);
         }
         Press(Key.F6);
-        Require(session.Prompt is { Title: "TermCity guide", Tabs.Count: 7, ActiveTab: 0 }, "F6 did not open the tabbed guide.");
+        Require(session.Prompt is { Title: "TermCity guide", Tabs.Count: 8, ActiveTab: 0 }, "F6 did not open the tabbed guide.");
         Press(Key.Right);
         Require(session.Prompt?.ActiveTab == 1 && session.Prompt.Tabs![1].Title == "Zones", "Right arrow did not switch guide tab.");
         Press(Key.Left);
         Press(Key.Left);
-        Require(session.Prompt?.ActiveTab == 6, "Left arrow did not wrap to the last guide tab.");
+        Require(session.Prompt?.ActiveTab == 7 && session.Prompt.Tabs![7].Title == "Glossary",
+            "Left arrow did not wrap to the glossary.");
         Press(Key.Escape);
         Require(session.Prompt is null, "Esc did not close the guide.");
         if (session.GuideVisible)
@@ -948,8 +1245,10 @@ internal static class GodotSmoke
         Press(Key.Escape);
         session.ShowAreaMenu();
         session.SelectPrompt(2);
-        Require(session.Prompt?.Title == "Service buildings" && (session.Prompt.Text == "Choose a building to preview." ||
+        Require(session.Prompt?.Title == "Service buildings" && (session.Prompt.Text == "Choose a building, then click or press Enter to place it." ||
             session.Prompt.Text == "No service buildings are registered."), "Building menu was not shown or explained.");
+        Press(Key.Escape);
+        Require(session.Prompt?.Title == "Area menu", "Service cancellation did not restore the area menu.");
         Press(Key.Escape);
 
         string quickSave = session.SavePath;
@@ -957,7 +1256,7 @@ internal static class GodotSmoke
         string saved = SaveGameStore.Serialize(session.Game);
         Press(Key.R);
         Press(Key.F9);
-        Require(session.Prompt?.Title == "Load city", "Quick-load discarded unsaved changes.");
+        Require(session.Prompt?.Title == "Confirm load city", "Quick-load discarded unsaved changes.");
         session.SelectPrompt(1);
         Require(saved == SaveGameStore.Serialize(session.Game), "Quick-load changed saved city data.");
         session.ShowLoadMenu();
@@ -1019,6 +1318,31 @@ internal static class GodotSmoke
             Require(kind == TerminalGrid.AnimationKind.Hill ? offset.X == 0 : offset.Y == 0,
                 $"{kind} moved on the wrong axis.");
         }
+        var road = map.RoadCells.Select(map.PosOf)
+            .OrderBy(position => Math.Abs(position.X - map.Width / 2) + Math.Abs(position.Y - map.Height / 2)).First();
+        session.CenterOn(road);
+        host.Map.RefreshCells();
+        session.Game.Paused = false;
+        for (int i = 0; i < 120; i++) host.Director.Update(0.25);
+        var life = host.Effects.Effects.OfType<AmbientLife>().Single();
+        Require(life.Cars > 0 && life.Birds > 0, "Pause check needs active traffic and birds.");
+        EffectSprite[] Actors() => host.Effects.Sprites.Where(sprite =>
+            sprite.Color == EffectGlyphs.CarColor || sprite.Color == EffectGlyphs.PersonColor ||
+            sprite.Color == EffectGlyphs.BirdColor).ToArray();
+        var actors = Actors();
+        host._UnhandledInput(new InputEventKey { Keycode = Key.P, Pressed = true });
+        Require(session.Game.Paused, "P did not pause the game for the ambient check.");
+        for (int i = 0; i < 30; i++)
+        {
+            host._Process(0.1);
+            Require(life.TrafficAndBirdsPaused && actors.SequenceEqual(Actors()),
+                "Traffic or birds moved, spawned or flapped while the game was paused.");
+        }
+        host._UnhandledInput(new InputEventKey { Keycode = Key.P, Pressed = true });
+        host.Director.Update(0.1);
+        Require(!session.Game.Paused && !life.TrafficAndBirdsPaused && !actors.SequenceEqual(Actors()),
+            "Traffic and birds did not resume with the game.");
+        session.Game.Paused = true;
         host.GetWindow().EmitSignal(Window.SignalName.FocusExited);
         double seconds = grid.AnimationSeconds;
         host._Process(TerminalGrid.BeatSeconds);

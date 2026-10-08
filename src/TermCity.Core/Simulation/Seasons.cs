@@ -232,7 +232,7 @@ internal static class Feasts
         foreach (int i in map.ServiceCells.Order())
         {
             var type = map.Content.Buildings[map.BuildingLayer[i]];
-            if (type.Pilgrims <= 0 || !game.Network.IsServed(i))
+            if (type.Pilgrims <= 0 || !map.BuildingIsServed(i, game.Network.IsServed))
             {
                 continue;
             }

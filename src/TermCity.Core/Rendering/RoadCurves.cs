@@ -12,7 +12,7 @@ public sealed class RoadPath(RoadType type, bool connected, bool closed, double[
 {
     public RoadType Type { get; } = type;
 
-    /// <summary>Whether the road joins the edge of the map (drawn in the amber of an unconnected road when it does not).</summary>
+    /// <summary>Whether the road joins the edge of the map (drawn in red when it does not).</summary>
     public bool Connected { get; } = connected;
 
     public bool Closed { get; } = closed;
@@ -44,9 +44,6 @@ public static class RoadCurves
 
     /// <summary>How far, in pixels, a bend is spread out: the half-width of the smoothing kernel.</summary>
     public const double SmoothingRadius = 56;
-
-    /// <summary>How far a branch stops short of the middle of the junction it joins, in pixels.</summary>
-    public const double JunctionSetback = 7.5;
 
     /// <summary>
     /// How far, in pixels, the drawn road may stray from the cell centres it follows. A diagonal highway is laid as a
@@ -321,7 +318,7 @@ public static class RoadCurves
     /// <summary>
     /// Where a road ends on another, the end is moved onto the other road's drawn curve (which need not pass through the
     /// middle of the junction cell). A branch that meets it at a slant curves in alongside it like a slip road; one that
-    /// meets it squarely stops short and lets the blend form the T.
+    /// meets it squarely reaches the host centreline and lets the blend form the T.
     /// </summary>
     private static void Join(List<DraftPath> drafts)
     {
@@ -408,9 +405,6 @@ public static class RoadCurves
             (xs, ys) = Ramp(xs, ys, at);
         }
 
-        // The branch stops short of the road it joins, whose own bed (and the blend) completes the junction. Left to run
-        // to the middle, its rounded end would bulge out of the far side of that road.
-        (xs, ys) = Trim(xs, ys, atStart: false, JunctionSetback);
         if (atStart)
         {
             xs = xs.Reverse().ToArray();
@@ -587,6 +581,12 @@ public static class RoadCurves
                     Consider([(a, b)]);
                 }
             }
+        }
+
+        if (best.Count == 2 && (best[0].Item1 + 2) % 4 != best[0].Item2)
+        {
+            // Opposing rounded bends pull apart; join the other arms onto the main curve as branches instead.
+            best = best.OrderByDescending(m => Score(m.Item1, m.Item2)).Take(1).ToList();
         }
 
         foreach (var (a, b) in best)

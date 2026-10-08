@@ -1,4 +1,5 @@
 using TermCity.Core.Buildings;
+using TermCity.Core.Effects;
 using TermCity.Core.Rendering;
 using TermCity.Core.Simulation;
 using TermCity.Core.World;
@@ -20,6 +21,7 @@ public static class GuideContent
         new("Population", Population(game)),
         new("Happiness", Happiness()),
         new("Economy", Economy()),
+        new("Glossary", Glossary(game)),
     ];
 
     private static string Join(params string[] blocks) => string.Join("\n\n", blocks);
@@ -31,24 +33,103 @@ public static class GuideContent
     {
         int homes = game.Config.MinResidentialCells;
         return Join(
+            "YOUR NEXT STEP\n" + CityProgression.NextStep(game),
             "A town grows when people have somewhere to live, work to do, a road to reach both and\n" +
             "the services they need. You steer it by marking land, laying roads and building.",
             Table(["STEP", "KEYS", "WHAT TO DO"],
             [
                 ["1 Road", "T", "Draw a track from the King's Road at the map edge into open land"],
                 ["2 Homes", "R", "Mark homesteads along the track: families settle only by a road"],
-                ["3 Go", "P", $"Resume the clock. At {homes} homes markets and workshops unlock"],
-                ["4 Work", "C  I", "Zone marketplace and craftworks: they give jobs and tithes"],
-                ["5 Care", "Enter", "Add fuel, water, a fire watch and more (area menu, Service buildings)"],
-                ["6 Watch", "F7  F8", "The weekly report and the growth report say what holds the town back"],
+                ["3 Supplies", "Enter", game.Config.FullRules ? "Services: Woodlot (8,000g) and Town Well (4,000g), beside a road" : "Classic rules do not require fuel or water"],
+                ["4 Go", "P", $"Resume. At {homes} occupied homes zone jobs with C and I"],
+                ["5 Care", "Enter", "Spend the weekly surplus on local care; save for a Motte and Bailey"],
+                ["6 Watch", "F7  F8", "City Grew! unlocks and growth blockers; expand supplies before homes"],
             ]),
+            "CITY GREW!\n" +
+            "  Population milestones permanently unlock larger service buildings, even if people leave.\n" +
+            "  Dismiss the sidebar tip to turn off coaching, not milestones. F6 can enable it again.\n" +
+            "  F7 lists every milestone and its unlocks. New-city-size announcements pause the clock.",
+            "A SUSTAINABLE START\n" +
+            "  Keep at least 8,000g to replace a lost Woodlot, plus money for winter grain and tribute.\n" +
+            "  Fuel and water work anywhere by a connected road; local care must be close to homes.\n" +
+            "  Zone smoky workshops in a separate district, not between homes. Shops can stay nearby.\n" +
+            "  At 100 souls, save for the largest complaint (F6, Happiness); do not buy every service.\n" +
+            "  Try 75% local-service funding in Budget: less upkeep, still about 84% of the benefit.\n" +
+            "  When space runs short, extend short tracks into open land. Leave plots for care, or\n" +
+            "  dezone empty lots (U) to fit it. Do not wait for every poorly served vacant home to fill.",
             "SELECTING\n" +
             "  Click a cell, or drag a box. Shift+click grows the selection to the cell you click.\n" +
             "  Ctrl/Alt+drag starts a new box. Shift+arrows (or S, arrows, S) select by keyboard.\n" +
             "  Every action (zone, road, build, demolish) applies to the selection or the cursor cell.",
             "DIALOGS\n" +
-            "  Number keys pick a row, Up/Down move, Enter selects, Esc closes. Left/Right (or a click)\n" +
-            "  change tabs in this guide. F1 is the short list of controls.");
+            "  Underlined letters pick a row, Up/Down move, Enter selects, Esc closes. Shift+click or\n" +
+            "  Shift+Enter opens option help on the right without activating it. Shift+letter still selects.\n" +
+            "  Left/Right (or a click) changes guide tabs. F1 is the short list of controls.");
+    }
+
+    public static string Glossary(CityGame game)
+    {
+        var lines = new List<string>
+        {
+            "ICON / GLYPH GLOSSARY",
+            "Glyphs can have several meanings: colour, layer and context distinguish them.",
+            "Roads are smooth curves on the map; connection glyphs appear in overlays and the minimap.",
+            "",
+        };
+        void Add(string glyphs, string meaning)
+        {
+            string remaining = $"{glyphs} — {meaning}";
+            while (remaining.Length > MaxLineLength)
+            {
+                int split = remaining.LastIndexOf(' ', MaxLineLength);
+                if (split < 1) split = MaxLineLength;
+                lines.Add(remaining[..split]);
+                remaining = remaining[split..].TrimStart();
+            }
+            lines.Add(remaining);
+        }
+        foreach (var terrain in game.Map.Content.Terrains)
+            Add(ChoiceHelpContent.Icons(terrain.Glyphs), $"{terrain.Name}: {terrain.Description}");
+        foreach (var feature in game.Map.Content.Features)
+            Add(ChoiceHelpContent.Icons(feature.Glyphs), $"{feature.Name}: {feature.Description}");
+        foreach (var zone in World.Zones.Placeable.Select(World.Zones.Get))
+            Add($"{zone.Letter} {zone.EmptyGlyph}", $"{zone.Name}: demand letter / vacant zoned land");
+        foreach (var road in game.Map.Content.Roads)
+            Add(ChoiceHelpContent.Icons(road.Glyphs), $"{road.Name}: {road.Description}");
+        foreach (var building in game.Map.Content.Buildings)
+        {
+            Add(ChoiceHelpContent.Icons(building.Glyphs), $"{building.Name}: {building.Description}");
+            if (building.FootprintArt.Count > 0)
+            {
+                Add(ChoiceHelpContent.Icons(building.FootprintArt.SelectMany(row => row.Select(c => c.ToString()))
+                    .Where(c => !string.IsNullOrWhiteSpace(c))), $"{building.Name}: multi-cell footprint art");
+            }
+            foreach (var area in AreaOfEffect.ForBuilding(building, new(0, 0)))
+                Add(ChoiceHelpContent.Icons(area.Glyphs), $"{building.Name}: area-of-effect ring, radius {area.Radius} cells" +
+                    (building.Pollution != 0 ? "; ♧ cleans air, Ψ smoke pollution" : ""));
+        }
+        lines.Add("");
+        lines.Add("ANIMATED EFFECTS (not additional buildings or resources)");
+        Add(ChoiceHelpContent.Icons(EffectGlyphs.BuildBars.Select(c => c.ToString())), "Construction progress bars");
+        foreach (var (glyphs, meaning) in new (IEnumerable<string>, string)[]
+        {
+            (EffectGlyphs.Dust, "Building / demolition dust"),
+            (EffectGlyphs.Sparkle, "Sparkles"),
+            (EffectGlyphs.Flame, "Fire"),
+            (EffectGlyphs.Smoke, "Smoke"),
+            (EffectGlyphs.Ripple, "Water ripples"),
+            (EffectGlyphs.Confetti, "Celebration confetti (when enabled)"),
+            (EffectGlyphs.Coin, "Reserved coin-effect glyphs; money animations are not active in gameplay"),
+            (EffectGlyphs.Bird, "Birds"),
+            (EffectGlyphs.Spout, "Whale spout"),
+            (EffectGlyphs.Bubble, "Water bubbles"),
+            ([EffectGlyphs.FishRight, EffectGlyphs.FishLeft], "Swimming fish"),
+            ([EffectGlyphs.WhaleBack], "Whale back"),
+            ([EffectGlyphs.Person], "Walking person"),
+            ([EffectGlyphs.Car], "Road traffic"),
+            ([EffectGlyphs.Crack], "Quake cracks"),
+        }) Add(ChoiceHelpContent.Icons(glyphs), meaning);
+        return string.Join("\n", lines);
     }
 
     private static string Zones(CityGame game) => Join(
@@ -62,7 +143,7 @@ public static class GuideContent
         ]),
         "ROOM FOR PEOPLE\n" +
         "  A cottage houses 6 souls, a burgage house 18, a tenement 48. A taller building needs a big\n" +
-        "  enough town (1,500 souls for the second level, 9,000 for the third), rising land value,\n" +
+        "  enough town (500 souls for the second level, 5,000 for the third), rising land value,\n" +
         "  fuel and water, a lord's seat (motte, then keep) and a cobbled road for the third level.",
         "UNLOCKS\n" +
         $"  Markets and workshops appear only once {game.Config.MinResidentialCells} homes are occupied: people first, trade follows.\n" +
@@ -110,17 +191,19 @@ public static class GuideContent
         [
             b.Name, CityReport.ServiceName(b.Service), Fmt.Money(b.Cost), Fmt.Money(b.WeeklyUpkeep),
             b.Radius > 0 ? b.Radius.ToString() : b.Capacity > 0 ? $"{b.Capacity:N0} units" : string.Empty,
-            b.MinPopulation > 0 ? $"{b.MinPopulation:N0} souls" : string.Empty,
+            b.MinPopulation > 0 ? $"{CityProgression.RequiredPopulation(b):N0} souls" : string.Empty,
         ];
         var placeable = game.Map.Content.Buildings.Where(b => b.PlayerPlaceable && b.Service != ServiceKind.None).ToList();
         var supplies = placeable.Where(b => b.Service.IsUtility()).Select(Row);
         var civic = placeable.Where(b => !b.Service.IsUtility()).OrderBy(b => b.Service).ThenBy(b => b.Cost).Select(Row);
         return Join(
-            "Place these from the area menu (right-click or Enter, then Service buildings). Select where\n" +
-            "the building should stand first. Upkeep is paid every week; reach is in map cells.",
+            "Place these from the area menu (right-click or Enter, then Service buildings). Choose one,\n" +
+            "move it with the mouse or arrows, then click or press Enter.\n" +
+            "Upkeep is paid weekly; reach is measured in map cells.",
             "SUPPLIES (city-wide)\n" + Table(Columns("OUTPUT"), supplies),
             "  Fuel and water are shared by the whole town. If supply falls short of what buildings need,\n" +
-            "  a matching share of blocks goes cold or dry. An aqueduct must stand on a shore.",
+            "  a matching share of blocks goes cold or dry. An aqueduct must stand on a shore.\n" +
+            "  Start with a Woodlot and Town Well (12,000g together, 60g/week). Larger plants can wait.",
             "SERVICES (local)\n" + Table(Columns("REACH"), civic),
             "  Each covers the cells around it, strongest close by. Services fund at 100% by default;\n" +
             "  the Budget menu can trade money for strength.");
@@ -190,6 +273,8 @@ public static class GuideContent
         "  Income is tithes and rents: hearth tithe on homes, market tolls on shops and guild dues\n" +
         "  on workshops, each a share of the plot's value, cut by unemployment and empty jobs.\n" +
         "  Outgoings are upkeep of services and roads, loan interest and the reeve's administration.",
+        "  The crown maintains the King's Road (no weekly upkeep); your tracks and cobbles still cost.\n" +
+        "  Grain purchases, tribute and raid losses also take gold; keep a reserve beyond weekly upkeep.",
         "BUDGET (Esc, Budget)\n" +
         "  Select a service to step its funding down by quarters: half funding gives about two thirds of\n" +
         "  the benefit. Taxes above the fair rate cost happiness. Loans: up to 40 weeks of income at\n" +

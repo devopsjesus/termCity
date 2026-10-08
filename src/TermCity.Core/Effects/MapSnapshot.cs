@@ -18,6 +18,7 @@ public sealed class MapSnapshot
     private byte[] _roadType = [];
     private ZoneType[] _zone = [];
     private byte[] _building = [];
+    private readonly Dictionary<int, CellRect> _footprints = [];
     private int _width, _height;
 
     public int Width => _width;
@@ -47,6 +48,9 @@ public sealed class MapSnapshot
         Array.Copy(map.RoadTypeLayer, _roadType, _roadType.Length);
         Array.Copy(map.ZoneLayer, _zone, _zone.Length);
         Array.Copy(map.BuildingLayer, _building, _building.Length);
+        _footprints.Clear();
+        foreach (var footprint in map.BuildingFootprints.Values)
+            foreach (var p in footprint.Cells()) _footprints.Add(map.Index(p.X, p.Y), footprint);
     }
 
     /// <summary>Compares the snapshot with the live map for one cell.</summary>
@@ -116,7 +120,7 @@ public sealed class MapSnapshot
         if (_building[i] != 0)
         {
             var building = content.Buildings[_building[i]];
-            glyph = building.GlyphAt(x, y);
+            glyph = building.FootprintGlyphAt(_footprints.GetValueOrDefault(i, new CellRect(x, y, 1, 1)), x, y);
             fg = building.Foreground;
             if (zone == ZoneType.None)
             {
