@@ -111,7 +111,8 @@ Limits of per-glyph scaling:
 Esc > Celebrations independently controls decorative population-milestone confetti. It defaults to
 Off and is saved alongside the effect level. These bursts do not represent damage or disasters.
 Disabling celebrations clears running confetti without stopping construction, demolition, ambient
-life or tax-day coins. Enabling them does not replay previously reached milestones.
+life. Enabling them does not replay previously reached milestones.
+Weekly taxes update the treasury and reports without spawning floating dollar or cent symbols.
 
 ## Verification status
 

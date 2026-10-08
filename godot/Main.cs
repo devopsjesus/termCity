@@ -42,6 +42,7 @@ public partial class Main : Control
     private Label _hudClock = null!;
     private double _pauseGlowSeconds;
     private Label _status = null!;
+    private Label _placementStatus = null!;
     private Label _savePathLabel = null!;
     private PanelContainer _modal = null!;
     private Control _modalShield = null!;
@@ -50,6 +51,9 @@ public partial class Main : Control
     private Label _lineSummary = null!;
     private Label _modalError = null!;
     private ScrollContainer? _modalScroll;
+    private HBoxContainer? _modalColumns;
+    private ScrollContainer? _choiceHelpScroll;
+    private Label? _choiceHelpText;
     private float _modalContentWidth;
     private readonly List<Button> _promptButtons = [];
     private readonly List<Button> _dialogButtons = [];
@@ -694,11 +698,21 @@ public partial class Main : Control
         _status = new Label { Name = "Status", SizeFlagsHorizontal = SizeFlags.ExpandFill,
             ClipText = true, TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
             MouseFilter = MouseFilterEnum.Stop };
-        _savePathLabel = new Label { Name = "QuickSavePath", Text = $"Quick-save: {Session.SaveDisplayPath}",
+        _placementStatus = new Label
+        {
+            Name = "PlacementStatus",
+            HorizontalAlignment = HorizontalAlignment.Right,
+            ClipText = true,
+            TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
+            MouseFilter = MouseFilterEnum.Stop,
+            Modulate = new Color("#ff7777"),
+        };
+        _savePathLabel = new Label { Name = "QuickSavePath", Text = $"Quick-save: {Session.SaveDisplayPath}", Visible = false,
             HorizontalAlignment = HorizontalAlignment.Right, ClipText = true,
             TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
             TooltipText = Path.GetFullPath(Session.SavePath), MouseFilter = MouseFilterEnum.Stop };
         statusRow.AddChild(_status);
+        statusRow.AddChild(_placementStatus);
         statusRow.AddChild(_savePathLabel);
         void FitStatusRow()
         {
@@ -706,15 +720,20 @@ public partial class Main : Control
             _savePathLabel.CustomMinimumSize = new Vector2(
                 Math.Min(_savePathLabel.GetThemeFont("font").GetStringSize(_savePathLabel.Text,
                     fontSize: _savePathLabel.GetThemeFontSize("font_size")).X, Size.X / 2), 0);
+            _placementStatus.CustomMinimumSize = new Vector2(
+                Math.Min(_placementStatus.GetThemeFont("font").GetStringSize(_placementStatus.Text,
+                    fontSize: _placementStatus.GetThemeFontSize("font_size")).X, Size.X / 2), 0);
         }
         Resized += FitStatusRow;
+        _placementStatus.MinimumSizeChanged += FitStatusRow;
         FitStatusRow();
         layout.AddChild(statusRow);
         _modalShield = new Control { Visible = false, MouseFilter = MouseFilterEnum.Stop };
         _modalShield.GuiInput += input =>
         {
             if (input is InputEventMouseMotion motion)
-                _modalShield.TooltipText = _savePathLabel.GetGlobalRect().HasPoint(motion.GlobalPosition)
+                _modalShield.TooltipText = _savePathLabel.Visible &&
+                    _savePathLabel.GetGlobalRect().HasPoint(motion.GlobalPosition)
                     ? _savePathLabel.TooltipText : "";
         };
         _modalShield.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
@@ -840,8 +859,19 @@ public partial class Main : Control
             ? $"{_lastInput} | loop {Session.LoopGapMs} ms, worst {Session.LoopWorstGapMs} ms"
             : Session.MessageVisible ? $"{cellInfo} | {Session.Message}" : cellInfo;
         _status.TooltipText = _status.Text;
-        _status.Modulate = Session.MessageVisible && Session.MessageKind == MessageKind.Error
-            ? new Color("#ff7777") : Colors.White;
+        _status.Modulate = !Session.MessageVisible ? Colors.White : Session.MessageKind switch
+        {
+            MessageKind.Error => new Color("#ff7777"),
+            MessageKind.Warning => new Color("#ffe066"),
+            _ => Colors.White,
+        };
+        string? placementError = Session.BuildingPlacementError;
+        _placementStatus.Text = placementError ?? Session.BuildingPlacementWarning ?? "";
+        _placementStatus.Modulate = placementError is not null ? new Color("#ff7777") : new Color("#ffe066");
+        _placementStatus.TooltipText = _placementStatus.Text;
+        _placementStatus.Visible = Session.BuildingToolActive && _placementStatus.Text.Length > 0;
+        _savePathLabel.Visible = Session.Prompt?.IsSaveDialog == true;
+        if (!_savePathLabel.Visible) _modalShield.TooltipText = "";
         UpdateModal();
         _panel.Refresh();
         if (_modal.Visible)
@@ -920,7 +950,7 @@ public partial class Main : Control
     {
         _linePreview.Visible = Session.RoadToolActive && Session.Prompt is null;
         _lineSummary.Text = Session.Preview?.Summary + "\nArrows or drag set the endpoint. Enter confirms; Esc cancels.";
-        object? state = Session.Prompt ?? (Session.RoadToolActive ? null : (object?)Session.Preview);
+        object? state = Session.Prompt ?? (Session.RoadToolActive || Session.BuildingToolActive ? null : (object?)Session.Preview);
         if (ReferenceEquals(state, _shownModal))
         {
             return;
@@ -930,6 +960,9 @@ public partial class Main : Control
         _fontSizeLabel = null;
         _sidebarSizeLabel = null;
         _modalScroll = null;
+        _modalColumns = null;
+        _choiceHelpScroll = null;
+        _choiceHelpText = null;
         _promptButtons.Clear();
         _dialogButtons.Clear();
         _promptIndex = selectedIndex;
@@ -987,8 +1020,34 @@ public partial class Main : Control
         padding.AddThemeConstantOverride("margin_right", sidePadding);
         padding.AddChild(content);
         scroll.AddChild(padding);
-        margin.AddChild(scroll);
+        var columns = new HBoxContainer();
+        _modalColumns = columns;
+        columns.AddChild(scroll);
+        margin.AddChild(columns);
         modalBody.AddChild(margin);
+        var helpScroll = new ScrollContainer
+        {
+            Name = "ChoiceHelpPanel", Visible = false, HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+        };
+        _choiceHelpScroll = helpScroll;
+        var helpContent = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        var closeHelp = new Button { Text = "Close help", FocusMode = FocusModeEnum.None,
+            Alignment = HorizontalAlignment.Left, ClipText = true };
+        closeHelp.Pressed += () =>
+        {
+            if (Session.Prompt is { } current) current.HelpIndex = null;
+            helpScroll.Visible = false;
+            CenterModal();
+        };
+        helpContent.AddChild(closeHelp);
+        _choiceHelpText = new Label
+        {
+            Name = "ChoiceHelpText", AutowrapMode = TextServer.AutowrapMode.Arbitrary,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+        };
+        helpContent.AddChild(_choiceHelpText);
+        helpScroll.AddChild(helpContent);
+        columns.AddChild(helpScroll);
         content.AddChild(new Label
         {
             Text = Session.Prompt?.Title ?? "Confirm placement",
@@ -1067,7 +1126,15 @@ public partial class Main : Control
                 int underline = shortcut.UnderlineIndex < 0 ? prompt.Choices[i].Label.Length + 2 : shortcut.UnderlineIndex;
                 var button = new MnemonicButton { Text = rowText, UnderlineIndex = underline,
                     Alignment = HorizontalAlignment.Left, ClipText = true,
-                    TooltipText = $"{prompt.Choices[i].Label} ({(shortcut.Shift ? "Shift+" : "")}{shortcut.Letter})" };
+                    TooltipText = $"{prompt.Choices[i].Label} ({(shortcut.Shift ? "Shift+" : "")}{shortcut.Letter})\nShift+click or Shift+Enter: help; Enter: activate." };
+                button.GuiInput += inputEvent =>
+                {
+                    if (inputEvent is InputEventMouseButton { ButtonIndex: MouseButton.Left, ShiftPressed: true } mouse)
+                    {
+                        if (mouse.Pressed) ShowChoiceHelp(index);
+                        button.AcceptEvent();
+                    }
+                };
                 button.Pressed += () => SelectPromptChoice(index);
                 button.FocusEntered += () => { _promptIndex = index; prompt.SelectedIndex = index; };
                 buttons.AddChild(button);
@@ -1099,6 +1166,7 @@ public partial class Main : Control
             if (inputField is not null) inputField.GrabFocus();
             else buttons.GetChild<Button>(Math.Clamp(_promptIndex, 0, buttons.GetChildCount() - 1)).GrabFocus();
         }
+        if (Session.Prompt?.HelpIndex is { } helpIndex) ShowChoiceHelp(helpIndex, focusChoice: false);
         CenterModal();
         Callable.From(CenterModal).CallDeferred();
     }
@@ -1147,6 +1215,25 @@ public partial class Main : Control
             _promptButtons[index].GrabFocus();
         }
         Session.SelectPrompt(index);
+    }
+
+    private void ShowChoiceHelp(int index, bool focusChoice = true)
+    {
+        if (Session.Prompt is not { } prompt || index < 0 || index >= prompt.Choices.Count ||
+            _choiceHelpScroll is null || _choiceHelpText is null) return;
+        prompt.HelpIndex = index;
+        if (focusChoice)
+        {
+            prompt.SelectedIndex = index;
+            _promptIndex = index;
+            _promptButtons[index].GrabFocus();
+        }
+        var help = prompt.ActiveHelp!;
+        _choiceHelpText.Text = $"{help.Icons}\n\n{prompt.Choices[index].Label}\n\n{help.Description}\n\n{help.Details}";
+        _choiceHelpScroll.Visible = true;
+        _choiceHelpScroll.ScrollVertical = 0;
+        CenterModal();
+        Callable.From(CenterModal).CallDeferred();
     }
 
     public override void _Input(InputEvent input)
@@ -1211,7 +1298,8 @@ public partial class Main : Control
                 bool confirmationFocused = focus is Button &&
                     (_modal.IsAncestorOf(focus) || _linePreview.IsAncestorOf(focus));
                 if (confirmationFocused && previewKey.Keycode is Key.Enter or Key.KpEnter ||
-                    !Session.RoadToolActive && previewKey.Keycode is Key.Tab or Key.Left or Key.Right or Key.Up or Key.Down)
+                    !Session.RoadToolActive && !Session.BuildingToolActive &&
+                    previewKey.Keycode is Key.Tab or Key.Left or Key.Right or Key.Up or Key.Down)
                 {
                     return;
                 }
@@ -1232,6 +1320,15 @@ public partial class Main : Control
         var code = key.Keycode == Key.None ? key.PhysicalKeycode : key.Keycode;
         var focus = GetViewport().GuiGetFocusOwner();
         if (!key.Pressed) return focus is not LineEdit;
+        if (key.ShiftPressed && code is Key.Enter or Key.KpEnter)
+        {
+            if (!key.Echo)
+            {
+                int index = focus is Button choice ? _promptButtons.IndexOf(choice) : prompt.SelectedIndex;
+                if (index >= 0) ShowChoiceHelp(index);
+            }
+            return true;
+        }
         if (code == Key.Escape)
         {
             _helpVisible = false;
@@ -1311,7 +1408,14 @@ public partial class Main : Control
         }
         if (Session.Preview is not null)
         {
-            if (!key.CtrlPressed && !key.MetaPressed && !key.AltPressed && code is Key.Enter or Key.Y or Key.C)
+            if (Session.BuildingToolActive && code is Key.Left or Key.Right or Key.Up or Key.Down)
+            {
+                int buildingDx = code == Key.Left ? -1 : code == Key.Right ? 1 : 0;
+                int buildingDy = code == Key.Up ? -1 : code == Key.Down ? 1 : 0;
+                if (key.CtrlPressed) Session.JumpCursor(buildingDx, buildingDy);
+                else Session.MoveCursor(buildingDx, buildingDy);
+            }
+            else if (!key.CtrlPressed && !key.MetaPressed && !key.AltPressed && code is Key.Enter or Key.Y or Key.C)
             {
                 Session.ConfirmPreview();
             }
@@ -1440,7 +1544,8 @@ public partial class Main : Control
     private void OnMapInput(InputEvent input)
     {
         Map.RefreshCells();
-        if (_editingName || Session.Prompt is not null || (Session.Preview is not null && !Session.RoadToolActive))
+        if (_editingName || Session.Prompt is not null ||
+            (Session.Preview is not null && !Session.RoadToolActive && !Session.BuildingToolActive))
         {
             StopPointerGesture();
             return;
@@ -1510,6 +1615,12 @@ public partial class Main : Control
             switch (button.ButtonIndex)
             {
                 case MouseButton.Left:
+                    if (Session.BuildingToolActive)
+                    {
+                        Session.MoveBuildingPlacement(position);
+                        Session.ConfirmPreview();
+                        break;
+                    }
                     _pointer = button.Position;
                     _selecting = Session.RoadToolActive || button.ShiftPressed || button.CtrlPressed || button.AltPressed || button.MetaPressed;
                     _panning = !_selecting;
@@ -1548,7 +1659,11 @@ public partial class Main : Control
             _pointer = motion.Position;
             _hover = new Rect2(Vector2.Zero, Map.Size).HasPoint(motion.Position);
             var cell = PointerCell(motion.Position);
-            if (_selecting)
+            if (Session.BuildingToolActive)
+            {
+                Session.MoveBuildingPlacement(Session.ScreenToMap(cell.X, cell.Y));
+            }
+            else if (_selecting)
             {
                 Session.UpdateDrag(Session.ScreenToMap(cell.X, cell.Y));
             }
@@ -1627,9 +1742,15 @@ public partial class Main : Control
         if (!_modal.Visible) return;
         if (_modalScroll is not null)
         {
+            float availableWidth = Math.Max(1, Size.X - 64);
+            bool helpVisible = _choiceHelpScroll?.Visible == true;
+            float helpWidth = helpVisible ? Math.Min(360, availableWidth * 0.4f) : 0;
+            float gap = helpVisible ? _modalColumns!.GetThemeConstant("separation") : 0;
             var content = _modalScroll.GetChild<Control>(0);
-            _modalScroll.CustomMinimumSize = new Vector2(Math.Max(1, Math.Min(_modalContentWidth, Size.X - 64)),
+            _modalScroll.CustomMinimumSize = new Vector2(Math.Max(1, Math.Min(_modalContentWidth, availableWidth - helpWidth - gap)),
                 Math.Max(1, Math.Min(content.GetCombinedMinimumSize().Y, Size.Y - 96)));
+            if (helpVisible)
+                _choiceHelpScroll!.CustomMinimumSize = new Vector2(helpWidth, _modalScroll.CustomMinimumSize.Y);
             _modal.Size = _modal.GetCombinedMinimumSize();
         }
         _modal.Position = (Size - _modal.Size) / 2;

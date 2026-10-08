@@ -8,7 +8,7 @@ namespace TermCity.Core.Effects;
 
 /// <summary>
 /// The only link between the game and the effects. It watches a <see cref="CityGame"/> (events, map changes,
-/// milestones, tax day) and spawns effects into an <see cref="EffectSystem"/>; the simulation never knows effects
+/// milestones) and spawns effects into an <see cref="EffectSystem"/>; the simulation never knows effects
 /// exist and the effects never read the game except through this class.
 /// <para>
 /// Call <see cref="Update"/> once per frame instead of <see cref="EffectSystem.Update"/>: it polls the game, spawns
@@ -35,7 +35,6 @@ public sealed class EffectDirector : IDisposable
     private CityGame? _game;
     private CellRect? _fixedView;
     private int _version = -1;
-    private WeekReport? _report;
     private int _milestone;
     private AmbientLife? _ambient;
     private bool _disposed;
@@ -148,7 +147,6 @@ public sealed class EffectDirector : IDisposable
         var game = _game!;
         _snapshot.Capture(game.Map);
         _version = game.MapVersion;
-        _report = game.LastReport;
         _milestone = game.HighestMilestone;
         _events.Clear();
     }
@@ -236,16 +234,6 @@ public sealed class EffectDirector : IDisposable
             }
 
             _milestone = game.HighestMilestone;
-        }
-
-        if (!ReferenceEquals(game.LastReport, _report))
-        {
-            if (animate && game.LastReport is { Income: > 0 })
-            {
-                TaxDay(map, view);
-            }
-
-            _report = game.LastReport;
         }
 
         _events.Clear();
@@ -549,20 +537,6 @@ public sealed class EffectDirector : IDisposable
     {
         var origin = (view.X + view.Width / 2.0, view.Y + view.Height * 0.55);
         Spawn(new ConfettiEffect(origin, 70, _system.NextSeed()));
-    }
-
-    private void TaxDay(GameMap map, CellRect view)
-    {
-        var sources = new List<Pos>();
-        foreach (var zone in new[] { ZoneType.Commercial, ZoneType.Residential, ZoneType.Industrial })
-        {
-            sources.AddRange(SampleZone(map, zone, view, 5));
-        }
-
-        if (sources.Count > 0)
-        {
-            Spawn(new CoinsEffect(sources, _system.NextSeed()));
-        }
     }
 
     private void Spawn(Effect effect, double delay = 0)

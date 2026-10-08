@@ -59,8 +59,19 @@ memory. Inspect native and managed thread stacks rather than inferring the cause
 | [tests/TermCity.Tests](../tests/TermCity.Tests) | Simulation, generation, scenarios, persistence, session, rendering, grid/options and music synthesis tests |
 
 `CityGame` owns rules, money, calendar, growth and lazily cached statistics/road service.
+`CityProgression` owns the shared City Grew! stages, permanent building gates, unlock descriptions
+and next-step coaching. `CityGame` records peaks independently of any session or guide setting.
 `GameSession` owns cursor/camera/selection, zoom level, messages, previews, undo, prompts,
 save/load/autosave guards and feedback. It has no Godot dependency.
+
+Accelerated default-rules gameplay regression tests cover two seeds on each random map size,
+using paid actions, no loans and a mid-play save/load. They reach the final 10,000-person milestone:
+
+```bash
+dotnet test tests/TermCity.Tests/TermCity.Tests.csproj --filter 'Category=Playthrough' --logger 'console;verbosity=detailed'
+```
+
+See [the playtest report](PLAYTEST.md) for measured game-time equivalents and balance decisions.
 
 `Main` connects session events to desktop controls. `TerminalMap` and `TerminalGrid` implement the
 terminal-styled cell display; they are Godot presentation components, not a console frontend.
@@ -94,10 +105,14 @@ including seed 1981019679 at 160x96 in normal and 2x zoom, to check visible conn
 Road glyphs use cardinal neighbor masks; generated highways leave each interchange along a compass arm and then run at any angle as four-connected staircases.
 Every road type is drawn as a curve when `vectorRoads` is passed (any zoom level, no overlay; `BlockSampler.VectorRoads`
 and `TerminalGrid` pass it, the minimap does not and stays glyph-based): the cell is left blank and
-`RoadCurves`/`RoadVectorLayer` supply the picture. The simulation is unchanged and still four-connected.
+`RoadCurves`/`RoadVectorLayer` supply the picture. Network connectivity remains four-connected.
+`Rendering/RoadGeometry` is built once per `RoadNetwork` revision from shared `DrawnPaths`, also reused
+by `RoadVectorLayer`. It reserves whole cells crossed by the normal-size road bed or conservative
+junction blend, for every road type including disconnected roads. Automatic growth and player
+building placement reject these partially occupied cells; existing buildings are retained.
 `RoadCurves.Extract` traces roads as paths that run straight through junctions, cuts a path where the road type changes
 (`SplitByType`, so each stretch keeps its own colours and the seam is hidden by a one-cell overlap), then straightens,
-resamples and smooths each (a branch ends a short setback before the road it joins). `RoadVectorLayer`
+resamples and smooths each (a branch reaches the host centreline so three-way junctions merge without a separate end cap). `RoadVectorLayer`
 rasterises 16x16-cell chunks with a signed-distance field per path, blended across paths with a smooth minimum so
 junction corners get fillets. The bed is opaque out to the outer edge of the two edge lines (`BedHalfWidth`), so it hides
 terrain glyphs and water; chunks are drawn after the terrain glyph pass. When zoomed out (`Stride` > 1) chunks are
@@ -105,7 +120,7 @@ rendered at `Render(chunkX, chunkY, scale, stride)`, covering stride times the m
 Ambient sprites (cars, walkers) follow the drawn curve: `IAmbientWorld.Snap` projects their position onto `RoadGuide`'s
 segments (filtered with `FollowRate` so they glide), and speeds are the `AmbientLife` `*Speed` constants.
 `godot/TerminalMap` caches the chunks as textures and draws them between the cell backgrounds and the glyphs.
-Existing roads over water render as bridges. Unserved zones dim and disconnected roads turn amber.
+Existing roads over water render as bridges. Unserved zones dim and disconnected roads turn red.
 `BlockSampler` chooses representative visuals for coarse zoom, prioritizing buildings, zones,
 roads, water, hills, features and open ground. `CellInspector` supplies bottom-line details.
 
@@ -163,10 +178,15 @@ crown's tribute) and the castle tiers in `CityServices` (`SeatRank`). Each runs 
 Taxes arrive weekly. Occupied R/C/I cells have weekly values 200/350/500 at the default 5% tax rate.
 Dezoned occupied buildings retain population/tax income until their random 14-21-game-day deadline.
 Restoring their original zone cancels removal. Demolition is immediate, free and unreimbursed.
+Full-funded service upgrades compare supply capacity or summed actual strength-weighted coverage.
+Higher tiers have strictly cheaper normalized cost over 52 weeks on flat ground; road upgrades
+have corresponding value tests.
 
 Statistics visit sparse zones/removal queues and use stack counters. Connectivity/service is cached
 separately from weekly growth; road changes invalidate it. Road service spreads through buildable
 terrain from roads connected to the map boundary. Default reach is two cells.
+Nearby connected visible road beds supplement this access when within 0.75 cell widths horizontally
+and cell heights vertically of a building cell's footprint edge.
 
 `Changed` notifies possible UI changes; `MapVersion` advances only for map-visible changes.
 Renaming raises a non-map change notification, allowing dirty/autosave tracking without changing
@@ -221,6 +241,14 @@ native cursor navigation and sliders retain native arrow editing. Same-menu refr
 the highlighted choice. `MenuShortcuts` assigns unique letter/modifier pairs, preferring first
 letters and then subordinate letters. `MnemonicButton` underlines the assigned character; rare
 Shift fallbacks show a visible hint. Number shortcuts are not supported.
+Shift+click or Shift+Enter inspects a dialog option without activating it; plain Enter still activates.
+`SessionChoice.Help` supplies registered building/road glyphs, descriptions, current-funded upkeep,
+cost, capacity, radius/strength and requirements. Ring icons come from `AreaOfEffect.ForBuilding`,
+not a separate effect list. Other choices have a text fallback. The independently scrolling help
+panel stays on the right, with compact proportional widths in small windows; Close help does not
+change menu focus/history. Shift+letter mnemonics and ordinary selection Shift+click are unchanged.
+The guide's Glossary tab lists current terrain, feature, zone, road and building content (including
+footprint art), actual area-of-effect icons, and the shared `EffectGlyphs` with their meanings.
 `GameSession` retains parent prompts, input text and selected indexes. Cancellation pops one parent;
 successful actions explicitly close the menu chain. Placement previews retain their originating
 prompt/history and restore it only on cancellation, not successful confirmation.
@@ -295,7 +323,8 @@ Godot supplies `user://quicksave.json` in the distinct `TermCityGodot` user-data
 The reusable core's fallback path remains local application data plus `TermCity/quicksave.json`;
 the desktop application does not use that fallback.
 `GameSession.SaveDisplayPath` abbreviates the home directory for the right-aligned bottom status label.
-The label shares a single row with cell information, uses at most half the row width, and exposes
+The label is visible only while a save-confirmation dialog is open (`SessionPrompt.IsSaveDialog`).
+It shares a single row with cell information, uses at most half the row width, and exposes
 the full absolute path in a tooltip. Save guards do not duplicate the path in prompt footers.
 
 Saves include configuration/scenario, name, cash/calendar, RNG state, speed/pause/taxes, growth plan,

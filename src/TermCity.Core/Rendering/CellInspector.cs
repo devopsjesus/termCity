@@ -1,3 +1,4 @@
+using TermCity.Core.Buildings;
 using TermCity.Core.Simulation;
 using TermCity.Core.Util;
 using TermCity.Core.World;
@@ -62,6 +63,12 @@ public static class CellInspector
             lines.Add(standalone.Name);
             var footprint = map.BuildingFootprintAt(pos.X, pos.Y);
             if (footprint.Area > 1) lines.Add($"{footprint.Width}x{footprint.Height} cells");
+            if (game.Config.FullRules && standalone.Service != ServiceKind.None)
+            {
+                lines.Add(map.BuildingIsServed(map.Index(pos.X, pos.Y), game.Network.IsServed)
+                    ? "Active (connected-road access)"
+                    : "INACTIVE: no connected-road access; upkeep still charged");
+            }
             if (map.ZoneRemovalAt(pos.X, pos.Y) is { } removal)
             {
                 double days = Math.Max(0, removal.RemoveAtDay - game.ElapsedDays);

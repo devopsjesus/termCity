@@ -61,9 +61,41 @@ leave a visible error in the dialog. When loading, the saved map/configuration o
 
 ## How to play
 
-Random cities start paused with a first-city guide. Connect roads to an existing highway or a map
-edge, zone nearby homes with **R**, and resume with **P**. A connected road serves land within
-two cells; water blocks service from spreading across it. Disconnected roads are amber.
+Random cities start paused with a next-step first-city guide. Connect a short track to an existing highway or a map
+edge and zone 20-30 nearby homes with **R**, leaving open service plots. **Before resuming with P**,
+build a road-connected **Woodlot (8,000g)** and **Town Well (4,000g)** through Enter > Services.
+Together they cost 12,000g and 60g/week, leaving 38,000g of the starting 50,000g before road costs.
+A connected road serves land within
+two cells; water blocks service from spreading across it. Disconnected roads are red.
+
+At 10 occupied homes, zone shops and workshops with **C/I**. Put smoky workshops in a separate
+district, not among homes. Save for the largest happiness complaint rather than buying every service
+at once. Budget can reduce local-service funding to 75% (about 84% effectiveness). Keep at least
+8,000g for replacing a lost Woodlot, plus reserves for winter grain, tribute and expansion. Extend
+short tracks when districts run out of room; empty zoned plots can be dezoned with **U** for services.
+
+### City Grew! milestones
+
+These achievements use the **highest population reached**, not the current population. Each new
+city size opens a **City Grew!** dialog that pauses simulation, names everything newly available
+and gives advice. **F7** lists reached and upcoming gates. Falling population does not relock buildings.
+
+| Population | Milestone | Newly available |
+|---|---|---|
+| 100 | Hamlet | Tavern |
+| 500 | Village | Stone Keep, Hospice, Parish Church; level-2 redevelopment |
+| 1,000 | Market Town | Gaol, Infirmary, Monastery, Guildhall |
+| 2,500 | Borough | Castle |
+| 5,000 | City | Cathedral; level-3 redevelopment |
+| 10,000 | Great City | Final achievement; all city-size gates open |
+
+Density still requires suitable land value, supplies, road class and a lord's seat (a motte for
+level 2; a keep and cobbles for level 3). Smaller essential services remain available from the start.
+Service menus show locked buildings and their thresholds; previews and placement enforce the same gates.
+**F6 > Dismiss tip** switches off coaching, **not milestones or unlock gates**.
+**F6 > Enable guide** turns coaching back on. Achievements and the guide preference survive save/load.
+For repeated small/medium/large playthrough results and balance refinements, see
+[the playtest report](docs/PLAYTEST.md).
 
 Press **F6** (or Esc > Guide) for the GUIDE, a tabbed dialog (Start, Zones, Roads, Services, Population, Happiness,
 Economy; Left/Right or a click switches tab) that explains how each thing you place drives the town's population.
@@ -99,6 +131,8 @@ the service mapping and ideas for the future are in [docs/MEDIEVAL.md](docs/MEDI
 
 Roads cost money: a street starts at **500g per cell**, an avenue at **900g**, and a highway at
 **1,500g**. Upgrades charge the difference; hills multiply construction costs by 1.5.
+The crown maintains the King's Road, so it has no weekly upkeep; dirt tracks and cobbled roads
+still cost 1g and 2g per cell each week at full funding.
 Road/building menus include registered player-placeable types. Service menus show each building's
 footprint: a Sheriff's Hall occupies 2x1 cells, a Parish Church 2x2, and a Castle 4x3.
 Larger buildings fill their footprint with type-specific ASCII art at normal and close zoom,

@@ -93,15 +93,67 @@ shortfall becomes **arrears**, added to next year's bill, and makes raiders bold
 
 Buildings come in three levels (house/apartments/tower, shop/office/skyscraper, factory/plant/complex). A building may
 upgrade when population, land value (scaled by the scenario's density appetite), road class, power and water, and local
-demand all allow it, and downgrades when land value collapses. Upgrades are gated by population: 1,500 for level 2 and
-9,000 for level 3.
+demand all allow it, and downgrades when land value collapses. City Grew! permanently opens population
+eligibility at 500 souls for level 2 and 5,000 for level 3. Road class, utilities, land value and the
+lord's seat still apply. Current population or the highest achieved milestone satisfies the size gate.
+
+## City-size progression and the optional guide
+
+`CityProgression` is the shared source of milestones and building gates. A building's `MinPopulation`
+rounds up to the next milestone (100, 500, 1,000, 2,500, 5,000, 10,000); zero remains ungated.
+The simulation records every crossed milestone, including on the final day before weekly mortality.
+The session announces all newly crossed stages together in a pausing City Grew! dialog. The service
+menu, placement preview, quote and final action all use the same permanent unlock check.
+Existing saves retain their achieved population milestones and normalize current population on load;
+already-built services continue working even if they now have a placement gate.
+
+The sidebar guide follows road access, supplies, first occupied homes, employment, finances, happiness
+complaints, space for expansion and the next milestone. Dismissing it changes only coaching, and
+F6 can enable it again. Unlock announcements and the F7 milestone list are always available.
 
 ## Money
 
 Gold is the currency (`Fmt.Money` prints `15,000g`). Tithes and rents (the tax) = filled cell value x tax rate, reduced by unemployment and unfilled jobs and lifted by education.
-Expenses are the upkeep of every civic building (scaled by the funding level), road upkeep, loan interest and
+Starter supplies are a Woodlot (8,000g; 300 fuel; 40g/week) and Town Well (4,000g; 260 water; 20g/week).
+They remain ungated and leave room in the 50,000g initial treasury for roads, care and reserves.
+An Aqueduct is a larger option at 14,000g and 60g/week; terrain can increase its construction cost.
+Every utility must have at least one footprint cell served by an edge-connected road. Disconnected
+utilities produce nothing but still charge upkeep, and homes without fuel or water pay no taxes.
+Placement warns about inactive services without preventing construction; connecting a road activates
+them. The building menu shows weekly upkeep, and the cell inspector shows active/inactive status.
+Within each service family, higher-priced tiers provide more output and lower upkeep per unit.
+Utilities are compared by supply; area services use the sum of actual strength-weighted coverage
+over unobstructed land. At full funding, every upgrade has a lower construction-plus-upkeep cost
+per output unit within 52 weeks on flat ground. Starter affordability, capacities, coverage,
+population gates and special benefits or drawbacks are unchanged.
+
+| Rebalanced upgrade | Construction | Upkeep/week |
+|---|---:|---:|
+| Charcoal Burners | 34,000g | 100g |
+| Aqueduct | 14,000g | 60g |
+| Gaol | 26,000g | 180g |
+| Tavern | 6,000g | 35g |
+| Stone Keep | 38,000g | 200g |
+| Castle | 85,000g | 280g |
+| Parish Church | 26,000g | 130g |
+| Cathedral | 110,000g | 280g |
+| Guildhall | 28,000g | 160g |
+
+Road tiers already have better construction and running cost per unit of traffic capacity.
+
+Buildings occupy complete logical cells. New civic buildings and automatic zone growth reject
+cells intersected by the visible road bed, including angled-road smoothing and junction blends.
+Road access retains the normal two-cell land-based reach and also includes clear ground within
+0.75 cell widths horizontally and 0.75 cell heights vertically of a connected visible road bed.
+Disconnected roads never grant access. Existing buildings are not removed by this clearance rule.
+The crown maintains the King's Road at no cost to the city; tracks and cobbles retain their upkeep.
+Expenses are the upkeep of every civic building (scaled by the funding level), local road upkeep, loan interest and
 administration: a share of tax income (up to 55%) that grows with population from 2,000 up to 50,000 people, so large
 cities cannot coast on surpluses.
+
+The weekly finance forecast excludes variable grain purchases, tribute and disaster losses. Keep a
+cash reserve for those, as well as at least 8,000g to replace a lost starter fuel supply. Care should
+be added near homes and prioritized by actual complaints; smoky workshops belong in a separate district.
 
 Funding a service below 100% saves money but gives only `funding^0.6` of the benefit (half funding is about two
 thirds as good); an insolvent city's services run at half strength. Power and water are always paid in full. Loans are

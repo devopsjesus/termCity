@@ -10,7 +10,7 @@ public readonly record struct CellVisual(string Glyph, Rgb Foreground, Rgb Backg
 public static class CellRenderer
 {
     private static readonly Rgb BuildingBackground = Rgb.Hex(0x2b2b30);
-    public static readonly Rgb DisconnectedRoad = Rgb.Hex(0xe8a33d);
+    public static readonly Rgb DisconnectedRoad = Rgb.Hex(0xff7777);
 
     /// <param name="vectorRoads">
     /// When the caller draws roads as curves (see <see cref="RoadVectorLayer"/>), their cells are left as bare ground

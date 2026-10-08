@@ -93,7 +93,7 @@ public class AreaMenuTests
         var session = Session();
         session.ShowAreaMenu();
         session.SelectPrompt(2);
-        Assert.Equal("Choose a building to preview.", session.Prompt!.Text);
+        Assert.Equal("Choose a building, then click or press Enter to place it.", session.Prompt!.Text);
         int civic = session.Game.Map.Content.Buildings.Count(b => b.PlayerPlaceable);
         Assert.True(civic > 0);
         Assert.Equal(civic + 1, session.Prompt.Choices.Count);
@@ -113,6 +113,19 @@ public class AreaMenuTests
         Assert.Equal(1_000, session.Preview.Quote.Cost);
         Assert.True(session.ConfirmPreview().Success);
         Assert.Same(building, session.Game.Map.BuildingAt(10, 19));
+    }
+
+    [Fact]
+    public void BuildingMenuShowsWeeklyUpkeepBeforePurchase()
+    {
+        var session = new GameSession(TestCity.Flat(config: new GameConfig(), rules: CityRules.Full));
+        session.ShowAreaMenu();
+        session.SelectPrompt(2);
+        var menu = session.Prompt!;
+        Assert.Contains(menu.Columns!, column => column.Header == "UPKEEP/WK");
+        Assert.Equal("40g", menu.Choices.Single(choice => choice.Label == "Woodlot").Cells![2]);
+        Assert.Equal("60g", menu.Choices.Single(choice => choice.Label == "Aqueduct").Cells![2]);
+        Assert.Equal("20g", menu.Choices.Single(choice => choice.Label == "Town Well").Cells![2]);
     }
 
     [Fact]

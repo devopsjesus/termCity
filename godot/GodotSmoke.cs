@@ -230,6 +230,11 @@ internal static class GodotSmoke
         var savePathLabel = Descendants(host).OfType<Label>().Single(l => l.Name == "QuickSavePath");
         void CheckStatusPath()
         {
+            if (session.Prompt?.IsSaveDialog != true)
+            {
+                Require(!savePathLabel.IsVisibleInTree(), "Quick-save path must be hidden outside save dialogs.");
+                return;
+            }
             Require(savePathLabel.IsVisibleInTree() &&
                 savePathLabel.Text == $"Quick-save: {session.SaveDisplayPath}" &&
                 savePathLabel.TooltipText == Path.GetFullPath(session.SavePath) &&
@@ -247,7 +252,7 @@ internal static class GodotSmoke
                 $"row={savePathLabel.GetParent<Control>().GetGlobalRect()}, text='{savePathLabel.Text}', " +
                 $"tooltip='{savePathLabel.TooltipText}'.");
         }
-        CheckStatusPath();
+        Require(!savePathLabel.IsVisibleInTree(), "Quick-save path must be hidden during gameplay.");
         Require(status.Text.StartsWith(CellInspector.Summary(session.Game, session.Cursor), StringComparison.Ordinal) &&
             status.Text.Contains("Selection 3x1 (3 cells)", StringComparison.Ordinal),
             "Multi-cell selection details are not beside the cell details in the bottom status line.");
@@ -264,6 +269,7 @@ internal static class GodotSmoke
             "F10 did not unmute music.");
         await KeyEvent(Key.Escape);
         Require(session.Prompt?.Title == "City menu", "Native Esc did not open the menu.");
+        Require(!savePathLabel.IsVisibleInTree(), "Quick-save path must be hidden in the city menu.");
         session.RequestQuit();
         await Frames();
         Require(session.Prompt is { Title: "Quit", Footer: null }, "Save confirmation still includes the quick-save path.");
@@ -278,9 +284,10 @@ internal static class GodotSmoke
         Require(saveDialog.GetParent<Control>().TooltipText == savePathLabel.TooltipText,
             "The quick-save path tooltip is blocked while a save confirmation is open.");
         await KeyEvent(Key.Escape);
+        Require(!savePathLabel.IsVisibleInTree(), "Quick-save path must hide when the save dialog closes.");
         var cityMenu = Descendants(host).OfType<PanelContainer>().Single(p => p.Name == "CityDialog" && p.IsVisibleInTree());
         float largeMenuHeight = cityMenu.Size.Y;
-        var menuButtons = Descendants(cityMenu).OfType<Button>().ToArray();
+        var menuButtons = Descendants(cityMenu).OfType<Button>().Where(b => b.IsVisibleInTree()).ToArray();
         Require(menuButtons.All(b => b.Alignment == HorizontalAlignment.Left),
             "Menu choices must be left-aligned.");
         float menuCharacter = host.Theme.DefaultFont.GetStringSize("M", fontSize: host.Theme.DefaultFontSize).X;
@@ -444,6 +451,53 @@ internal static class GodotSmoke
         int shiftedChoice = -1;
         session.ShowAreaMenu();
         session.SelectPrompt(2);
+        await Frames();
+        var servicePrompt = session.Prompt!;
+        string beforeHelp = SaveGameStore.Serialize(session.Game);
+        await KeyEvent(Key.Enter, shift: true);
+        Require(ReferenceEquals(servicePrompt, session.Prompt) && session.Preview is null &&
+            servicePrompt.HelpIndex == servicePrompt.SelectedIndex &&
+            SaveGameStore.Serialize(session.Game) == beforeHelp,
+            "Shift+Enter must inspect a choice without activation or simulation changes.");
+        var helpPanel = Descendants(host).OfType<ScrollContainer>().Single(n => n.Name == "ChoiceHelpPanel");
+        var helpText = Descendants(host).OfType<Label>().Single(n => n.Name == "ChoiceHelpText");
+        var focusedChoice = (Button)host.GetViewport().GuiGetFocusOwner();
+        Require(helpPanel.IsVisibleInTree() && helpPanel.GlobalPosition.X >=
+            focusedChoice.GetGlobalRect().End.X && helpText.Text.Contains("Upkeep:", StringComparison.Ordinal),
+            "Contextual help must appear to the right with service details.");
+        int clickedIndex = 1;
+        var clickedChoice = Descendants(host).OfType<Button>().First(b =>
+            b.TooltipText.StartsWith(servicePrompt.Choices[clickedIndex].Label + " (", StringComparison.Ordinal));
+        Vector2 helpClick = clickedChoice.GetGlobalRect().GetCenter();
+        foreach (bool pressed in new[] { true, false })
+            host.GetViewport().PushInput(new InputEventMouseButton
+            {
+                ButtonIndex = MouseButton.Left, Pressed = pressed, ShiftPressed = true,
+                Position = helpClick, GlobalPosition = helpClick,
+            }, true);
+        await Frames();
+        Require(ReferenceEquals(servicePrompt, session.Prompt) && session.Preview is null &&
+            servicePrompt.HelpIndex == clickedIndex,
+            $"Native Shift+click must open option help without activation: same={ReferenceEquals(servicePrompt, session.Prompt)}, preview={session.Preview?.Name}, help={servicePrompt.HelpIndex}, click={helpClick}, button={clickedChoice.GetGlobalRect()}.");
+        bool helpHeadless = DisplayServer.GetName() == "headless";
+        var helpWindowSize = helpHeadless ? host.GetWindow().ContentScaleSize : host.GetWindow().Size;
+        if (helpHeadless) host.GetWindow().ContentScaleSize = new Vector2I(640, 480);
+        else host.GetWindow().Size = new Vector2I(640, 480);
+        await Frames();
+        var helpDialog = Descendants(host).OfType<PanelContainer>().Single(n => n.Name == "CityDialog");
+        Require(helpDialog.GetGlobalRect().Position.X >= 0 && helpDialog.GetGlobalRect().End.X <= host.Size.X + 1 &&
+            helpDialog.GetGlobalRect().Position.Y >= 0 && helpDialog.GetGlobalRect().End.Y <= host.Size.Y + 1 &&
+            helpPanel.Size.X > 0 && helpText.AutowrapMode != TextServer.AutowrapMode.Off,
+            "Compact contextual help must stay in the window and retain scrollable, wrapped text.");
+        if (helpHeadless) host.GetWindow().ContentScaleSize = helpWindowSize;
+        else host.GetWindow().Size = helpWindowSize;
+        await Frames();
+        focusedChoice.GrabFocus();
+        await KeyEvent(Key.Enter);
+        Require(session.Preview?.Building?.Name == servicePrompt.Choices[0].Label,
+            "Plain Enter must still activate the focused placement choice after contextual help.");
+        await KeyEvent(Key.Escape);
+        Require(ReferenceEquals(servicePrompt, session.Prompt), "Help must preserve placement menu history.");
         for (int index = 0; index < session.Prompt!.Shortcuts.Count; index++)
             if (session.Prompt.Shortcuts[index].Shift) { shiftedChoice = index; break; }
         if (shiftedChoice >= 0)
@@ -708,7 +762,7 @@ internal static class GodotSmoke
         Require(session.Prompt?.Title == "Font size", "F3 did not open the font dialog.");
         await Frames();
         var smallDialog = Descendants(host).OfType<PanelContainer>().Single(p => p.Name == "CityDialog" && p.IsVisibleInTree());
-        var compactScroll = Descendants(smallDialog).OfType<ScrollContainer>().Single();
+        var compactScroll = Descendants(smallDialog).OfType<ScrollContainer>().Single(s => s.IsVisibleInTree());
         float compactContentHeight = Math.Min(compactScroll.GetChild<Control>(0).GetCombinedMinimumSize().Y,
             host.Size.Y - 96);
         Require(smallDialog.Size.Y < largeMenuHeight &&
@@ -1120,12 +1174,13 @@ internal static class GodotSmoke
             if (session.Prompt is not null) Press(Key.Escape);
         }
         Press(Key.F6);
-        Require(session.Prompt is { Title: "TermCity guide", Tabs.Count: 7, ActiveTab: 0 }, "F6 did not open the tabbed guide.");
+        Require(session.Prompt is { Title: "TermCity guide", Tabs.Count: 8, ActiveTab: 0 }, "F6 did not open the tabbed guide.");
         Press(Key.Right);
         Require(session.Prompt?.ActiveTab == 1 && session.Prompt.Tabs![1].Title == "Zones", "Right arrow did not switch guide tab.");
         Press(Key.Left);
         Press(Key.Left);
-        Require(session.Prompt?.ActiveTab == 6, "Left arrow did not wrap to the last guide tab.");
+        Require(session.Prompt?.ActiveTab == 7 && session.Prompt.Tabs![7].Title == "Glossary",
+            "Left arrow did not wrap to the glossary.");
         Press(Key.Escape);
         Require(session.Prompt is null, "Esc did not close the guide.");
         if (session.GuideVisible)
@@ -1190,7 +1245,7 @@ internal static class GodotSmoke
         Press(Key.Escape);
         session.ShowAreaMenu();
         session.SelectPrompt(2);
-        Require(session.Prompt?.Title == "Service buildings" && (session.Prompt.Text == "Choose a building to preview." ||
+        Require(session.Prompt?.Title == "Service buildings" && (session.Prompt.Text == "Choose a building, then click or press Enter to place it." ||
             session.Prompt.Text == "No service buildings are registered."), "Building menu was not shown or explained.");
         Press(Key.Escape);
         Require(session.Prompt?.Title == "Area menu", "Service cancellation did not restore the area menu.");

@@ -255,13 +255,13 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
 
     private static void RegisterServices(BuildingRegistry registry)
     {
-        registry.Register(Civic("Charcoal Burners", ServiceKind.Power, "Ψ", 0xff8c5a, cost: 60_000, upkeep: 400,
+        registry.Register(Civic("Charcoal Burners", ServiceKind.Power, "Ψ", 0xff8c5a, cost: 34_000, upkeep: 100,
             capacity: 1_200, pollution: 8, text: "Cheap, plentiful fuel for hearths and forges; the smoke carries a long way"));
-        registry.Register(Civic("Woodlot", ServiceKind.Power, "☼", 0xffe066, cost: 45_000, upkeep: 90,
+        registry.Register(Civic("Woodlot", ServiceKind.Power, "☼", 0xffe066, cost: 8_000, upkeep: 40,
             capacity: 300, text: "Coppiced wood: clean fuel, but each lot supplies far less"));
-        registry.Register(Civic("Aqueduct", ServiceKind.Water, "◍", 0x66c7ff, cost: 22_000, upkeep: 120,
+        registry.Register(Civic("Aqueduct", ServiceKind.Water, "◍", 0x66c7ff, cost: 14_000, upkeep: 60,
             capacity: 900, water: true, text: "Channels water from a river, mere or the sea; must stand on the shore"));
-        registry.Register(Civic("Town Well", ServiceKind.Water, "◎", 0x8fd8ff, cost: 12_000, upkeep: 60,
+        registry.Register(Civic("Town Well", ServiceKind.Water, "◎", 0x8fd8ff, cost: 4_000, upkeep: 20,
             capacity: 260, text: "A stone well and trough; works anywhere, supplies little"));
 
         registry.Register(Civic("Fire Watch", ServiceKind.Fire, "♨", 0xff6b4a, cost: 9_000, upkeep: 160,
@@ -270,42 +270,42 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             radius: 10, strength: 60, text: "A constable and the night watch: a cheap deterrent for a small quarter"));
         registry.Register(Civic("Sheriff's Hall", ServiceKind.Police, "★", 0x6d8dff, cost: 9_000, upkeep: 160,
             radius: 16, text: "The sheriff, his men and a lock-up: deters crime around it; needs road access"));
-        registry.Register(Civic("Gaol", ServiceKind.Police, "▦", 0x4f6bd8, cost: 30_000, upkeep: 380,
+        registry.Register(Civic("Gaol", ServiceKind.Police, "▦", 0x4f6bd8, cost: 26_000, upkeep: 180,
             radius: 24, minPopulation: 900, text: "Cells, stocks and a gallows: a wide reach against crime, for a large town"));
         registry.Register(Civic("Apothecary", ServiceKind.Health, "✚", 0xff7aa8, cost: 8_000, upkeep: 130,
             radius: 12, strength: 70, text: "Herbs and leeches: lowers mortality and the risk of plague"));
         registry.Register(Civic("Infirmary", ServiceKind.Health, "⊕", 0xff4d8d, cost: 40_000, upkeep: 520,
-            radius: 24, text: "A monastic infirmary with wide, strong care; expensive to run"));
+            radius: 24, minPopulation: 1_000, text: "A monastic infirmary with wide, strong care; expensive to run"));
         registry.Register(Civic("Hospice", ServiceKind.Health, "♡", 0xff93b8, cost: 16_000, upkeep: 210,
-            radius: 15, strength: 85, text: "Almshouse beds run by a brotherhood: a middling reach and a gentle price"));
+            radius: 15, strength: 85, minPopulation: 500, text: "Almshouse beds run by a brotherhood: a middling reach and a gentle price"));
         registry.Register(Civic("Chantry School", ServiceKind.Education, "✎", 0xc59bff, cost: 8_000, upkeep: 120,
             radius: 12, strength: 70, text: "A priest teaches letters and sums; lettered workers earn and build more"));
         registry.Register(Civic("Monastery", ServiceKind.Education, "⌘", 0xa56cff, cost: 45_000, upkeep: 560,
-            radius: 28, pilgrims: 60, text: "A scriptorium and cloister: learning with a wide reach, and a shrine for pilgrims"));
+            radius: 28, minPopulation: 1_000, pilgrims: 60, text: "A scriptorium and cloister: learning with a wide reach, and a shrine for pilgrims"));
         registry.Register(Civic("Village Green", ServiceKind.Recreation, "♣", 0x4ddf6b, cost: 2_500, upkeep: 25,
             radius: 8, strength: 80, pollution: -2, text: "Common land and a maypole: land value, happiness, less crime and smoke"));
-        registry.Register(Civic("Tavern", ServiceKind.Recreation, "◒", 0xffb347, cost: 6_000, upkeep: 80,
-            radius: 11, strength: 90, text: "Ale, songs and gossip: cheers a wide quarter"));
+        registry.Register(Civic("Tavern", ServiceKind.Recreation, "◒", 0xffb347, cost: 6_000, upkeep: 35,
+            radius: 11, strength: 90, minPopulation: 100, text: "Ale, songs and gossip: cheers a wide quarter"));
 
         // The lord's seat: a castle anchors a settlement. It garrisons the surrounding land (defence), lifts land value and
         // the tithe, draws settlers, and a town cannot grow tall without one.
         registry.Register(Civic("Motte and Bailey", ServiceKind.Defence, "♙", 0xd9b48f, cost: 14_000, upkeep: 150,
             radius: 20, strength: 70, seat: 1, text: "An earth mound, palisade and hall: the lord's first seat; a hamlet becomes a manor"));
-        registry.Register(Civic("Stone Keep", ServiceKind.Defence, "♜", 0xc8c8d0, cost: 60_000, upkeep: 450,
+        registry.Register(Civic("Stone Keep", ServiceKind.Defence, "♜", 0xc8c8d0, cost: 38_000, upkeep: 200,
             radius: 28, strength: 85, seat: 2, minPopulation: 400, text: "A tower of stone and a walled bailey: burghers dare to build taller and richer"));
-        registry.Register(Civic("Castle", ServiceKind.Defence, "♚", 0xf2f2f8, cost: 180_000, upkeep: 1_400,
+        registry.Register(Civic("Castle", ServiceKind.Defence, "♚", 0xf2f2f8, cost: 85_000, upkeep: 280,
             radius: 38, strength: 100, seat: 3, minPopulation: 2_500, text: "Curtain walls, towers and a great hall: a royal seat that anchors a whole town"));
 
         registry.Register(Civic("Chapel", ServiceKind.Faith, "†", 0xfff2b3, cost: 5_000, upkeep: 70,
             radius: 10, strength: 70, pilgrims: 12, text: "A priest and a bell: solace for the faithful and a gentler temper"));
-        registry.Register(Civic("Parish Church", ServiceKind.Faith, "‡", 0xffe680, cost: 26_000, upkeep: 280,
+        registry.Register(Civic("Parish Church", ServiceKind.Faith, "‡", 0xffe680, cost: 26_000, upkeep: 130,
             radius: 18, strength: 90, minPopulation: 300, pilgrims: 80, text: "A stone church with a tower: a wide reach for the faith, tithes and holy days"));
-        registry.Register(Civic("Cathedral", ServiceKind.Faith, "✙", 0xfff7d6, cost: 240_000, upkeep: 1_900,
+        registry.Register(Civic("Cathedral", ServiceKind.Faith, "✙", 0xfff7d6, cost: 110_000, upkeep: 280,
             radius: 34, strength: 100, minPopulation: 4_000, pilgrims: 700, text: "A soaring cathedral that draws pilgrims and wonder; a work of generations"));
 
         registry.Register(Civic("Market Cross", ServiceKind.Trade, "¤", 0xffd27f, cost: 6_000, upkeep: 60,
             radius: 12, strength: 80, text: "A market place and a toll: traders and shoppers raise land value and market tolls"));
-        registry.Register(Civic("Guildhall", ServiceKind.Trade, "§", 0xe0a55c, cost: 38_000, upkeep: 380,
+        registry.Register(Civic("Guildhall", ServiceKind.Trade, "§", 0xe0a55c, cost: 28_000, upkeep: 160,
             radius: 22, minPopulation: 800, text: "The guilds' hall: master craftsmen, fair weights and a rich trade across the town"));
 
         registry.Register(Civic("Granary", ServiceKind.Granary, "▨", 0xe6c97a, cost: 10_000, upkeep: 80,

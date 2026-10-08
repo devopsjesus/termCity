@@ -59,6 +59,26 @@ public class FullRulesTests
     }
 
     [Fact]
+    public void DisconnectedWaterChargesUpkeepButHomesPayTaxAsSoonAsItConnects()
+    {
+        var game = TestCity.Flat(config: new GameConfig(), rules: CityRules.Full);
+        var woodlot = Civic(game, "Woodlot");
+        var well = Civic(game, "Town Well");
+        Assert.True(game.PlaceBuilding(woodlot, new CellRect(10, 18, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(well, new CellRect(30, 5, 1, 1)).Success);
+        Assert.True(game.Designate(new CellRect(40, 18, 20, 1), ZoneType.Residential).Success);
+        TestCity.Advance(game, 10);
+        Assert.True(game.Stats.Population > 0);
+        Assert.Equal(0, game.Services.Water.Supply);
+        Assert.Equal(0, game.Finance.Income);
+        Assert.Equal(60, game.Finance.ServiceUpkeep);
+
+        Assert.True(game.BuildRoad(new CellRect(30, 7, 1, 14)).Success);
+        Assert.Equal(well.Capacity, game.Services.Water.Supply);
+        Assert.True(game.Finance.Income > 0);
+    }
+
+    [Fact]
     public void PowerAndWaterMustMatchDemand()
     {
         var game = Town();

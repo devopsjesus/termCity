@@ -115,7 +115,7 @@ public static class DefaultRoads
         CostMultiplier = 3.0,
         Rank = 3,
         TrafficCapacity = 60,
-        WeeklyUpkeep = 4,
-        Description = "The King's Road: a paved, patrolled highway between towns",
+        WeeklyUpkeep = 0,
+        Description = "The King's Road: a paved, patrolled highway maintained by the crown",
     };
 }

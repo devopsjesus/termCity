@@ -1,3 +1,4 @@
+using TermCity.Core.Rendering;
 using TermCity.Core.World;
 
 namespace TermCity.Core.Simulation;
@@ -12,12 +13,18 @@ public sealed class RoadNetwork
     private readonly bool[] _connected;
     private readonly bool[] _served;
     private readonly byte[] _access;
+    private readonly RoadGeometry _geometry;
+    private readonly int _width;
 
-    private RoadNetwork(bool[] connected, bool[] served, byte[] access, int connectedCount, int trafficCapacity)
+    private RoadNetwork(bool[] connected, bool[] served, byte[] access, int connectedCount, int trafficCapacity,
+        RoadGeometry geometry, int width, IReadOnlyList<RoadPath> paths)
     {
         _connected = connected;
         _served = served;
         _access = access;
+        _geometry = geometry;
+        _width = width;
+        DrawnPaths = paths;
         ConnectedRoadCount = connectedCount;
         TrafficCapacity = trafficCapacity;
     }
@@ -27,6 +34,8 @@ public sealed class RoadNetwork
     /// <summary>Total trip capacity of every connected road (bigger road types carry more).</summary>
     public int TrafficCapacity { get; }
 
+    internal IReadOnlyList<RoadPath> DrawnPaths { get; }
+
     /// <summary>Rank (1 street, 2 avenue, 3 highway...) of the best connected road reaching a cell; 0 when unserved.</summary>
     public int AccessRank(int index) => _access[index];
 
@@ -35,6 +44,8 @@ public sealed class RoadNetwork
     public bool IsServed(GameMap map, int x, int y) => map.InBounds(x, y) && _served[map.Index(x, y)];
 
     public bool IsServed(int index) => _served[index];
+
+    public bool RoadOverlapsCell(int index) => _geometry.OverlapsCell(index % _width, index / _width);
 
     public static RoadNetwork Compute(GameMap map, int serviceReach)
     {
@@ -186,7 +197,15 @@ public sealed class RoadNetwork
             (frontier, next) = (next, frontier);
         }
 
-        return new RoadNetwork(connected, served, access, connectedCount, trafficCapacity);
+        var paths = RoadCurves.Extract(map, (x, y) => connected[map.Index(x, y)]);
+        var geometry = new RoadGeometry(map, paths);
+        foreach (var (index, rank) in geometry.NearbyAccess)
+        {
+            served[index] = true;
+            access[index] = (byte)Math.Max(access[index], rank);
+        }
+
+        return new RoadNetwork(connected, served, access, connectedCount, trafficCapacity, geometry, width, paths);
     }
 
     public static readonly (int Dx, int Dy)[] Neighbors = [(0, -1), (1, 0), (0, 1), (-1, 0)];

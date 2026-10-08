@@ -210,7 +210,7 @@ public class EffectDirectorTests
     }
 
     [Fact]
-    public void MilestonesThrowConfettiAndTaxDayDropsCoins()
+    public void MilestonesThrowConfettiButTaxDaySpawnsNoMoneyAnimations()
     {
         var (game, system, director) = Setup();
         system.Settings.Celebrations = true;
@@ -220,11 +220,11 @@ public class EffectDirectorTests
 
         game.LastReport = new WeekReport(5, 120, 0, 0, 0);
         director.Update(0.016);
-        Assert.Single(system.Effects.OfType<CoinsEffect>());
+        Assert.Empty(system.Effects.OfType<CoinsEffect>());
 
         director.Update(0.016);
         Assert.Single(system.Effects.OfType<ConfettiEffect>());
-        Assert.Single(system.Effects.OfType<CoinsEffect>());
+        Assert.Empty(system.Effects.OfType<CoinsEffect>());
         Run(director, 6);
         Assert.Equal(0, system.ActiveEffects);
     }
@@ -248,7 +248,7 @@ public class EffectDirectorTests
         system.Settings.Celebrations = false;
         system.ClearCelebrations();
         Assert.Empty(system.Effects.OfType<ConfettiEffect>());
-        Assert.Single(system.Effects.OfType<CoinsEffect>());
+        Assert.Empty(system.Effects.OfType<CoinsEffect>());
         game.HighestMilestone = 10000;
         director.Update(0.016);
         Assert.Empty(system.Effects.OfType<ConfettiEffect>());
@@ -261,6 +261,27 @@ public class EffectDirectorTests
         game.LastReport = new WeekReport(5, 0, 0, 0, 0);
         director.Update(0.016);
         Assert.Empty(system.Effects.OfType<CoinsEffect>());
+    }
+
+    [Fact]
+    public void WeeklyTaxesStillArriveWithoutMoneyAnimations()
+    {
+        var game = TestCity.Flat();
+        var type = game.Map.Content.Buildings.ForZone(ZoneType.Residential)!;
+        game.Map.SetZone(30, 19, ZoneType.Residential);
+        game.Map.SetBuilding(30, 19, type);
+        game.Map.SetHousehold(30, 19, new Household(2, 2, 0));
+        game.Touch();
+        var system = new EffectSystem(1);
+        using var director = new EffectDirector(system) { Ambient = false };
+        director.Attach(game);
+        int money = game.Money;
+        var report = game.AdvanceWeek();
+        director.Update(0.5);
+        Assert.True(report.Income > 0);
+        Assert.Equal(money + report.Income, game.Money);
+        Assert.Equal(0, director.TotalSpawned);
+        Assert.Empty(system.Sprites);
     }
 
     [Fact]

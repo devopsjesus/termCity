@@ -39,7 +39,9 @@ public sealed record PlacementPreview(
 }
 
 /// <summary>One selectable row of a prompt. With table columns, <see cref="Label"/> fills the first and <see cref="Cells"/> the rest.</summary>
-public sealed record SessionChoice(string Label, Action Select, IReadOnlyList<string>? Cells = null);
+public sealed record SessionChoice(string Label, Action Select, IReadOnlyList<string>? Cells = null, ChoiceHelp? Help = null);
+
+public sealed record ChoiceHelp(string Icons, string Description, string Details);
 
 /// <summary>One page of a tabbed prompt such as the guide.</summary>
 public sealed record PromptTab(string Title, string Text);
@@ -53,6 +55,7 @@ public sealed class SessionPrompt(
     public IReadOnlyList<SessionChoice> Choices { get; } = choices;
     public string? Input { get; set; } = input;
     public string? Footer { get; } = footer;
+    public bool IsSaveDialog { get; init; }
 
     /// <summary>When set, the choices are drawn as a table with these column headers (the first heads the choice label).</summary>
     public IReadOnlyList<TableColumn>? Columns { get; } = columns;
@@ -62,6 +65,12 @@ public sealed class SessionPrompt(
 
     public int ActiveTab { get; } = activeTab;
     public int SelectedIndex { get; set; }
+    public int? HelpIndex { get; set; }
+    public ChoiceHelp? ActiveHelp => HelpIndex is { } index && index >= 0 && index < Choices.Count
+        ? Choices[index].Help ?? new ChoiceHelp("?", Choices[index].Label,
+            string.Join("\n", Choices[index].Cells ?? []) + "\n" + Text +
+            "\n\nPlain Enter activates this option. Esc returns to the previous menu.")
+        : null;
     public IReadOnlyList<MenuShortcut> Shortcuts { get; } = MenuShortcuts.Assign(choices);
 }
 
@@ -69,13 +78,13 @@ public sealed partial class GameSession
 {
     public const int AutosaveIntervalSeconds = 60;
     public const int AutosaveSlots = 3;
-    public static readonly IReadOnlyList<int> Milestones = Array.AsReadOnly(new[] { 100, 500, 1_000, 5_000, 10_000 });
+    public static readonly IReadOnlyList<int> Milestones = Array.AsReadOnly(CityProgression.Milestones.Select(m => m.Population).ToArray());
 
     private string? _undoSnapshot;
     private double _undoAt;
     private int _revision, _savedRevision = -1, _autosaveRevision = -1;
     private double _savedAt, _autosaveAt, _autosaveElapsed;
-    private int _observedHomes, _observedWeek;
+    private int _observedHomes, _observedWeek, _observedMilestone;
     private Pos _roadAnchor;
     private RoadType? _lineRoad;
     private readonly Stack<SessionPrompt> _promptHistory = [];
@@ -84,6 +93,13 @@ public sealed partial class GameSession
 
     public PlacementPreview? Preview { get; private set; }
     public bool RoadToolActive { get; private set; }
+    public bool BuildingToolActive => Preview?.Kind == PlacementKind.Building;
+    public string? BuildingPlacementError => Preview?.Building is { } building
+        ? Game.BuildingPlacementError(building, Preview.Area.X, Preview.Area.Y)
+        : null;
+    public string? BuildingPlacementWarning => Preview?.Building is { } building
+        ? Game.BuildingPlacementWarning(building, Preview.Area)
+        : null;
     public SessionPrompt? Prompt { get; private set; }
     public bool GuideVisible { get; private set; }
     public bool HasUnsavedChanges => _revision != _savedRevision || Game.ElapsedDays != _savedAt;
@@ -99,13 +115,7 @@ public sealed partial class GameSession
         }
     }
 
-    public string GuideText => Game.Stats.Residential.Zoned == 0
-        ? "First city: cut a track (T), mark out homesteads (R), then resume (P). F6 opens the guide."
-        : Game.Stats.Residential.Occupied >= Game.Config.MinResidentialCells
-            ? "Markets and workshops unlocked: zone with C and I. F6 opens the guide."
-        : Game.Paused
-            ? "Homes zoned. Check road access, then press P to resume. Markets and workshops unlock at 10 occupied homes."
-            : $"Grow to {Game.Config.MinResidentialCells} occupied homes to unlock markets and workshops. F6 opens the guide.";
+    public string GuideText => CityProgression.NextStep(Game);
 
     public string AutosavePath(int slot)
     {
@@ -177,11 +187,38 @@ public sealed partial class GameSession
 
     public void PreviewBuilding(BuildingType building)
     {
+        if (!CityProgression.IsUnlocked(Game, building))
+        {
+            SetMessage($"{building.Name} is locked until City Grew! at {CityProgression.RequiredPopulation(building):N0} souls.", MessageKind.Error);
+            return;
+        }
+
         _previewMenu = CaptureMenu() ?? _selectedMenu;
-        var area = Game.BuildingPlacementArea(building, ActiveArea);
+        Anchor = null;
+        Selection = null;
+        RefreshBuildingPlacement(building);
+    }
+
+    public void MoveBuildingPlacement(Pos position)
+    {
+        if (Preview?.Building is not { } building)
+        {
+            return;
+        }
+
+        Cursor = Clamp(position);
+        RefreshBuildingPlacement(building);
+        FollowCursor();
+    }
+
+    private void RefreshBuildingPlacement(BuildingType building)
+    {
+        var area = new CellRect(Cursor.X, Cursor.Y, building.Width, building.Height);
+        var validCells = Game.BuildingPlacementError(building, Cursor.X, Cursor.Y) is null
+            ? area.Cells().ToHashSet()
+            : [];
         Preview = new(PlacementKind.Building, area, Game.QuoteBuilding(building, area),
-            $"{building.Name} ({building.Width}x{building.Height})", Building: building,
-            ValidCells: Game.PlanBuildings(building, area).SelectMany(p => p.Cells()).ToHashSet());
+            $"{building.Name} ({building.Width}x{building.Height})", Building: building, ValidCells: validCells);
         Changed?.Invoke();
     }
 
@@ -234,7 +271,7 @@ public sealed partial class GameSession
             PlacementKind.Building when preview.Building is { } building => Game.PlaceBuilding(building, preview.Area),
             PlacementKind.Demolish => Game.Demolish(preview.Cells ?? preview.Area.Cells()),
             _ => ActionResult.Fail("No building type selected."),
-        });
+        }, preview.Building is { } type ? Game.BuildingPlacementWarning(type, preview.Area) : null);
         if (result.Success)
         {
             ClearPreview();
@@ -420,7 +457,7 @@ public sealed partial class GameSession
         }
 
         bool quitting = title == "Quit";
-        ShowPrompt(title,
+        SetPrompt(new(title,
             quitting
                 ? "Save your city before quitting? Autosaves are separate from your quick-save."
                 : "Save your city before continuing? Autosaves are separate from your quick-save.",
@@ -435,7 +472,7 @@ public sealed partial class GameSession
             }),
             new(quitting ? "Quit without saving" : "Continue without saving", () => { CancelPrompt(); action(); }),
             new("Cancel", CancelPrompt),
-        ]);
+        ]) { IsSaveDialog = true });
     }
 
     private static string DisplayPath(string path)
@@ -502,6 +539,10 @@ public sealed partial class GameSession
         {
             choices.Add(new("Dismiss tip", DismissGuide, ["Hide the sidebar tip for good"]));
         }
+        else
+        {
+            choices.Add(new("Enable guide", EnableGuide, ["Show the next-step sidebar tip"]));
+        }
 
         ShowTabbedPrompt("TermCity guide", GuideContent.Tabs(Game), tab, choices, GuideChoiceColumns);
     }
@@ -514,6 +555,14 @@ public sealed partial class GameSession
         CancelPrompt();
     }
 
+    public void EnableGuide()
+    {
+        GuideVisible = true;
+        Game.GuideDismissed = false;
+        Game.Touch();
+        CancelPrompt();
+    }
+
     public void ShowReport()
     {
         var report = Game.LastReport;
@@ -521,6 +570,9 @@ public sealed partial class GameSession
             $"Week {report.Week}: income {Fmt.Money(report.Income)}\nNew homes {report.NewHouseholds}, stalls {report.NewCommercial}, workshops {report.NewIndustrial}";
         text += $"\nPopulation: {Game.Stats.Population:N0}\nHighest milestone: {Game.HighestMilestone:N0}";
         text += NextMilestone is { } next ? $"\nNext milestone: {next:N0} people" : "\nAll population milestones reached.";
+        text += "\n\n" + string.Join("\n\n", CityProgression.Milestones.Select(m =>
+            $"{(Game.HighestMilestone >= m.Population ? "[Reached]" : "[Locked]")} {m.Name}: {m.Population:N0} souls\n" +
+            CityProgression.Unlocks(Game, m)));
         ShowPrompt("Weekly report and milestones", text, [new("Close", CancelPrompt)]);
     }
 
@@ -551,16 +603,20 @@ public sealed partial class GameSession
     {
         _observedHomes = Game.Stats.Residential.Occupied;
         _observedWeek = Game.Week;
+        _observedMilestone = Game.HighestMilestone;
     }
 
     private void UpdateFeedback()
     {
         int homes = Game.Stats.Residential.Occupied;
-        int reached = Milestones.LastOrDefault(m => m <= Game.Stats.Population);
-        if (reached > Game.HighestMilestone)
+        if (Game.HighestMilestone > _observedMilestone)
         {
-            Game.HighestMilestone = reached;
-            SetMessage($"Population milestone: {reached:N0}! F7 shows your progress.", MessageKind.Success);
+            var reached = CityProgression.Milestones.Where(m =>
+                m.Population > _observedMilestone && m.Population <= Game.HighestMilestone).ToArray();
+            _observedMilestone = Game.HighestMilestone;
+            SetMessage($"City Grew! {reached[^1].Name}: {Game.HighestMilestone:N0} souls. F7: unlocks.", MessageKind.Success);
+            ShowPrompt("City Grew!", CityProgression.Announcement(Game, reached),
+                [new("Continue", CancelPrompt), new("Review milestones", ShowReport)]);
         }
         else if (_observedHomes < Game.Config.MinResidentialCells && homes >= Game.Config.MinResidentialCells)
         {

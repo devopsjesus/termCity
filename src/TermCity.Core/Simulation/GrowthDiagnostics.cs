@@ -10,6 +10,7 @@ public enum GrowthStatus
     NeedsHomes,
     CapacityReached,
     MissingBuilding,
+    RoadOverlap,
 }
 
 public sealed record GrowthDiagnostic(GrowthStatus Status, string Message, int EligibleVacancies, bool Paused);
@@ -18,7 +19,8 @@ public static class GrowthDiagnostics
 {
     public static GrowthDiagnostic ForZone(CityGame game, ZoneType zone)
     {
-        int eligible = game.Map.ZoneCells(zone).Count(i => game.Map.BuildingLayer[i] == 0 && game.Network.IsServed(i));
+        int eligible = game.Map.ZoneCells(zone).Count(i => game.Map.BuildingLayer[i] == 0 &&
+            game.Network.IsServed(i) && !game.Network.RoadOverlapsCell(i));
         var count = game.Stats.For(zone);
         if (count.Filled >= count.Zoned)
         {
@@ -27,6 +29,8 @@ public static class GrowthDiagnostics
 
         if (eligible == 0)
         {
+            if (game.Map.ZoneCells(zone).Any(i => game.Map.BuildingLayer[i] == 0 && game.Network.RoadOverlapsCell(i)))
+                return RoadOverlap(game);
             return NoRoad(game, eligible);
         }
 
@@ -41,11 +45,16 @@ public static class GrowthDiagnostics
             return Result(GrowthStatus.NoVacancies, "No vacant zone here.", 0, game);
         }
 
+        int index = game.Map.Index(x, y);
+        if (game.Network.RoadOverlapsCell(index)) return RoadOverlap(game);
         return game.Network.IsServed(game.Map, x, y) ? Capacity(game, zone, 1) : NoRoad(game, 0);
     }
 
     private static GrowthDiagnostic NoRoad(CityGame game, int eligible) =>
         Result(GrowthStatus.NoRoadAccess, $"Connect a road to the map edge within {game.Config.RoadServiceReach} cells.", eligible, game);
+
+    private static GrowthDiagnostic RoadOverlap(CityGame game) =>
+        Result(GrowthStatus.RoadOverlap, "An angled road crosses this land; buildings need whole, clear cells.", 0, game);
 
     private static GrowthDiagnostic Capacity(CityGame game, ZoneType zone, int eligible)
     {
