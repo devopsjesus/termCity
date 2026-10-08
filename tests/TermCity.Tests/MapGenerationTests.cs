@@ -56,6 +56,7 @@ public class MapGenerationTests
     [Theory]
     [InlineData(1)]
     [InlineData(99)]
+    [InlineData(1981019679)]
     public void ExistingRoadsReachTheMapEdgeAndAreConnected(int seed)
     {
         var game = CityGame.New(new GameConfig { Seed = seed });

@@ -76,7 +76,7 @@ public class FullRulesTests
         var pump = Civic(game, "Aqueduct");
         Assert.False(game.CanPlaceBuilding(pump, 40, 40));
         var water = game.Map.Content.Terrains.Get("Water");
-        game.Map.SetTerrain(41, 40, water);
+        game.Map.SetTerrain(42, 40, water);
         Assert.True(game.CanPlaceBuilding(pump, 40, 40));
     }
 

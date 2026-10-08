@@ -192,6 +192,96 @@ public class RoadCurveTests
         Assert.Equal(21 * W, whole.Xs.Max(), 6);
     }
 
+    [Theory]
+    [InlineData(0, 1, 1)]
+    [InlineData(1, 1, 1)]
+    [InlineData(2, 1, 1)]
+    [InlineData(3, 1, 1)]
+    [InlineData(0, 2, 1)]
+    [InlineData(0, 1, 2)]
+    [InlineData(0, 1, 4)]
+    public void OpposingStreetAndHighwayBendsStayVisuallyConnected(int rotation, int scale, int stride)
+    {
+        var (game, king) = Blank();
+        var track = game.Map.Content.Roads.Get(DefaultRoads.TrackName);
+        (int X, int Y)[] directions = [(0, -1), (1, 0), (0, 1), (-1, 0)];
+        game.Map.SetRoad(12, 12, king);
+        for (int arm = 0; arm < directions.Length; arm++)
+        {
+            var (dx, dy) = directions[arm];
+            var type = arm == (rotation + 1) % 4 || arm == (rotation + 2) % 4 ? king : track;
+            for (int step = 1; step <= 10; step++)
+                game.Map.SetRoad(12 + dx * step, 12 + dy * step, type);
+        }
+
+        AssertDrawnRoadsConnected(game, scale, stride);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void ReportedSeedHasNoVisibleGapBetweenStreetsAndHighways(int scale)
+    {
+        var game = CityGame.New(new GameConfig { Seed = 1981019679, MapWidth = 160, MapHeight = 96 });
+        Assert.Equal(game.Map.RoadCells.Count, game.Network.ConnectedRoadCount);
+        AssertDrawnRoadsConnected(game, scale);
+    }
+
+    private static void AssertDrawnRoadsConnected(CityGame game, int scale = 1, int stride = 1)
+    {
+        var layer = new RoadVectorLayer();
+        layer.Sync(game);
+        int chunksX = (game.Map.Width + RoadVectorLayer.ChunkCells * stride - 1) / (RoadVectorLayer.ChunkCells * stride);
+        int chunksY = (game.Map.Height + RoadVectorLayer.ChunkCells * stride - 1) / (RoadVectorLayer.ChunkCells * stride);
+        int chunkWidth = RoadVectorLayer.ChunkCells * W * scale;
+        int chunkHeight = RoadVectorLayer.ChunkCells * H * scale;
+        int width = chunksX * chunkWidth, height = chunksY * chunkHeight;
+        var painted = new bool[width * height];
+        int count = 0, start = -1;
+        for (int cy = 0; cy < chunksY; cy++)
+        {
+            for (int cx = 0; cx < chunksX; cx++)
+            {
+                if (layer.Render(cx, cy, scale, stride) is not { } chunk) continue;
+                for (int y = 0; y < chunk.Height; y++)
+                {
+                    for (int x = 0; x < chunk.Width; x++)
+                    {
+                        if (chunk.Rgba[(y * chunk.Width + x) * 4 + 3] <= 32) continue;
+                        int index = (cy * chunkHeight + y) * width + cx * chunkWidth + x;
+                        painted[index] = true;
+                        count++;
+                        start = index;
+                    }
+                }
+            }
+        }
+
+        Assert.True(start >= 0, "No road pixels were rendered.");
+        var queue = new Queue<int>();
+        queue.Enqueue(start);
+        painted[start] = false;
+        int reached = 0;
+        (int X, int Y)[] neighbours = [(0, -1), (1, 0), (0, 1), (-1, 0)];
+        while (queue.TryDequeue(out int cell))
+        {
+            reached++;
+            int x = cell % width, y = cell / width;
+            foreach (var (dx, dy) in neighbours)
+            {
+                int nx = x + dx, ny = y + dy;
+                if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+                int next = ny * width + nx;
+                if (!painted[next]) continue;
+                painted[next] = false;
+                queue.Enqueue(next);
+            }
+        }
+
+        Assert.True(reached == count,
+            $"Only {reached} of {count} road pixels are joined at scale {scale}, stride {stride}.");
+    }
+
     [Fact]
     public void ASlantedBranchCurvesInAlongsideTheDiagonalRoadItJoins()
     {

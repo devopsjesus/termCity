@@ -310,6 +310,46 @@ public class EffectBudgetTests
     }
 
     [Fact]
+    public void TrafficAndBirdsFreezeIncludingWingFramesWhileSmokeContinues()
+    {
+        var system = AmbientSystem();
+        var life = Assert.Single(system.Effects.OfType<AmbientLife>());
+        for (int i = 0; i < 300; i++) system.Update(1.0 / 30);
+        Assert.True(life.Cars > 0 && life.People > 0 && life.Birds > 0);
+        EffectSprite[] Actors() => system.Sprites.Where(sprite =>
+            sprite.Color == EffectGlyphs.CarColor || sprite.Color == EffectGlyphs.PersonColor ||
+            sprite.Color == EffectGlyphs.BirdColor).ToArray();
+        EffectSprite[] Smoke() => system.Sprites.Where(sprite => sprite.Color == EffectGlyphs.SmokeColor).ToArray();
+        var actors = Actors();
+        var smoke = Smoke();
+        Assert.NotEmpty(smoke);
+        life.TrafficAndBirdsPaused = true;
+        for (int i = 0; i < 120; i++)
+        {
+            system.Update(1.0 / 30);
+            Assert.Equal(actors, Actors());
+        }
+        Assert.False(smoke.SequenceEqual(Smoke()));
+        life.TrafficAndBirdsPaused = false;
+        system.Update(0.1);
+        Assert.False(actors.SequenceEqual(Actors()));
+    }
+
+    [Fact]
+    public void PausedTrafficAndBirdsDoNotSpawnButSmokeStillAppears()
+    {
+        var system = AmbientSystem();
+        var life = Assert.Single(system.Effects.OfType<AmbientLife>());
+        life.TrafficAndBirdsPaused = true;
+        for (int i = 0; i < 300; i++) system.Update(1.0 / 30);
+        Assert.Equal(0, life.Cars);
+        Assert.Equal(0, life.People);
+        Assert.Equal(0, life.Birds);
+        Assert.True(life.SmokeSources > 0);
+        Assert.NotEmpty(system.Sprites);
+    }
+
+    [Fact]
     public void AmbientCarsStayOnRoads()
     {
         var system = AmbientSystem();
@@ -438,6 +478,22 @@ public class EffectBudgetTests
         }
 
         Assert.True(fish > 0 && whales > 0, $"fish {fish}, whales {whales}");
+    }
+
+    [Fact]
+    public void WaterLifeContinuesWhileTrafficAndBirdsArePaused()
+    {
+        var (system, life) = WaterSystem(sea: true);
+        life.TrafficAndBirdsPaused = true;
+        int fish = 0, whales = 0;
+        for (int i = 0; i < 1800; i++)
+        {
+            system.Update(1.0 / 30);
+            fish = Math.Max(fish, life.Fish);
+            whales = Math.Max(whales, life.Whales);
+            Assert.Equal(0, life.Birds);
+        }
+        Assert.True(fish > 0 && whales > 0);
     }
 
     [Fact]

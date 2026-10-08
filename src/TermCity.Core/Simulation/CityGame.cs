@@ -809,7 +809,9 @@ public sealed class CityGame
         return (int)Math.Round(Config.RoadCostPerCell * Math.Max(0, type.CostMultiplier - existing) * terrain);
     }
 
-    public int BuildingCostAt(BuildingType type, int x, int y) => (int)Math.Round(type.Cost * Map.TerrainAt(x, y).BuildCostModifier);
+    public int BuildingCostAt(BuildingType type, int x, int y) =>
+        (int)Math.Round(type.Cost * new CellRect(x, y, type.Width, type.Height).Cells()
+            .Average(p => Map.TerrainAt(p.X, p.Y).BuildCostModifier));
 
     public bool CanBuildOn(int x, int y) =>
         Map.InBounds(x, y) && Map.TerrainAt(x, y).Buildable && !Map.HasRoad(x, y) &&
@@ -840,11 +842,33 @@ public sealed class CityGame
     }
 
     /// <summary>Open ground, and for a pump, the shore.</summary>
-    public bool CanPlaceBuilding(BuildingType type, int x, int y) =>
-        CanBuildOn(x, y) && (!type.RequiresWaterNearby || Map.NearWater(x, y, 1));
+    public bool CanPlaceBuilding(BuildingType type, int x, int y)
+    {
+        var footprint = new CellRect(x, y, type.Width, type.Height);
+        return footprint.Cells().All(p => CanBuildOn(p.X, p.Y)) &&
+            (!type.RequiresWaterNearby || footprint.Cells().Any(p => Map.NearWater(p.X, p.Y, 1)));
+    }
 
-    public Quote QuoteBuilding(BuildingType type, CellRect area) =>
-        QuoteCells(area, (x, y) => CanPlaceBuilding(type, x, y), (x, y) => BuildingCostAt(type, x, y));
+    public CellRect BuildingPlacementArea(BuildingType type, CellRect area) =>
+        new(area.X, area.Y, Math.Max(area.Width, type.Width), Math.Max(area.Height, type.Height));
+
+    public IReadOnlyList<CellRect> PlanBuildings(BuildingType type, CellRect area)
+    {
+        area = BuildingPlacementArea(type, area);
+        var plan = new List<CellRect>();
+        for (int y = area.Y; y + type.Height - 1 <= area.Bottom; y += type.Height)
+            for (int x = area.X; x + type.Width - 1 <= area.Right; x += type.Width)
+                if (CanPlaceBuilding(type, x, y)) plan.Add(new(x, y, type.Width, type.Height));
+        return plan;
+    }
+
+    public Quote QuoteBuilding(BuildingType type, CellRect area)
+    {
+        var plan = PlanBuildings(type, area);
+        int cells = plan.Sum(p => p.Area);
+        return new(cells, plan.Sum(p => BuildingCostAt(type, p.X, p.Y)),
+            BuildingPlacementArea(type, area).Cells().Count(Map.InBounds) - cells);
+    }
 
     private Quote QuoteCells(CellRect area, Func<int, int, bool> valid, Func<int, int, int> cost) =>
         QuoteCells(area.Cells(), valid, cost);
@@ -922,20 +946,12 @@ public sealed class CityGame
             return check;
         }
 
-        foreach (var p in area.Cells())
-        {
-            if (!CanPlaceBuilding(type, p.X, p.Y))
-            {
-                continue;
-            }
-
-            Map.SetFeature(p.X, p.Y, null);
-            Map.SetBuilding(p.X, p.Y, type);
-        }
+        var plan = PlanBuildings(type, area);
+        foreach (var footprint in plan) Map.SetBuildingFootprint(type, footprint);
 
         Money -= quote.Cost;
         Notify(roadsChanged: false, servicesChanged: true);
-        return ActionResult.Ok($"Built {quote.Cells} {type.Name}(s) for {Fmt.Money(quote.Cost)}." + SkippedNote(quote), quote.Cost, quote.Cells);
+        return ActionResult.Ok($"Built {plan.Count} {type.Name}(s), occupying {quote.Cells} cells, for {Fmt.Money(quote.Cost)}." + SkippedNote(quote), quote.Cost, quote.Cells);
     }
 
     private ActionResult? CheckSpend(Quote quote, string what)
@@ -1041,23 +1057,29 @@ public sealed class CityGame
     }
 
     /// <summary>Clears roads, zones, buildings and natural features. Free, no refunds.</summary>
-    public ActionResult Demolish(CellRect area)
+    public IReadOnlySet<Pos> DemolitionCells(IEnumerable<Pos> cells)
     {
+        var targets = new HashSet<Pos>();
+        foreach (var p in cells.Where(Map.InBounds))
+            foreach (var cell in Map.BuildingFootprintAt(p.X, p.Y).Cells()) targets.Add(cell);
+        return targets;
+    }
+
+    public ActionResult Demolish(CellRect area) => Demolish(area.Cells());
+
+    public ActionResult Demolish(IEnumerable<Pos> cells)
+    {
+        var targets = DemolitionCells(cells);
         int changed = 0;
         bool roadsRemoved = false;
-        foreach (var p in area.Cells())
+        // Count first: clearing any part of a service building removes its entire footprint.
+        foreach (var p in targets)
         {
-            if (!Map.InBounds(p))
-            {
-                continue;
-            }
-
             bool hadRoad = Map.HasRoad(p.X, p.Y);
             bool something = hadRoad || Map.ZoneAt(p.X, p.Y) != ZoneType.None ||
                              Map.BuildingAt(p.X, p.Y) is not null || Map.FeatureAt(p.X, p.Y) is not null;
             if (something)
             {
-                Map.ClearCell(p.X, p.Y);
                 roadsRemoved |= hadRoad;
                 changed++;
             }
@@ -1068,6 +1090,7 @@ public sealed class CityGame
             return ActionResult.Fail("Nothing to demolish here.");
         }
 
+        foreach (var p in targets) Map.ClearCell(p.X, p.Y);
         Notify(roadsChanged: roadsRemoved, servicesChanged: true);
         return ActionResult.Ok($"Demolished {changed} cell(s).", 0, changed);
     }

@@ -61,6 +61,7 @@ public sealed class AmbientLife : Effect
     private CellRect? _lastView;
     private double _lastScan;
     private double _clock;
+    private double _birdClock;
     private int _smokeSeed;
 
     private sealed class Walker
@@ -110,6 +111,8 @@ public sealed class AmbientLife : Effect
 
     public int SmokeSources => _factories.Count;
 
+    public bool TrafficAndBirdsPaused { get; set; }
+
     /// <summary>Most sprites this would draw at the current settings (the sink enforces the same cap).</summary>
     public int Budget(EffectSettings settings) => (int)(settings.MaxAmbientSprites * settings.Intensity);
 
@@ -144,9 +147,13 @@ public sealed class AmbientLife : Effect
         int peopleTarget = Math.Min(budget * 25 / 100, _homeRoads.Count / 4);
         int birdTarget = budget >= 10 ? Math.Max(1, budget / 10) : 0;
         var rng = system.Random;
-        Step(_cars, dt, view, carTarget, _roads, rng, CarSpeed.Min, CarSpeed.Max);
-        Step(_people, dt, view, peopleTarget, _homeRoads, rng, PersonSpeed.Min, PersonSpeed.Max);
-        StepBirds(dt, view, birdTarget, rng);
+        if (!TrafficAndBirdsPaused)
+        {
+            _birdClock += dt;
+            Step(_cars, dt, view, carTarget, _roads, rng, CarSpeed.Min, CarSpeed.Max);
+            Step(_people, dt, view, peopleTarget, _homeRoads, rng, PersonSpeed.Min, PersonSpeed.Max);
+            StepBirds(dt, view, birdTarget, rng);
+        }
         StepWater(dt, view, budget >= 10 ? Math.Max(1, budget / 12) : 0, rng);
     }
 
@@ -484,7 +491,7 @@ public sealed class AmbientLife : Effect
 
         foreach (var bird in _birds)
         {
-            int frame = (int)((_clock * 3 + bird.Phase) % 2);
+            int frame = (int)((_birdClock * 3 + bird.Phase) % 2);
             sink.AddSprite(new EffectSprite(EffectGlyphs.Bird[frame], (float)bird.X, (float)bird.Y, EffectGlyphs.BirdColor, 0.8f, 0.8f));
         }
 

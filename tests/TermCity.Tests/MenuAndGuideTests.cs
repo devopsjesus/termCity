@@ -120,6 +120,7 @@ public class MenuAndGuideTests
         string text = HelpContent.Text();
         Assert.StartsWith("KEY", text);
         Assert.Contains("Shift+click", text);
+        Assert.Contains("F10", text);
         Assert.Contains("GUIDE", HelpContent.Footer);
         Assert.True(text.Split('\n').Length < 40);
         Assert.All(text.Split('\n'), line => Assert.True(line.Length <= 90, line));

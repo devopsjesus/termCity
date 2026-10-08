@@ -25,7 +25,7 @@ public sealed partial class GameSession
             new("Demolish", () => { ClosePrompt(); PreviewDemolish(); }, ["Clear the area, free of charge"]),
             new("Deselect", () => { ClosePrompt(); ClearSelection(); }, ["Drop the selection"]),
             new("City menu", ShowSessionMenu, ["Save, load, budget, guide"]),
-            new("Back", ClosePrompt, ["Return to the city"]),
+            new("Back", CancelPrompt, ["Return to the previous menu"]),
         ], columns: AreaMenuColumns);
     }
 
@@ -34,7 +34,7 @@ public sealed partial class GameSession
         var choices = Zones.Placeable.Select(zone => new SessionChoice(
             Zones.Get(zone).Name, () => { ClosePrompt(); Zone(zone); }, ["free", ZoneBlurb(zone)])).ToList();
         choices.Add(new("Dezone", () => { ClosePrompt(); Dezone(); }, ["free", "Buildings leave over 2 to 3 weeks"]));
-        choices.Add(new("Back", ShowAreaMenu, ["", "Return to the area menu"]));
+        choices.Add(new("Back", CancelPrompt, ["", "Return to the area menu"]));
         ShowPrompt("Zone selected area", "Zoning is free. Connect roads for growth.", choices, columns: ZoneMenuColumns);
     }
 
@@ -57,7 +57,7 @@ public sealed partial class GameSession
             choices.Add(new(road.Name, () => { ClosePrompt(); BeginRoadLine(road); }, ["Draw line", "", "", ""]));
         }
 
-        choices.Add(new("Back", ShowAreaMenu, ["Return to the area menu", "", "", ""]));
+        choices.Add(new("Back", CancelPrompt, ["Return to the area menu", "", "", ""]));
         ShowPrompt("Roads", "Choose a road type, then fill the area or draw a straight line.", choices, columns: RoadMenuColumns);
     }
 
@@ -66,12 +66,13 @@ public sealed partial class GameSession
         var choices = Game.Map.Content.Buildings.Where(b => b.PlayerPlaceable).Select(building =>
         {
             var quote = Game.QuoteBuilding(building, ActiveArea);
-            string needs = building.MinPopulation > Game.Stats.Population ? $"{building.MinPopulation:N0} souls" : string.Empty;
+            string needs = $"{building.Width}x{building.Height}" +
+                (building.MinPopulation > Game.Stats.Population ? $"; {building.MinPopulation:N0} souls" : string.Empty);
             return new SessionChoice(building.Name, () => { ClosePrompt(); PreviewBuilding(building); },
                 [quote.Cells.ToString(), Fmt.Money(quote.Cost), needs]);
         }).ToList();
         bool empty = choices.Count == 0;
-        choices.Add(new("Back", ShowAreaMenu, ["", "", "Return to the area menu"]));
+        choices.Add(new("Back", CancelPrompt, ["", "", "Return to the area menu"]));
         ShowPrompt("Service buildings", empty ? "No service buildings are registered." : "Choose a building to preview.", choices,
             columns: BuildingMenuColumns);
     }

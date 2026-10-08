@@ -16,7 +16,7 @@ public class SeasonTests
         foreach (int y in new[] { 18, 21 })
         {
             Assert.True(game.Designate(new CellRect(10, y, 20, 2), ZoneType.Residential).Success);
-            Assert.True(game.Designate(new CellRect(31, y, 20, 2), ZoneType.Residential).Success);
+            Assert.True(game.Designate(new CellRect(32, y, 20, 2), ZoneType.Residential).Success);
         }
 
         Assert.True(game.Designate(new CellRect(60, 18, 10, 2), ZoneType.Commercial).Success);

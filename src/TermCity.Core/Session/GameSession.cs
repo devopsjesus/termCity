@@ -50,6 +50,8 @@ public sealed partial class GameSession
 
     public string SavePath { get; }
 
+    public string SaveDisplayPath => DisplayPath(SavePath);
+
     public Pos Cursor { get; private set; }
 
     /// <summary>The highlighted area, if any. Actions apply to this, or to the cursor cell when there is none.</summary>
@@ -462,7 +464,7 @@ public sealed partial class GameSession
 
     public void ClearSelection()
     {
-        CancelPreview();
+        ClearPreview();
         Anchor = null;
         Selection = null;
         SelectionChanged?.Invoke();
@@ -586,8 +588,9 @@ public sealed partial class GameSession
 
     private void ReplaceGame(CityGame game)
     {
-        CancelPreview();
+        ClearPreview();
         Prompt = null;
+        _promptHistory.Clear();
         _undoSnapshot = null;
         Game.Changed -= OnGameChanged;
         Game = game;

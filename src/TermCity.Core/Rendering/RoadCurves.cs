@@ -589,6 +589,12 @@ public static class RoadCurves
             }
         }
 
+        if (best.Count == 2 && (best[0].Item1 + 2) % 4 != best[0].Item2)
+        {
+            // Opposing rounded bends pull apart; join the other arms onto the main curve as branches instead.
+            best = best.OrderByDescending(m => Score(m.Item1, m.Item2)).Take(1).ToList();
+        }
+
         foreach (var (a, b) in best)
         {
             pairs[a] = b;

@@ -30,8 +30,14 @@ public sealed class BuildingType : RegisteredType
     /// <summary>What a filled cell of this building is worth in tax, relative to the smallest building of its zone.</summary>
     public double ValueMultiplier { get; init; } = 1;
 
-    /// <summary>Cost per cell when placed by the player.</summary>
+    /// <summary>Cost per complete building when placed by the player.</summary>
     public int Cost { get; init; }
+
+    public int Width { get; init; } = 1;
+    public int Height { get; init; } = 1;
+
+    /// <summary>ASCII art at two columns and two rows per occupied map cell.</summary>
+    public IReadOnlyList<string> FootprintArt { get; init; } = [];
 
     public bool PlayerPlaceable { get; init; }
 
@@ -75,6 +81,13 @@ public sealed class BuildingType : RegisteredType
     public bool IsService => Service != ServiceKind.None;
 
     public string GlyphAt(int x, int y) => Glyphs[CellHash.Pick(x, y, Glyphs.Count)];
+
+    public string FootprintGlyphAt(CellRect footprint, int x, int y)
+    {
+        if (footprint.Area == 1 || FootprintArt.Count == 0) return GlyphAt(x, y);
+        int column = (x - footprint.X) * 2, row = (y - footprint.Y) * 2;
+        return FootprintArt[row].Substring(column, 2) + "\n" + FootprintArt[row + 1].Substring(column, 2);
+    }
 }
 
 public sealed class BuildingRegistry : TypeRegistry<BuildingType>
@@ -306,8 +319,45 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         MinPopulation = minPopulation,
         SeatRank = seat,
         Pilgrims = pilgrims,
+        Width = name switch
+        {
+            "Castle" => 4,
+            "Stone Keep" or "Cathedral" or "Monastery" or "Infirmary" => 3,
+            "Charcoal Burners" or "Woodlot" or "Aqueduct" or "Fire Watch" or "Sheriff's Hall" or
+                "Gaol" or "Hospice" or "Chantry School" or "Village Green" or "Motte and Bailey" or
+                "Parish Church" or "Guildhall" or "Granary" => 2,
+            _ => 1,
+        },
+        Height = name switch
+        {
+            "Castle" or "Cathedral" or "Monastery" => 3,
+            "Stone Keep" or "Infirmary" or "Woodlot" or "Gaol" or "Village Green" or "Parish Church" => 2,
+            _ => 1,
+        },
         Name = name,
         Glyphs = [glyph],
+        FootprintArt = name switch
+        {
+            "Charcoal Burners" => ["~^^~", "[##]"],
+            "Woodlot" => ["/\\/\\", "||||", "/\\/\\", "||||"],
+            "Aqueduct" => ["====", "()()"],
+            "Fire Watch" => ["/^^\\", "[F|]"],
+            "Sheriff's Hall" => ["/^^\\", "[S#]"],
+            "Gaol" => ["+--+", "|##|", "|##|", "+--+"],
+            "Infirmary" => [" /++\\ ", "/____\\", "|+[]+|", "|__A_|"],
+            "Hospice" => ["/++\\", "[H|]"],
+            "Chantry School" => ["/^^\\", "[=A]"],
+            "Monastery" => ["  /\\  ", " /++\\ ", "/____\\", "|[][]|", "|_AA_|", "======"],
+            "Village Green" => ["T..T", ".++.", ".++.", "T..T"],
+            "Motte and Bailey" => ["/^^\\", "[||]"],
+            "Stone Keep" => ["[][][]", "|####|", "|#[]#|", "|_AA_|"],
+            "Castle" => ["[] [] []", "|######|", "|#[] []|", "|# /\\ #|", "[##||##]", "========"],
+            "Parish Church" => [" /+\\", "/__\\", "|[]|", "|_A|"],
+            "Cathedral" => [" /++\\ ", "/|++|\\", "||[]||", "||AA||", "|/AA\\|", "======"],
+            "Guildhall" => ["/^^\\", "[G|]"],
+            "Granary" => ["/^^\\", "[==]"],
+            _ => [],
+        },
         Foreground = Rgb.Hex(color),
         Cost = cost,
         PlayerPlaceable = true,

@@ -41,6 +41,42 @@ public sealed class GameMap
     private readonly HashSet<int> _roadCells = [];
     private readonly HashSet<int>[] _zoneCells = [[], [], [], []];
     private readonly HashSet<int> _serviceCells = [];
+    private readonly Dictionary<int, CellRect> _buildingFootprints = [];
+    private readonly Dictionary<int, int> _buildingOwners = [];
+
+    public IReadOnlyDictionary<int, CellRect> BuildingFootprints => _buildingFootprints;
+
+    public CellRect BuildingFootprintAt(int x, int y)
+    {
+        int index = Index(x, y);
+        return _buildingOwners.TryGetValue(index, out int owner)
+            ? _buildingFootprints[owner] : new CellRect(x, y, 1, 1);
+    }
+
+    public bool BuildingIsServed(int index, Func<int, bool> served) =>
+        BuildingFootprintAt(index % Width, index / Width).Cells().Any(p => served(Index(p.X, p.Y)));
+
+    public void SetBuildingFootprint(BuildingType building, CellRect area)
+    {
+        foreach (var p in area.Cells())
+        {
+            SetFeature(p.X, p.Y, null);
+            SetBuilding(p.X, p.Y, building);
+        }
+        RegisterBuildingFootprint(area);
+    }
+
+    internal void RegisterBuildingFootprint(CellRect area)
+    {
+        int owner = Index(area.X, area.Y);
+        _buildingFootprints.Add(owner, area);
+        foreach (var p in area.Cells())
+        {
+            int index = Index(p.X, p.Y);
+            _buildingOwners.Add(index, owner);
+            if (index != owner) _serviceCells.Remove(index);
+        }
+    }
 
     public GameMap(int width, int height, GameContent content)
     {
@@ -192,7 +228,8 @@ public sealed class GameMap
                 _zoneCells[(int)ZoneLayer[i]].Add(i);
             }
 
-            if (BuildingLayer[i] != 0 && Content.Buildings[BuildingLayer[i]].IsService)
+            if (BuildingLayer[i] != 0 && Content.Buildings[BuildingLayer[i]].IsService &&
+                (!_buildingOwners.TryGetValue(i, out int owner) || owner == i))
             {
                 _serviceCells.Add(i);
             }
@@ -228,6 +265,18 @@ public sealed class GameMap
     public void SetBuilding(int x, int y, BuildingType? building)
     {
         int i = Index(x, y);
+        if (_buildingOwners.TryGetValue(i, out int owner))
+        {
+            var footprint = _buildingFootprints[owner];
+            _buildingFootprints.Remove(owner);
+            foreach (var p in footprint.Cells())
+            {
+                int cell = Index(p.X, p.Y);
+                _buildingOwners.Remove(cell);
+                BuildingLayer[cell] = 0;
+                _serviceCells.Remove(cell);
+            }
+        }
         BuildingLayer[i] = building?.Id ?? 0;
         ZoneRemovals.Remove(i);
         if (building is { IsService: true })

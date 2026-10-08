@@ -75,6 +75,6 @@ public sealed class BlockSampler
         }
 
         road = VectorRoads && _map.HasRoad(bestX, bestY);
-        return CellRenderer.Render(_game, bestX, bestY, Overlay, VectorRoads);
+        return CellRenderer.Render(_game, bestX, bestY, Overlay, VectorRoads, buildingArt: false);
     }
 }

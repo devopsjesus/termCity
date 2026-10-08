@@ -40,6 +40,7 @@ public static class HelpContent
             ["Space, P  1  2  3", "Pause or resume; slow, medium, fast clock"],
             ["F5  F9  F6", "Quick-save, quick-load, guide"],
             ["F7  F8", "Weekly report, growth and road access"],
+            ["F10", "Mute or unmute music"],
             ["O  V  E", "Map overlays, effects, edge scrolling"],
             ["F3, Esc then Resize sidebar", "Font size, sidebar width"],
         ]),

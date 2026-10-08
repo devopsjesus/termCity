@@ -403,8 +403,7 @@ public class SessionFeatureTests
         Assert.DoesNotContain("continu", session.Prompt.Text, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("Save and quit", session.Prompt.Choices[0].Label);
         Assert.Equal("Quit without saving", session.Prompt.Choices[1].Label);
-        Assert.Contains("Quick-save file:", session.Prompt.Footer);
-        Assert.Contains(Path.GetFileName(session.SavePath), session.Prompt.Footer);
+        Assert.Null(session.Prompt.Footer);
         session.SelectPrompt(2);
         Assert.False(quit);
         session.RequestQuit();
@@ -418,6 +417,43 @@ public class SessionFeatureTests
         session.RequestQuit();
         session.SelectPrompt(1);
         Assert.True(quit);
+    }
+
+    [Theory]
+    [InlineData("Quit")]
+    [InlineData("New")]
+    [InlineData("Restart")]
+    [InlineData("Load")]
+    public void SaveGuardsDoNotIncludeTheQuickSavePath(string action)
+    {
+        var session = Session();
+        switch (action)
+        {
+            case "Quit": session.RequestQuit(); break;
+            case "New": session.RequestNewCity(restart: false); break;
+            case "Restart": session.RequestNewCity(restart: true); break;
+            case "Load": session.RequestLoad(session.SavePath); break;
+        }
+        Assert.NotNull(session.Prompt);
+        Assert.Null(session.Prompt.Footer);
+        Assert.DoesNotContain(session.SavePath, session.Prompt.Text);
+        Assert.DoesNotContain("Quick-save file:", session.Prompt.Text);
+    }
+
+    [Fact]
+    public void QuickSaveDisplayPathAbbreviatesTheHomeDirectory()
+    {
+        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var session = new GameSession(TestCity.Flat(), Path.Combine(home, "city.json"));
+        Assert.Equal("~" + Path.DirectorySeparatorChar + "city.json", session.SaveDisplayPath);
+    }
+
+    [Fact]
+    public void QuickSaveDisplayPathPreservesPathsOutsideTheHomeDirectory()
+    {
+        string path = Path.Combine(Path.GetPathRoot(Path.GetFullPath("."))!, "termcity-saves", "city.json");
+        var session = new GameSession(TestCity.Flat(), path);
+        Assert.Equal(path, session.SaveDisplayPath);
     }
 
     [Fact]

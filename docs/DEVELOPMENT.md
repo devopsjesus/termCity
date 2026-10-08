@@ -27,6 +27,29 @@ All projects target `net10.0`, with nullable references and implicit usings enab
 Godot uses `Godot.NET.Sdk/4.7.2`; tests use VSTest/xUnit v2.
 Generated `bin`, `obj`, `.godot` state and export outputs are ignored.
 
+### Windows rendering and resize checks
+
+[project.godot](../godot/project.godot) keeps the Compatibility renderer, with
+`rendering/gl_compatibility/driver.windows=opengl3_angle` selecting ANGLE / Direct3D11 only on Windows.
+This reduces the native OpenGL resize stall without adopting the Vulkan path that crashed during
+live resizing. Other platforms retain their default drivers. Native OpenGL remains an explicit
+fallback via `--rendering-driver opengl3`, placed before the game-argument separator.
+
+The graphical smoke test checks large resizes and maximize against a one-second budget on ANGLE.
+[WindowsResizeSmoke.cs](../godot/WindowsResizeSmoke.cs) also exercises native enter/sizing/paint/exit
+messages and window-size changes on the test window, without moving the system cursor or interacting
+with other applications. It restores the original bounds, checks city data is unchanged, and emits
+`TERMCITY_WINDOWS_RESIZE_OK`. Headless and non-Windows runs skip native Windows calls.
+
+These checks do not establish stability during physical edge dragging. Rapid live resizing has
+also been reported to hang with ANGLE: mouse input remains captured, opening Task Manager releases
+the mouse, but the game stays frozen. No managed exception or graphics-reset event was found in
+the observed logs. A native rendering/driver wait and a UI-thread deadlock remain unconfirmed
+possibilities. Avoid aggressive automated GUI stress on an interactive desktop.
+For diagnosis, keep the frozen process alive and use Task Manager's Details view to create a
+memory dump of the specific game process before ending it. Keep dumps local; they contain process
+memory. Inspect native and managed thread stacks rather than inferring the cause from resize timings.
+
 ## Architecture
 
 | Area | Responsibility |
@@ -49,6 +72,12 @@ bounded divider resizing and shared double-border rendering.
 `GameMap` stores flat layers indexed by `y * Width + x`: terrain/feature/road type/building IDs,
 road booleans, zones and households. Sparse road/zone index sets keep simulation work proportional
 to built cells. `SetRoad`, `SetZone` and `ClearCell` maintain them; loading rebuilds them.
+`BuildingType.Width/Height` define player-placement footprints. `PlanBuildings` tiles the
+expanded selection, rejecting blocked buildings atomically. `GameMap.BuildingFootprints` and a
+sparse cell-owner lookup associate occupied cells with one building; `ServiceCells` contains
+only its anchor. Road access through any occupied cell activates the building, but upkeep,
+supply, coverage and pilgrimage are counted once. Area effects originate at the anchor.
+Saves retain explicit footprints; legacy single-cell buildings are not expanded on load.
 
 `GameContent` combines terrain, feature, building and road registries. Types receive compact byte
 IDs in memory; saves resolve their names instead, allowing content reorderings.
@@ -58,6 +87,10 @@ children and seniors; occupied businesses contribute income but not population.
 `CellRenderer` composes terrain, features, zones, buildings and roads into glyph/foreground/background.
 The road tool (T) draws a line at any angle between its two ends (`CellLines.Between`, four-connected so the simulation can follow it); the preview carries just the cells on the line. Straight runs and diagonal staircases are drawn as straight lines (`RoadCurves.Straighten`), rounded only at real bends.
 Roads may cross and branch but never run side by side: `CityGame.PlanRoad` (via `RoadRules.Plan`) lets a stroke touch another road only where it runs into it or at its two ends, and never completes a 2x2 block of road (`CompletesRoadBlock`). It also refuses a new junction within `RoadRules.JunctionSpacing` cells of an existing one. Quote, build and the line preview all use that plan, generated maps lay highways first and then the street grid as strokes through the same rules (`CityMapGeometry.Grid`), `RoadSeparation.RemoveFragments` drops tiny detached scraps, and `RoadSeparation.Apply` clears generated roads that form 2x2 blocks (dropping the humblest road where the neighbours stay connected). In `RoadCurves`, `Pair` decides which arms of a junction run through it (highest rank first, then straightest), so a diagonal highway stays one curve; `Join` moves each branch end onto the host curve and, unless the meeting is nearly square, `Ramp` bends it into a quadratic merge along the host. Zoomed out, `RoadVectorLayer.Weight`/`Opacity`/`Shown`/`RankOpacity` thin, fade and (at stride 8+) drop the minor roads, while top-rank highways always keep a narrow bed and a thin double line (`HighwayBedHalf`, `HighwayLineOffset`, `HighwayLineHalf`) so they stay a backdrop.
+At four-way junctions where pairing would create opposing bends, only the main road continues
+through; the other arms join it as branches. This prevents independently rounded curves from
+pulling apart despite connected map cells. `RoadCurveTests` flood-fills the rendered road pixels,
+including seed 1981019679 at 160x96 in normal and 2x zoom, to check visible connectivity.
 Road glyphs use cardinal neighbor masks; generated highways leave each interchange along a compass arm and then run at any angle as four-connected staircases.
 Every road type is drawn as a curve when `vectorRoads` is passed (any zoom level, no overlay; `BlockSampler.VectorRoads`
 and `TerminalGrid` pass it, the minimap does not and stays glyph-based): the cell is left blank and
@@ -169,7 +202,8 @@ calendar/clock and population/budget have shared double-white frames. Week is sp
 space-padded; the day bar comes from `Fmt.WeekBar`. PAUSED uses a gentle four-second yellow pulse.
 
 Double-click enables a right-aligned city-name `LineEdit`, limited to 16 Unicode code points.
-Its native caret width matches a character to form a blinking block. Text backspaces toward the
+Its native caret width matches a character to form a blinking block; normal/focus right margins
+reserve that character cell so the caret is not clipped. Text backspaces toward the
 stationary right edge; an overlay slot leaves branding and header geometry unchanged. Editing
 pauses the clock and restores its previous state on commit/cancel. Invalid names remain editable
 with a visible error.
@@ -183,13 +217,21 @@ All sidebar sections stay open. `CitySplit` supports an 8-pixel drag area, 280-p
 and 480-pixel maximum, reduced to retain 320 pixels for the map where possible.
 Esc > Resize sidebar offers 12-pixel steps via focused minus/plus buttons.
 Arrows navigate dialog buttons; Space/Enter activates the focused button. Text-field dialogs retain
-native cursor navigation. Same-menu refreshes preserve the highlighted choice.
+native cursor navigation and sliders retain native arrow editing. Same-menu refreshes preserve
+the highlighted choice. `MenuShortcuts` assigns unique letter/modifier pairs, preferring first
+letters and then subordinate letters. `MnemonicButton` underlines the assigned character; rare
+Shift fallbacks show a visible hint. Number shortcuts are not supported.
+`GameSession` retains parent prompts, input text and selected indexes. Cancellation pops one parent;
+successful actions explicitly close the menu chain. Placement previews retain their originating
+prompt/history and restore it only on cancellation, not successful confirmation.
 
 Native input routes gameplay before button focus, but preserves path/name editing and modal guards.
 Pan uses mouse drag, wheel or fractional `InputEventPanGesture` accumulation.
 Ctrl/Command zoom keys accept logical, physical and Unicode forms. Magnify/pinch factors accumulate
 logarithmically at a 20% threshold per step. Gesture state resets on keyboard input, dialogs and focus loss.
-Esc opens the city menu during gameplay; it closes prompts or cancels active editing/previews.
+Dialogs capture otherwise unmatched keys and zoom gestures rather than dispatching gameplay.
+Esc opens the city menu during gameplay; it returns to the parent prompt (or closes a root prompt)
+and cancels active editing/previews.
 Selection drags always edge-scroll; hover edge scrolling is optional.
 
 ## Rendering, animation and music
@@ -211,11 +253,33 @@ The fixed opening lasts about 94 seconds. `GreensleevesSequence` then chooses co
 phrases, related dominant/subdominant keys and bounded timbre/arpeggio variations. All voices transpose
 together within one octave; phrases fade to zero at their boundaries.
 
-`AudioStreamGenerator` streams small reusable buffers instead of looping a fixed WAV. One future
+`AudioStreamGenerator` streams small reusable buffers instead of looping a fixed WAV. A single
+background producer fills its one-second ring buffer every 10 ms, independently of map rendering,
+zooming and scrolling. It accesses only the audio playback resource, not scene nodes. One future
 phrase is synthesized off-thread while the current one plays, with an RNG independent of gameplay.
-Volume is -24 dB; smoke tests use -80 dB. Music pauses on focus loss, not gameplay pause/dialogs.
-Esc > Music saves the toggle alongside font size in `user://display.cfg`.
-Playback and stream resources are released before shutdown. No external recording or package is needed.
+Full-volume music is -24 dB and placement sounds are -12 dB; smoke tests use -80 dB.
+Missing volume preferences default to 70% music and 60% sound without overwriting saved choices.
+Esc > Audio controls has independent 0-100% sliders and mute buttons; Esc > Music and Sound
+also toggle their respective channels. Preferences are saved alongside font size in `user://display.cfg`.
+Older settings without a sound toggle inherit the old shared mute state once.
+Music pauses on focus loss, not gameplay pause/dialogs. Worker failures are reported on the main
+thread; cancellation and joining precede releasing playback resources at shutdown.
+The engine smoke test checks underruns through a 1.5-second render-thread stall and repeated zoom/pan.
+No external recording or package is needed.
+
+`AreaOfEffect` supplies service and pollution radii (sharing `CityServices.PollutionRadius`) and
+cached pixelated outlines in map-cell space. `TerminalMap` draws faint white rings at every zoom
+only for buildings whose footprints intersect the active selection (or cursor block), culls offscreen
+ranges, includes valid placement previews and labels multiple effects side by side.
+Ring alpha is 0.38; icon alpha is 1.0.
+Utilities with citywide supply and no spatial radius do not have a fictitious range circle.
+
+`BuildingType.FootprintArt` defines ASCII pictures at two columns and two rows per map cell.
+`FootprintGlyphAt` slices each occupied cell into a two-line tile. `CellRenderer` supplies those
+tiles at normal/close zoom, and `TerminalMap.DrawCellGlyph` draws them at half font size within
+the original cell bounds, including effect scaling/tints. `MapSnapshot` preserves their footprint
+ownership so demolition ghosts retain the art. `BlockSampler` and `--dump-map` explicitly request
+the canonical single-line glyph; legacy single-cell buildings also keep that glyph.
 
 The raw bundled DejaVu Sans Mono bytes load directly, without depending on an import cache.
 Startup verifies registered map glyph coverage. Export presets include the font and
@@ -230,6 +294,9 @@ Terminal effects (glyphs that shrink, grow, burn and roam) are a separate engine
 Godot supplies `user://quicksave.json` in the distinct `TermCityGodot` user-data directory.
 The reusable core's fallback path remains local application data plus `TermCity/quicksave.json`;
 the desktop application does not use that fallback.
+`GameSession.SaveDisplayPath` abbreviates the home directory for the right-aligned bottom status label.
+The label shares a single row with cell information, uses at most half the row width, and exposes
+the full absolute path in a tooltip. Save guards do not duplicate the path in prompt footers.
 
 Saves include configuration/scenario, name, cash/calendar, RNG state, speed/pause/taxes, growth plan,
 last report, milestones, guide dismissal, pending dezone removals and all map layers.

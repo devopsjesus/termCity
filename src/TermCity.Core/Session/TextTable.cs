@@ -67,8 +67,8 @@ public static class TextTable
             return null;
         }
 
-        var rows = prompt.Choices.Select(choice => (IReadOnlyList<string>)
-            new[] { choice.Label }.Concat(choice.Cells ?? []).ToArray()).ToArray();
+        var rows = prompt.Choices.Select((choice, index) => (IReadOnlyList<string>)
+            new[] { prompt.Shortcuts[index].DisplayLabel(choice.Label) }.Concat(choice.Cells ?? []).ToArray()).ToArray();
         var widths = Widths(columns, rows);
         return (Row(columns, widths, columns.Select(c => c.Header).ToArray()), Rule(widths),
             rows.Select(row => Row(columns, widths, row)).ToArray());

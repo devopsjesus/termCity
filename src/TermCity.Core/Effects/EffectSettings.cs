@@ -20,6 +20,9 @@ public sealed class EffectSettings
     /// <summary>Master switch.</summary>
     public bool Enabled { get; set; } = true;
 
+    /// <summary>Decorative population-milestone confetti, independent of the other effects.</summary>
+    public bool Celebrations { get; set; }
+
     /// <summary>
     /// Reduced-motion preference. Every effect is motion (scale, drift, particles, shake), so this disables them all;
     /// the underlying game changes still appear instantly.

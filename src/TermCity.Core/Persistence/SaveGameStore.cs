@@ -66,6 +66,7 @@ public static class SaveGameStore
             HighestMilestone = game.HighestMilestone,
             GuideDismissed = game.GuideDismissed,
             ZoneRemovals = new(map.ZoneRemovals),
+            BuildingFootprints = map.BuildingFootprints.Values.ToList(),
             Compression = Deflate,
             Taxes = game.Taxes,
             Engine = EngineMarker,
@@ -147,6 +148,26 @@ public static class SaveGameStore
 
         DecodeRoadTypes(data.RoadTypes, map, layersPacked);
         map.RebuildIndexes();
+        if (data.BuildingFootprints is not null)
+        {
+            var occupied = new HashSet<int>();
+            foreach (var area in data.BuildingFootprints)
+            {
+                if (area.Width <= 0 || area.Height <= 0 || !map.InBounds(area.X, area.Y) ||
+                    area.Width > map.Width - area.X || area.Height > map.Height - area.Y ||
+                    map.BuildingAt(area.X, area.Y) is not { PlayerPlaceable: true } building ||
+                    area.Width != building.Width || area.Height != building.Height)
+                    throw new InvalidDataException("Invalid building footprint.");
+                foreach (var p in area.Cells())
+                {
+                    int index = map.Index(p.X, p.Y);
+                    if (map.BuildingLayer[index] != building.Id || map.RoadLayer[index] ||
+                        map.ZoneLayer[index] != ZoneType.None || !occupied.Add(index))
+                        throw new InvalidDataException("Invalid or overlapping building footprint.");
+                }
+                map.RegisterBuildingFootprint(area);
+            }
+        }
         if (data.ZoneRemovals is not null)
         {
             foreach (var (i, removal) in data.ZoneRemovals)
@@ -393,6 +414,7 @@ public static class SaveGameStore
         public bool GuideDismissed { get; set; }
 
         public Dictionary<int, ZoneRemoval>? ZoneRemovals { get; set; }
+        public List<CellRect>? BuildingFootprints { get; set; }
 
         /// <summary>Absent in the earliest saves, which stored raw base64 layers.</summary>
         public string? Compression { get; set; }

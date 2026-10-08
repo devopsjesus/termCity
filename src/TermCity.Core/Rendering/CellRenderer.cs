@@ -16,7 +16,8 @@ public static class CellRenderer
     /// When the caller draws roads as curves (see <see cref="RoadVectorLayer"/>), their cells are left as bare ground
     /// so the glyph does not show through.
     /// </param>
-    public static CellVisual Render(CityGame game, int x, int y, MapOverlay overlay = MapOverlay.Off, bool vectorRoads = false)
+    public static CellVisual Render(CityGame game, int x, int y, MapOverlay overlay = MapOverlay.Off,
+        bool vectorRoads = false, bool buildingArt = true)
     {
         var map = game.Map;
         var terrain = map.TerrainAt(x, y);
@@ -42,7 +43,8 @@ public static class CellRenderer
 
         if (building is not null)
         {
-            glyph = building.GlyphAt(x, y);
+            var footprint = map.BuildingFootprintAt(x, y);
+            glyph = buildingArt ? building.FootprintGlyphAt(footprint, x, y) : building.GlyphAt(x, y);
             fg = building.Foreground;
             if (zone == ZoneType.None)
             {

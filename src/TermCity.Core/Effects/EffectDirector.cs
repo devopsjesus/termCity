@@ -192,6 +192,8 @@ public sealed class EffectDirector : IDisposable
             _system.ClearAmbient();
             _ambient = null;
         }
+        if (_ambient is not null)
+            _ambient.TrafficAndBirdsPaused = _game?.Paused == true;
     }
 
     // ---- Polling ----------------------------------------------------------------------------------------------
@@ -228,7 +230,7 @@ public sealed class EffectDirector : IDisposable
 
         if (game.HighestMilestone > _milestone)
         {
-            if (animate)
+            if (animate && _system.Settings.Celebrations)
             {
                 Celebrate(view);
             }

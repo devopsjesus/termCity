@@ -20,7 +20,7 @@ public enum PlacementKind
 /// </summary>
 public sealed record PlacementPreview(
     PlacementKind Kind, CellRect Area, Quote Quote, string Name, RoadType? Road = null, BuildingType? Building = null,
-    IReadOnlySet<Pos>? Cells = null)
+    IReadOnlySet<Pos>? Cells = null, IReadOnlySet<Pos>? ValidCells = null)
 {
     /// <summary>Whether the placement covers any cell of <paramref name="block"/>.</summary>
     public bool Touches(CellRect block) => Cells is null
@@ -30,7 +30,7 @@ public sealed record PlacementPreview(
     public bool IsValid(CityGame game, int x, int y) => Kind switch
     {
         PlacementKind.Road => game.CanPlaceRoad(x, y, Road),
-        PlacementKind.Building => game.CanBuildOn(x, y),
+        PlacementKind.Building => ValidCells?.Contains(new(x, y)) == true,
         _ => game.Map.HasRoad(x, y) || game.Map.ZoneAt(x, y) != ZoneType.None ||
              game.Map.BuildingAt(x, y) is not null || game.Map.FeatureAt(x, y) is not null,
     };
@@ -61,6 +61,8 @@ public sealed class SessionPrompt(
     public IReadOnlyList<PromptTab>? Tabs { get; } = tabs;
 
     public int ActiveTab { get; } = activeTab;
+    public int SelectedIndex { get; set; }
+    public IReadOnlyList<MenuShortcut> Shortcuts { get; } = MenuShortcuts.Assign(choices);
 }
 
 public sealed partial class GameSession
@@ -76,6 +78,9 @@ public sealed partial class GameSession
     private int _observedHomes, _observedWeek;
     private Pos _roadAnchor;
     private RoadType? _lineRoad;
+    private readonly Stack<SessionPrompt> _promptHistory = [];
+    private sealed record MenuReturn(SessionPrompt Prompt, SessionPrompt[] History);
+    private MenuReturn? _selectedMenu, _previewMenu;
 
     public PlacementPreview? Preview { get; private set; }
     public bool RoadToolActive { get; private set; }
@@ -164,6 +169,7 @@ public sealed partial class GameSession
 
     public void PreviewRoad(RoadType? road = null)
     {
+        _previewMenu = CaptureMenu() ?? _selectedMenu;
         road ??= Game.DefaultRoad;
         Preview = new(PlacementKind.Road, ActiveArea, Game.QuoteRoad(ActiveArea, road), road.Name, Road: road);
         Changed?.Invoke();
@@ -171,20 +177,28 @@ public sealed partial class GameSession
 
     public void PreviewBuilding(BuildingType building)
     {
-        Preview = new(PlacementKind.Building, ActiveArea, Game.QuoteBuilding(building, ActiveArea), building.Name, Building: building);
+        _previewMenu = CaptureMenu() ?? _selectedMenu;
+        var area = Game.BuildingPlacementArea(building, ActiveArea);
+        Preview = new(PlacementKind.Building, area, Game.QuoteBuilding(building, area),
+            $"{building.Name} ({building.Width}x{building.Height})", Building: building,
+            ValidCells: Game.PlanBuildings(building, area).SelectMany(p => p.Cells()).ToHashSet());
         Changed?.Invoke();
     }
 
     public void PreviewDemolish()
     {
-        var preview = new PlacementPreview(PlacementKind.Demolish, ActiveArea, new(0, 0, 0), "Demolish");
-        int cells = ActiveArea.Cells().Count(p => Game.Map.InBounds(p) && preview.IsValid(Game, p.X, p.Y));
-        Preview = preview with { Quote = new(cells, 0, ActiveArea.Area - cells) };
+        _previewMenu = CaptureMenu() ?? _selectedMenu;
+        var targets = Game.DemolitionCells(ActiveArea.Cells());
+        var area = targets.Aggregate(ActiveArea, (bounds, p) => bounds.Union(CellRect.Single(p)));
+        var preview = new PlacementPreview(PlacementKind.Demolish, area, new(0, 0, 0), "Demolish", Cells: targets);
+        int cells = targets.Count(p => preview.IsValid(Game, p.X, p.Y));
+        Preview = preview with { Quote = new(cells, 0, targets.Count - cells) };
         Changed?.Invoke();
     }
 
     public void BeginRoadLine(RoadType? road = null)
     {
+        _previewMenu = CaptureMenu() ?? _selectedMenu;
         RoadToolActive = true;
         _lineRoad = road ?? Game.DefaultRoad;
         _roadAnchor = Cursor;
@@ -218,18 +232,22 @@ public sealed partial class GameSession
             PlacementKind.Road => preview.Cells is { } line
                 ? Game.BuildRoad(line, preview.Road) : Game.BuildRoad(preview.Area, preview.Road),
             PlacementKind.Building when preview.Building is { } building => Game.PlaceBuilding(building, preview.Area),
-            PlacementKind.Demolish => Game.Demolish(preview.Area),
+            PlacementKind.Demolish => Game.Demolish(preview.Cells ?? preview.Area.Cells()),
             _ => ActionResult.Fail("No building type selected."),
         });
         if (result.Success)
         {
-            CancelPreview();
+            ClearPreview();
         }
 
         return result;
     }
 
-    public void CancelPreview()
+    public void CancelPreview() => FinishPreview(returnToMenu: true);
+
+    private void ClearPreview() => FinishPreview(returnToMenu: false);
+
+    private void FinishPreview(bool returnToMenu)
     {
         if (Preview is null && !RoadToolActive)
         {
@@ -239,6 +257,9 @@ public sealed partial class GameSession
         Preview = null;
         RoadToolActive = false;
         _lineRoad = null;
+        var menu = _previewMenu;
+        _previewMenu = null;
+        if (returnToMenu && menu is not null) RestoreMenu(menu);
         Changed?.Invoke();
     }
 
@@ -251,10 +272,10 @@ public sealed partial class GameSession
         }
 
         Game.Paused = true;
-        CancelPreview();
+        ClearPreview();
         ShowPrompt("Undo last action",
             "Undo restores the entire city to immediately before the last successful action, including gold, residents and time. The game will remain paused.",
-            [new("Undo", Undo), new("Cancel", ClosePrompt)]);
+            [new("Undo", Undo), new("Cancel", CancelPrompt)]);
     }
 
     private void Undo()
@@ -275,8 +296,7 @@ public sealed partial class GameSession
         string title, string text, IReadOnlyList<SessionChoice> choices, string? input = null, string? footer = null,
         IReadOnlyList<TableColumn>? columns = null)
     {
-        Prompt = new(title, text, choices, input, footer, columns);
-        Changed?.Invoke();
+        SetPrompt(new(title, text, choices, input, footer, columns));
     }
 
     /// <summary>Shows a prompt whose text is one of several pages, with a tab for each along the top.</summary>
@@ -285,7 +305,23 @@ public sealed partial class GameSession
         IReadOnlyList<TableColumn>? columns = null)
     {
         activeTab = Math.Clamp(activeTab, 0, tabs.Count - 1);
-        Prompt = new(title, tabs[activeTab].Text, choices, null, null, columns, tabs, activeTab);
+        SetPrompt(new(title, tabs[activeTab].Text, choices, null, null, columns, tabs, activeTab));
+    }
+
+    private void SetPrompt(SessionPrompt prompt)
+    {
+        if (Prompt is { } previous)
+        {
+            if (previous.Title == prompt.Title) prompt.SelectedIndex = previous.SelectedIndex;
+            else if (_promptHistory.Any(parent => parent.Title == prompt.Title))
+            {
+                SessionPrompt parent;
+                do { parent = _promptHistory.Pop(); } while (parent.Title != prompt.Title);
+                prompt.SelectedIndex = parent.SelectedIndex;
+            }
+            else _promptHistory.Push(previous);
+        }
+        Prompt = prompt;
         Changed?.Invoke();
     }
 
@@ -309,15 +345,47 @@ public sealed partial class GameSession
     public void ClosePrompt()
     {
         Prompt = null;
+        _promptHistory.Clear();
         Changed?.Invoke();
+    }
+
+    public void CancelPrompt()
+    {
+        Prompt = _promptHistory.TryPop(out var parent) ? parent : null;
+        Changed?.Invoke();
+    }
+
+    private MenuReturn? CaptureMenu() => Prompt is { } prompt ? new(prompt, _promptHistory.ToArray()) : null;
+
+    private void RestoreMenu(MenuReturn menu)
+    {
+        _promptHistory.Clear();
+        foreach (var parent in menu.History.Reverse()) _promptHistory.Push(parent);
+        Prompt = menu.Prompt;
     }
 
     public void SelectPrompt(int index)
     {
         if (Prompt is { } prompt && index >= 0 && index < prompt.Choices.Count)
         {
-            prompt.Choices[index].Select();
+            prompt.SelectedIndex = index;
+            var previous = _selectedMenu;
+            _selectedMenu = CaptureMenu();
+            try { prompt.Choices[index].Select(); }
+            finally { _selectedMenu = previous; }
         }
+    }
+
+    public bool SelectShortcut(char letter, bool shift = false)
+    {
+        if (Prompt is not { } prompt) return false;
+        for (int index = 0; index < prompt.Shortcuts.Count; index++)
+            if (prompt.Shortcuts[index].Letter == char.ToUpperInvariant(letter) && prompt.Shortcuts[index].Shift == shift)
+            {
+                SelectPrompt(index);
+                return true;
+            }
+        return false;
     }
 
     public void RequestQuit() => GuardProgress("Quit", () => QuitRequested?.Invoke());
@@ -334,7 +402,7 @@ public sealed partial class GameSession
         }
 
         path = path.Trim().Trim('"');
-        GuardProgress("Load city", () =>
+        GuardProgress("Confirm load city", () =>
         {
             if (LoadFrom(path))
             {
@@ -361,14 +429,13 @@ public sealed partial class GameSession
             {
                 if (QuickSave())
                 {
-                    ClosePrompt();
+                    CancelPrompt();
                     action();
                 }
             }),
-            new(quitting ? "Quit without saving" : "Continue without saving", () => { ClosePrompt(); action(); }),
-            new("Cancel", ClosePrompt),
-        ],
-        footer: $"Quick-save file: {DisplayPath(SavePath)}");
+            new(quitting ? "Quit without saving" : "Continue without saving", () => { CancelPrompt(); action(); }),
+            new("Cancel", CancelPrompt),
+        ]);
     }
 
     private static string DisplayPath(string path)
@@ -389,7 +456,7 @@ public sealed partial class GameSession
 
     public void ShowSessionMenu()
     {
-        CancelPreview();
+        ClearPreview();
         ShowPrompt("City menu", $"Seed {Game.Config.Seed} | {Game.Map.Width}x{Game.Map.Height}",
         [
             new("Back to city", ClosePrompt, ["Close this menu"]),
@@ -421,8 +488,8 @@ public sealed partial class GameSession
             ShowPrompt("Load file", OperatingSystem.IsMacOS()
                     ? "Enter a save-file path. Control+A clears the field; Return selects the highlighted button."
                     : "Enter a save-file path. Ctrl+A clears the field; Enter selects the highlighted button.",
-                [new("Load", () => RequestLoad(Prompt!.Input!)), new("Cancel", ClosePrompt)], SavePath), ["Type where a save lives"]));
-        choices.Add(new("Cancel", ClosePrompt, ["Back to the city"]));
+                [new("Load", () => RequestLoad(Prompt!.Input!)), new("Cancel", CancelPrompt)], SavePath), ["Type where a save lives"]));
+        choices.Add(new("Cancel", CancelPrompt, ["Return to the previous menu"]));
         ShowPrompt("Load city", "Choose a quick-save, autosave, or file path.", choices, columns: LoadMenuColumns);
     }
 
@@ -430,7 +497,7 @@ public sealed partial class GameSession
 
     public void ShowGuide(int tab = 0)
     {
-        var choices = new List<SessionChoice> { new("Close", ClosePrompt, ["Back to the city"]) };
+        var choices = new List<SessionChoice> { new("Close", CancelPrompt, ["Return to the previous menu"]) };
         if (GuideVisible)
         {
             choices.Add(new("Dismiss tip", DismissGuide, ["Hide the sidebar tip for good"]));
@@ -444,7 +511,7 @@ public sealed partial class GameSession
         GuideVisible = false;
         Game.GuideDismissed = true;
         Game.Touch();
-        ClosePrompt();
+        CancelPrompt();
     }
 
     public void ShowReport()
@@ -454,7 +521,7 @@ public sealed partial class GameSession
             $"Week {report.Week}: income {Fmt.Money(report.Income)}\nNew homes {report.NewHouseholds}, stalls {report.NewCommercial}, workshops {report.NewIndustrial}";
         text += $"\nPopulation: {Game.Stats.Population:N0}\nHighest milestone: {Game.HighestMilestone:N0}";
         text += NextMilestone is { } next ? $"\nNext milestone: {next:N0} people" : "\nAll population milestones reached.";
-        ShowPrompt("Weekly report and milestones", text, [new("Close", ClosePrompt)]);
+        ShowPrompt("Weekly report and milestones", text, [new("Close", CancelPrompt)]);
     }
 
     public void ShowGrowthReport()
@@ -477,7 +544,7 @@ public sealed partial class GameSession
             lines.Add("Paused - press P after closing this report to resume.");
         }
 
-        ShowPrompt("Growth and road access", string.Join("\n", lines), [new("Close", ClosePrompt)]);
+        ShowPrompt("Growth and road access", string.Join("\n", lines), [new("Close", CancelPrompt)]);
     }
 
     private void InitializeFeedback()

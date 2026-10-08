@@ -42,6 +42,7 @@ public partial class Main : Control
     private Label _hudClock = null!;
     private double _pauseGlowSeconds;
     private Label _status = null!;
+    private Label _savePathLabel = null!;
     private PanelContainer _modal = null!;
     private Control _modalShield = null!;
     private CityPanel _panel = null!;
@@ -70,6 +71,12 @@ public partial class Main : Control
     private double _hudElapsed;
     private bool _started;
     public bool MusicEnabled { get; private set; } = true;
+    public bool SoundEnabled { get; private set; } = true;
+    public const double DefaultMusicVolume = 70, DefaultSoundVolume = 60;
+    public double MusicVolume { get; private set; } = DefaultMusicVolume;
+    public double SoundVolume { get; private set; } = DefaultSoundVolume;
+    public bool CelebrationsEnabled { get; private set; }
+    private const string AudioDialogTitle = "Audio controls";
     private AudioStreamPlayer _music = null!;
     private AudioStreamGenerator? _musicTrack;
     private AudioStreamGeneratorPlayback _musicPlayback = null!;
@@ -80,8 +87,11 @@ public partial class Main : Control
     private int _musicSample;
     private int _musicFrameCount;
     private bool _musicStopped;
-    private bool _musicBufferWarned;
-    public int MusicPhraseCount { get; private set; }
+    private readonly CancellationTokenSource _musicCancellation = new();
+    private Task? _musicPump;
+    private int _musicPhraseCount;
+    public int MusicPhraseCount => Volatile.Read(ref _musicPhraseCount);
+    internal int MusicSkips => _musicPlayback.GetSkips();
 
     public override void _Ready()
     {
@@ -116,7 +126,7 @@ public partial class Main : Control
                 for (int y = 0; y < Session.Game.Map.Height; y++)
                 {
                     for (int x = 0; x < Session.Game.Map.Width; x++)
-                        text.Append(CellRenderer.Render(Session.Game, x, y).Glyph);
+                        text.Append(CellRenderer.Render(Session.Game, x, y, buildingArt: false).Glyph);
                     text.AppendLine();
                 }
                 GD.Print(text.ToString());
@@ -176,6 +186,16 @@ public partial class Main : Control
         if (music.VariantType != Variant.Type.Bool)
             throw new InvalidOperationException("Saved music preference must be a boolean.");
         MusicEnabled = music.AsBool();
+        var sound = settings.GetValue("audio", "sound_enabled", MusicEnabled);
+        if (sound.VariantType != Variant.Type.Bool)
+            throw new InvalidOperationException("Saved sound preference must be a boolean.");
+        SoundEnabled = sound.AsBool();
+        MusicVolume = LoadVolume(settings, "music_volume", DefaultMusicVolume);
+        SoundVolume = LoadVolume(settings, "sound_volume", DefaultSoundVolume);
+        var celebrations = settings.GetValue("display", "celebrations", false);
+        if (celebrations.VariantType != Variant.Type.Bool)
+            throw new InvalidOperationException("Saved celebrations preference must be a boolean.");
+        CelebrationsEnabled = celebrations.AsBool();
         var effects = settings.GetValue("display", "effects", "high");
         if (effects.VariantType != Variant.Type.String ||
             !Enum.TryParse(effects.AsString(), ignoreCase: true, out EffectLevel level) || !Enum.IsDefined(level))
@@ -183,10 +203,19 @@ public partial class Main : Control
         EffectsLevel = level;
     }
 
+    private static double LoadVolume(ConfigFile settings, string key, double defaultValue)
+    {
+        var value = settings.GetValue("audio", key, defaultValue);
+        if (value.VariantType is not (Variant.Type.Int or Variant.Type.Float) ||
+            !double.IsFinite(value.AsDouble()) || value.AsDouble() is < 0 or > 100)
+            throw new InvalidOperationException($"Saved {key} must be between 0 and 100.");
+        return value.AsDouble();
+    }
+
     private void CreateEffects()
     {
         Effects = new EffectSystem(Session.Game.Config.Seed ^ 0x5eed1e5,
-            new EffectSettings { ReducedMotion = _options.ReducedMotion });
+            new EffectSettings { ReducedMotion = _options.ReducedMotion, Celebrations = CelebrationsEnabled });
         Effects.Settings.Level = EffectsLevel;
         Director = new EffectDirector(Effects);
         Director.Attach(Session);
@@ -229,6 +258,16 @@ public partial class Main : Control
 
     private string EffectsLabel() => Effects.Settings.ReducedMotion ? "OFF (reduced motion)" : EffectsLevel.ToString().ToUpperInvariant();
 
+    private void ToggleCelebrations()
+    {
+        CelebrationsEnabled = !CelebrationsEnabled;
+        Effects.Settings.Celebrations = CelebrationsEnabled;
+        if (!CelebrationsEnabled) Effects.ClearCelebrations();
+        Map.Invalidate(false);
+        SaveDisplaySettings();
+        RefreshMenuState(ToggleCelebrations, CelebrationsEnabled ? "ON" : "OFF");
+    }
+
     private void UpdateEffects(double delta)
     {
         if (_focused) Director.Update(delta);
@@ -263,7 +302,11 @@ public partial class Main : Control
         using var settings = new ConfigFile();
         settings.SetValue("display", "font_size", FontSize);
         settings.SetValue("audio", "music_enabled", MusicEnabled);
+        settings.SetValue("audio", "sound_enabled", SoundEnabled);
+        settings.SetValue("audio", "music_volume", MusicVolume);
+        settings.SetValue("audio", "sound_volume", SoundVolume);
         settings.SetValue("display", "effects", EffectsLevel.ToString().ToLowerInvariant());
+        settings.SetValue("display", "celebrations", CelebrationsEnabled);
         var error = settings.Save(DisplaySettingsPath);
         if (error != Error.Ok)
         {
@@ -276,24 +319,37 @@ public partial class Main : Control
     {
         _musicSequence = new GreensleevesSequence(_options.SmokeTest ? 42 : null);
         _musicPhrase = _musicSequence.Next();
-        MusicPhraseCount = 1;
+        _musicPhraseCount = 1;
         _nextMusicPhrase = Task.Run(() => _musicSequence.Next());
         _musicTrack = new AudioStreamGenerator
         {
             MixRate = GreensleevesTrack.SampleRate,
-            BufferLength = 0.25f,
+            BufferLength = 1f,
         };
         _music = new AudioStreamPlayer
         {
             Name = "CityMusic", Stream = _musicTrack,
-            VolumeDb = _options.SmokeTest ? -80 : -24,
+            VolumeDb = VolumeDb(MusicVolume, -24),
         };
         AddChild(_music);
         _music.Play();
         _musicPlayback = (AudioStreamGeneratorPlayback)_music.GetStreamPlayback();
         PumpMusic();
-        _music.StreamPaused = !MusicEnabled || !_focused;
+        _music.StreamPaused = !MusicEnabled || MusicVolume == 0 || !_focused;
+        // Only the playback resource is accessed here, never nodes or the scene tree. Map rendering must not
+        // be responsible for keeping the audio ring buffer full.
+        _musicPump = Task.Run(async () =>
+        {
+            while (!_musicCancellation.IsCancellationRequested)
+            {
+                PumpMusic();
+                await Task.Delay(10, _musicCancellation.Token);
+            }
+        });
     }
+
+    private float VolumeDb(double volume, float nominal) =>
+        _options.SmokeTest || volume == 0 ? -80 : nominal + (float)(20 * Math.Log10(volume / 100));
 
     private AudioStreamWav[] _clicks = [];
     private AudioStreamPlayer _clickPlayer = null!;
@@ -308,31 +364,28 @@ public partial class Main : Control
             Stereo = false,
             Data = PlacementClick.Render(i),
         }).ToArray();
-        _clickPlayer = new AudioStreamPlayer { Name = "PlacementClick", VolumeDb = _options.SmokeTest ? -80 : -12 };
+        _clickPlayer = new AudioStreamPlayer { Name = "PlacementClick", VolumeDb = VolumeDb(SoundVolume, -12) };
         AddChild(_clickPlayer);
     }
 
     private void PlayPlacementClick()
     {
-        if (!_focused || !MusicEnabled || _clicks.Length == 0) return;
+        if (!_focused || !SoundEnabled || SoundVolume == 0 || _clicks.Length == 0) return;
         _clickPlayer.Stream = _clicks[_clickRandom.Next(_clicks.Length)];
         _clickPlayer.PitchScale = (float)(0.92 + _clickRandom.NextDouble() * 0.16);
         _clickPlayer.Play();
     }
 
-    internal bool AdvanceMusicPhrase()
+    private bool AdvanceMusicPhrase()
     {
         if (_nextMusicPhrase is null || !_nextMusicPhrase.IsCompleted) return false;
         if (_nextMusicPhrase.IsFaulted)
         {
-            GD.PushError($"Music synthesis failed: {_nextMusicPhrase.Exception}");
-            Session.SetMessage("Music synthesis failed; playback stopped.", MessageKind.Error);
-            StopMusic();
-            return false;
+            throw new InvalidOperationException("Music synthesis failed.", _nextMusicPhrase.Exception);
         }
         _musicPhrase = _nextMusicPhrase.GetAwaiter().GetResult();
         _musicSample = 0;
-        MusicPhraseCount++;
+        Interlocked.Increment(ref _musicPhraseCount);
         _nextMusicPhrase = Task.Run(() => _musicSequence.Next());
         return true;
     }
@@ -346,11 +399,6 @@ public partial class Main : Control
             {
                 if (_musicSample >= _musicPhrase.Pcm.Length && !AdvanceMusicPhrase())
                 {
-                    if (!_musicBufferWarned && !_musicStopped)
-                    {
-                        GD.PushWarning("Music phrase was not ready before the audio buffer ran out.");
-                        _musicBufferWarned = true;
-                    }
                     return;
                 }
                 float sample = BinaryPrimitives.ReadInt16LittleEndian(
@@ -360,9 +408,7 @@ public partial class Main : Control
             }
             if (!_musicPlayback.PushBuffer(_musicFrames))
             {
-                GD.PushError("Could not queue synthesized music frames.");
-                StopMusic();
-                return;
+                throw new InvalidOperationException("Could not queue synthesized music frames.");
             }
             _musicFrameCount = 0;
         }
@@ -371,9 +417,72 @@ public partial class Main : Control
     private void ToggleMusic()
     {
         MusicEnabled = !MusicEnabled;
-        _music.StreamPaused = !MusicEnabled || !_focused;
+        _music.StreamPaused = !MusicEnabled || MusicVolume == 0 || !_focused;
         SaveDisplaySettings();
         RefreshMenuState(ToggleMusic, MusicEnabled ? "ON" : "OFF");
+    }
+
+    private void ToggleSound()
+    {
+        SoundEnabled = !SoundEnabled;
+        if (!SoundEnabled) _clickPlayer.Stop();
+        SaveDisplaySettings();
+        RefreshMenuState(ToggleSound, SoundEnabled ? "ON" : "OFF");
+    }
+
+    private void ShowAudioDialog() => Session.ShowPrompt(AudioDialogTitle,
+        "Music and placement sounds have independent volume and mute controls.",
+        [new("Close", Session.CancelPrompt)]);
+
+    private void AddAudioControls(Container content, bool music)
+    {
+        var channel = new VBoxContainer();
+        var row = new HBoxContainer();
+        row.AddChild(new Label { Text = music ? "Music" : "Sound", SizeFlagsHorizontal = SizeFlags.ExpandFill });
+        var slider = new HSlider
+        {
+            Name = music ? "MusicVolume" : "SoundVolume",
+            MinValue = 0, MaxValue = 100, Step = 1,
+            Value = music ? MusicVolume : SoundVolume,
+            FocusMode = FocusModeEnum.All,
+            CustomMinimumSize = new Vector2(200, 0), SizeFlagsHorizontal = SizeFlags.ExpandFill,
+        };
+        var value = new Label { Text = $"{slider.Value:0}%", CustomMinimumSize = new Vector2(56, 0) };
+        string muteText = (music ? MusicEnabled : SoundEnabled) ? "Mute" : "Unmute";
+        var mute = new MnemonicButton { Name = music ? "MusicMute" : "SoundMute",
+            Text = muteText, UnderlineIndex = muteText.IndexOf(music ? 'm' : 'u', StringComparison.OrdinalIgnoreCase),
+            TooltipText = music ? "Mute/unmute music (M)" : "Mute/unmute sound (U)" };
+        slider.ValueChanged += volume =>
+        {
+            if (music) MusicVolume = volume; else SoundVolume = volume;
+            value.Text = $"{volume:0}%";
+            (music ? _music : _clickPlayer).VolumeDb = VolumeDb(volume, music ? -24 : -12);
+            if (music) _music.StreamPaused = !MusicEnabled || MusicVolume == 0 || !_focused;
+            else if (volume == 0) _clickPlayer.Stop();
+            SaveDisplaySettings();
+        };
+        mute.Pressed += () =>
+        {
+            if (music)
+            {
+                MusicEnabled = !MusicEnabled;
+                _music.StreamPaused = !MusicEnabled || MusicVolume == 0 || !_focused;
+            }
+            else
+            {
+                SoundEnabled = !SoundEnabled;
+                if (!SoundEnabled) _clickPlayer.Stop();
+            }
+            mute.Text = (music ? MusicEnabled : SoundEnabled) ? "Mute" : "Unmute";
+            mute.UnderlineIndex = mute.Text.IndexOf(music ? 'm' : 'u', StringComparison.OrdinalIgnoreCase);
+            SaveDisplaySettings();
+        };
+        row.AddChild(value);
+        row.AddChild(mute);
+        _dialogButtons.Add(mute);
+        channel.AddChild(row);
+        channel.AddChild(slider);
+        content.AddChild(channel);
     }
 
     private void ApplyFontSize()
@@ -422,6 +531,9 @@ public partial class Main : Control
         _nameEditor.Position = Vector2.Zero;
         _nameEditor.Size = _nameSlot.Size;
         _nameEditor.AddThemeConstantOverride("caret_width", (int)Math.Ceiling(character));
+        var caretSpace = new StyleBoxEmpty { ContentMarginRight = (float)Math.Ceiling(character) };
+        _nameEditor.AddThemeStyleboxOverride("normal", caretSpace);
+        _nameEditor.AddThemeStyleboxOverride("focus", caretSpace);
         _hud.Visible = false;
         _nameEditor.Visible = true;
         _nameEditor.GrabFocus();
@@ -563,8 +675,8 @@ public partial class Main : Control
         _lineSummary = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart };
         _linePreview.AddChild(_lineSummary);
         var lineButtons = new HBoxContainer();
-        AddButton(lineButtons, "Confirm [Enter]", () => Session.ConfirmPreview());
-        AddButton(lineButtons, "Cancel [Esc]", Session.CancelPreview);
+        AddButton(lineButtons, "Confirm [Enter]", () => Session.ConfirmPreview(), underline: 0);
+        AddButton(lineButtons, "Cancel [Esc]", Session.CancelPreview, underline: 1);
         _linePreview.AddChild(lineButtons);
         city.AddChild(_linePreview);
         var sidebar = new VBoxContainer { CustomMinimumSize = new Vector2(280, 0) };
@@ -578,10 +690,33 @@ public partial class Main : Control
         layout.AddChild(body);
         Map.GuiInput += OnMapInput;
         Map.MouseExited += () => _hover = false;
-        _status = new Label { Name = "Status", CustomMinimumSize = new Vector2(0, 28),
-            AutowrapMode = TextServer.AutowrapMode.WordSmart };
-        layout.AddChild(_status);
+        var statusRow = new HBoxContainer { Name = "StatusRow", SizeFlagsHorizontal = SizeFlags.ShrinkBegin };
+        _status = new Label { Name = "Status", SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            ClipText = true, TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
+            MouseFilter = MouseFilterEnum.Stop };
+        _savePathLabel = new Label { Name = "QuickSavePath", Text = $"Quick-save: {Session.SaveDisplayPath}",
+            HorizontalAlignment = HorizontalAlignment.Right, ClipText = true,
+            TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
+            TooltipText = Path.GetFullPath(Session.SavePath), MouseFilter = MouseFilterEnum.Stop };
+        statusRow.AddChild(_status);
+        statusRow.AddChild(_savePathLabel);
+        void FitStatusRow()
+        {
+            statusRow.CustomMinimumSize = new Vector2(Size.X, 28);
+            _savePathLabel.CustomMinimumSize = new Vector2(
+                Math.Min(_savePathLabel.GetThemeFont("font").GetStringSize(_savePathLabel.Text,
+                    fontSize: _savePathLabel.GetThemeFontSize("font_size")).X, Size.X / 2), 0);
+        }
+        Resized += FitStatusRow;
+        FitStatusRow();
+        layout.AddChild(statusRow);
         _modalShield = new Control { Visible = false, MouseFilter = MouseFilterEnum.Stop };
+        _modalShield.GuiInput += input =>
+        {
+            if (input is InputEventMouseMotion motion)
+                _modalShield.TooltipText = _savePathLabel.GetGlobalRect().HasPoint(motion.GlobalPosition)
+                    ? _savePathLabel.TooltipText : "";
+        };
         _modalShield.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         AddChild(_modalShield);
         _modal = CreateMapBorder(false);
@@ -630,7 +765,12 @@ public partial class Main : Control
         {
             return;
         }
-        if (_focused && MusicEnabled) PumpMusic();
+        if (_musicPump is { IsFaulted: true } && !_musicStopped)
+        {
+            GD.PushError($"Music playback failed: {_musicPump.Exception}");
+            Session.SetMessage("Music playback failed; playback stopped.", MessageKind.Error);
+            StopMusic();
+        }
         if (_focused && !_editingName)
         {
             Session.Update(delta);
@@ -699,6 +839,7 @@ public partial class Main : Control
         _status.Text = Session.InputDebug
             ? $"{_lastInput} | loop {Session.LoopGapMs} ms, worst {Session.LoopWorstGapMs} ms"
             : Session.MessageVisible ? $"{cellInfo} | {Session.Message}" : cellInfo;
+        _status.TooltipText = _status.Text;
         _status.Modulate = Session.MessageVisible && Session.MessageKind == MessageKind.Error
             ? new Color("#ff7777") : Colors.White;
         UpdateModal();
@@ -736,7 +877,7 @@ public partial class Main : Control
 
     private void ShowFontDialog() => Session.ShowPrompt(FontDialogTitle, "Adjust the display font size (16-28).",
     [
-        new("OK", Session.ClosePrompt),
+        new("OK", Session.CancelPrompt),
         new("RESET", () => SetFontSize(DefaultFontSize)),
     ]);
 
@@ -749,7 +890,10 @@ public partial class Main : Control
             {
                 new SessionChoice("Resize sidebar", ShowSidebarDialog, ["Step the sidebar width by a character"]),
                 new SessionChoice("Music", ToggleMusic, ["Evolving Greensleeves phrases", MusicEnabled ? "ON" : "OFF"]),
+                new SessionChoice("Sound", ToggleSound, ["Placement click-clack", SoundEnabled ? "ON" : "OFF"]),
+                new SessionChoice("Audio controls", ShowAudioDialog, ["Independent music and sound volume / mute"]),
                 new SessionChoice("Effects", CycleEffects, ["Growth, fire, flood, traffic, birds", EffectsLabel()]),
+                new SessionChoice("Celebrations", ToggleCelebrations, ["Population milestone confetti", CelebrationsEnabled ? "ON" : "OFF"]),
             }).ToArray(),
             footer: prompt.Footer, columns: prompt.Columns);
     }
@@ -757,7 +901,7 @@ public partial class Main : Control
     private void ShowSidebarDialog() => Session.ShowPrompt(SidebarDialogTitle,
         "Arrows select controls; Space/Enter activates [-] or [+] to resize one character at a time.",
     [
-        new("OK", Session.ClosePrompt),
+        new("OK", Session.CancelPrompt),
         new("RESET", () => _split.SetSidebarWidth(CitySplit.DefaultSidebar)),
     ]);
 
@@ -781,9 +925,7 @@ public partial class Main : Control
         {
             return;
         }
-        int selectedIndex = _shownModal is SessionPrompt previous && state is SessionPrompt next &&
-            previous.Title == next.Title && previous.Choices.Count == next.Choices.Count
-            ? _promptIndex : 0;
+        int selectedIndex = state is SessionPrompt next ? next.SelectedIndex : 0;
         _shownModal = state;
         _fontSizeLabel = null;
         _sidebarSizeLabel = null;
@@ -809,8 +951,8 @@ public partial class Main : Control
         var table = Session.Prompt is { } tablePrompt ? TextTable.ForPrompt(tablePrompt) : null;
         IEnumerable<string> labels = Session.Prompt is { } sizingPrompt
             ? (table is { } t
-                ? t.Rows.Append(t.Header).Select(row => "00. " + row)
-                : sizingPrompt.Choices.Select((choice, index) => $"{index + 1}. {choice.Label}"))
+                ? t.Rows.Append(t.Header)
+                : sizingPrompt.Choices.Select((choice, index) => sizingPrompt.Shortcuts[index].DisplayLabel(choice.Label)))
                 .Append(sizingPrompt.Title)
             : new[] { "Confirm placement", "Confirm [Enter]", "Cancel [Esc]" };
         float characterWidth = Theme.DefaultFont.GetStringSize("M", fontSize: Theme.DefaultFontSize).X;
@@ -874,6 +1016,11 @@ public partial class Main : Control
         LineEdit? inputField = null;
         if (Session.Prompt is { } prompt)
         {
+            if (prompt.Title == AudioDialogTitle)
+            {
+                AddAudioControls(content, music: true);
+                AddAudioControls(content, music: false);
+            }
             if (prompt.Title == FontDialogTitle)
             {
                 var fontRow = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
@@ -915,11 +1062,14 @@ public partial class Main : Control
             for (int i = 0; i < prompt.Choices.Count; i++)
             {
                 int index = i;
-                string rowText = table is { } rows ? rows.Rows[i] : prompt.Choices[i].Label;
-                var button = new Button { Text = ChoicePrefix(i, prompt.Choices.Count) + rowText, Alignment = HorizontalAlignment.Left,
-                    ClipText = true, TooltipText = prompt.Choices[i].Label };
+                var shortcut = prompt.Shortcuts[i];
+                string rowText = table is { } rows ? rows.Rows[i] : shortcut.DisplayLabel(prompt.Choices[i].Label);
+                int underline = shortcut.UnderlineIndex < 0 ? prompt.Choices[i].Label.Length + 2 : shortcut.UnderlineIndex;
+                var button = new MnemonicButton { Text = rowText, UnderlineIndex = underline,
+                    Alignment = HorizontalAlignment.Left, ClipText = true,
+                    TooltipText = $"{prompt.Choices[i].Label} ({(shortcut.Shift ? "Shift+" : "")}{shortcut.Letter})" };
                 button.Pressed += () => SelectPromptChoice(index);
-                button.FocusEntered += () => _promptIndex = index;
+                button.FocusEntered += () => { _promptIndex = index; prompt.SelectedIndex = index; };
                 buttons.AddChild(button);
                 _promptButtons.Add(button);
                 _dialogButtons.Add(button);
@@ -928,21 +1078,20 @@ public partial class Main : Control
                 content.AddChild(new Label { Text = footer, AutowrapMode = TextServer.AutowrapMode.WordSmart });
             if (table is { } header)
             {
-                string pad = new(' ', ChoicePrefix(0, prompt.Choices.Count).Length);
                 var headerBox = new MarginContainer();
                 headerBox.AddThemeConstantOverride("margin_left", (int)ButtonTextInset());
-                headerBox.AddChild(new Label { Text = pad + header.Header + "\n" + pad + header.Rule, ClipText = true });
+                headerBox.AddChild(new Label { Text = header.Header + "\n" + header.Rule, ClipText = true });
                 content.AddChild(headerBox);
             }
             if (prompt.Tabs is not null)
             {
-                content.AddChild(new Label { Text = "Left/Right or click: change tab.  Up/Down, Enter or a number: pick an action." });
+                content.AddChild(new Label { Text = "Left/Right: change tab. Underlined letter or Enter: pick an action. Esc: back." });
             }
         }
         else
         {
-            AddButton(buttons, "Confirm [Enter]", () => Session.ConfirmPreview());
-            AddButton(buttons, "Cancel [Esc]", Session.CancelPreview);
+            AddButton(buttons, "Confirm [Enter]", () => Session.ConfirmPreview(), underline: 0);
+            AddButton(buttons, "Cancel [Esc]", Session.CancelPreview, underline: 1);
         }
         content.AddChild(buttons);
         if (buttons.GetChildCount() > 0)
@@ -953,8 +1102,6 @@ public partial class Main : Control
         CenterModal();
         Callable.From(CenterModal).CallDeferred();
     }
-
-    private static string ChoicePrefix(int index, int count) => $"{index + 1}. ".PadRight(count >= 10 ? 4 : 3);
 
     private float ButtonTextInset() => GetThemeStylebox("normal", "Button")?.GetMargin(Side.Left) ?? 0;
 
@@ -982,9 +1129,11 @@ public partial class Main : Control
         return bar;
     }
 
-    private void AddButton(Container buttons, string text, Action action)
+    private void AddButton(Container buttons, string text, Action action, int underline = -1)
     {
-        var button = new Button { Text = text, Alignment = HorizontalAlignment.Left };
+        Button button = underline < 0 ? new Button() : new MnemonicButton { UnderlineIndex = underline };
+        button.Text = text;
+        button.Alignment = HorizontalAlignment.Left;
         button.Pressed += action;
         buttons.AddChild(button);
         _dialogButtons.Add(button);
@@ -1003,35 +1152,19 @@ public partial class Main : Control
     public override void _Input(InputEvent input)
     {
         if (!_started) return;
-        if (input is InputEventKey { Pressed: true, Keycode: Key.Enter or Key.KpEnter or Key.Space } activate &&
-            Session.Prompt is { Input: null } && GetViewport().GuiGetFocusOwner() is Button focused &&
-            _dialogButtons.Contains(focused))
+        if (input is InputEventKey dialogKey && Session.Prompt is not null && HandleDialogKey(dialogKey))
         {
-            if (!activate.Echo && !focused.Disabled) focused.EmitSignal(Button.SignalName.Pressed);
-            GetViewport().SetInputAsHandled();
-            return;
-        }
-        if (input is InputEventKey { Pressed: true, Keycode: Key.Left or Key.Right } tabKey && Session.Prompt is { Tabs: not null })
-        {
-            Session.CycleTab(tabKey.Keycode == Key.Left ? -1 : 1);
-            GetViewport().SetInputAsHandled();
-            return;
-        }
-        if (input is InputEventKey { Pressed: true, Keycode: Key.Left or Key.Right or Key.Up or Key.Down } navigate &&
-            Session.Prompt is { Input: null } && _dialogButtons.Count > 0)
-        {
-            int index = _dialogButtons.FindIndex(button => button == GetViewport().GuiGetFocusOwner());
-            int direction = navigate.Keycode is Key.Left or Key.Up ? -1 : 1;
-            index = (Math.Max(0, index) + direction + _dialogButtons.Count) % _dialogButtons.Count;
-            _dialogButtons[index].GrabFocus();
             GetViewport().SetInputAsHandled();
             return;
         }
         if (input is InputEventMagnifyGesture magnify)
         {
-            var pointer = magnify.Position - Map.GlobalPosition;
-            if (!new Rect2(Vector2.Zero, Map.Size).HasPoint(pointer)) pointer = Map.Size / 2;
-            ApplyPinchZoom(magnify.Factor, pointer);
+            if (Session.Prompt is null && !_editingName)
+            {
+                var pointer = magnify.Position - Map.GlobalPosition;
+                if (!new Rect2(Vector2.Zero, Map.Size).HasPoint(pointer)) pointer = Map.Size / 2;
+                ApplyPinchZoom(magnify.Factor, pointer);
+            }
             GetViewport().SetInputAsHandled();
             return;
         }
@@ -1066,14 +1199,6 @@ public partial class Main : Control
                 return;
             }
         }
-        if (_helpVisible && (input is InputEventKey { Pressed: true } ||
-            input is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left or MouseButton.Right }))
-        {
-            _helpVisible = false;
-            Session.ClosePrompt();
-            GetViewport().SetInputAsHandled();
-            return;
-        }
         if (input is InputEventMouseButton { Pressed: false, ButtonIndex: MouseButton.Left or MouseButton.Middle })
         {
             StopPointerGesture();
@@ -1096,16 +1221,69 @@ public partial class Main : Control
         else if (input is InputEventKey { Pressed: true, Keycode: Key.Escape } && Session.Prompt is not null)
         {
             _helpVisible = false;
-            Session.ClosePrompt();
+            Session.CancelPrompt();
             GetViewport().SetInputAsHandled();
         }
-        else if (input is InputEventKey { Pressed: true, Echo: false } number &&
-            Session.Prompt is { Input: null } && !number.CtrlPressed && !number.MetaPressed && !number.AltPressed &&
-            (int)number.Keycode >= (int)Key.Key1 && (int)number.Keycode <= (int)Key.Key9)
+    }
+
+    private bool HandleDialogKey(InputEventKey key)
+    {
+        if (Session.Prompt is not { } prompt) return false;
+        var code = key.Keycode == Key.None ? key.PhysicalKeycode : key.Keycode;
+        var focus = GetViewport().GuiGetFocusOwner();
+        if (!key.Pressed) return focus is not LineEdit;
+        if (code == Key.Escape)
         {
-            SelectPromptChoice((int)number.Keycode - (int)Key.Key1);
-            GetViewport().SetInputAsHandled();
+            _helpVisible = false;
+            Session.CancelPrompt();
+            return true;
         }
+        if (focus is LineEdit || code == Key.Tab) return false;
+        if (focus is Slider && code is Key.Left or Key.Right or Key.Up or Key.Down or Key.Home or Key.End)
+            return false;
+        if (code is Key.Enter or Key.KpEnter or Key.Space)
+        {
+            if (!key.Echo)
+            {
+                if (focus is Button button && _dialogButtons.Contains(button))
+                {
+                    if (!button.Disabled) button.EmitSignal(Button.SignalName.Pressed);
+                }
+                else SelectPromptChoice(prompt.SelectedIndex);
+            }
+            return true;
+        }
+        if (code is Key.Left or Key.Right && prompt.Tabs is not null)
+        {
+            Session.CycleTab(code == Key.Left ? -1 : 1);
+            return true;
+        }
+        if (code is Key.Left or Key.Right or Key.Up or Key.Down && _dialogButtons.Count > 0)
+        {
+            int index = _dialogButtons.FindIndex(button => button == focus);
+            int direction = code is Key.Left or Key.Up ? -1 : 1;
+            index = (Math.Max(0, index) + direction + _dialogButtons.Count) % _dialogButtons.Count;
+            _dialogButtons[index].GrabFocus();
+            return true;
+        }
+        if (!key.Echo && !key.CtrlPressed && !key.MetaPressed && !key.AltPressed)
+        {
+            char letter = (int)code is >= (int)Key.A and <= (int)Key.Z ? (char)code
+                : key.Unicode is >= 'A' and <= 'z' ? char.ToUpperInvariant((char)key.Unicode) : '\0';
+            if (prompt.Title == AudioDialogTitle && !key.ShiftPressed && letter is 'M' or 'U')
+            {
+                var mute = _dialogButtons.First(button => button.Name == (letter == 'M' ? "MusicMute" : "SoundMute"));
+                mute.EmitSignal(Button.SignalName.Pressed);
+                return true;
+            }
+            for (int index = 0; index < prompt.Shortcuts.Count; index++)
+                if (prompt.Shortcuts[index].Letter == letter && prompt.Shortcuts[index].Shift == key.ShiftPressed)
+                {
+                    SelectPromptChoice(index);
+                    break;
+                }
+        }
+        return true;
     }
 
     public override void _UnhandledInput(InputEvent input)
@@ -1126,49 +1304,18 @@ public partial class Main : Control
         _hover = false;
         ResetTrackpadScroll();
         _lastInput = $"Key {code}";
-        if (_helpVisible)
+        if (Session.Prompt is not null)
         {
-            _helpVisible = false;
-            Session.ClosePrompt();
-            return true;
-        }
-        if (Session.Prompt is { } prompt)
-        {
-            if (code == Key.Escape)
-            {
-                Session.ClosePrompt();
-            }
-            else if (code is Key.Enter or Key.KpEnter)
-            {
-                SelectPromptChoice(_promptIndex);
-            }
-            else if (code is Key.Left or Key.Right && prompt.Tabs is not null)
-            {
-                Session.CycleTab(code == Key.Left ? -1 : 1);
-            }
-            else if (code is Key.Up or Key.Down && _promptButtons.Count > 0)
-            {
-                _promptIndex = (_promptIndex + (code == Key.Up ? -1 : 1) + prompt.Choices.Count) % prompt.Choices.Count;
-                _promptButtons[_promptIndex].GrabFocus();
-            }
-            else if (prompt.Input is null && (int)code >= (int)Key.Key1 && (int)code <= (int)Key.Key9)
-            {
-                SelectPromptChoice((int)code - (int)Key.Key1);
-            }
-            return true;
-        }
-        if ((key.CtrlPressed || key.MetaPressed) && code == Key.Z)
-        {
-            Session.RequestUndo();
+            HandleDialogKey(key);
             return true;
         }
         if (Session.Preview is not null)
         {
-            if (code is Key.Enter or Key.Y)
+            if (!key.CtrlPressed && !key.MetaPressed && !key.AltPressed && code is Key.Enter or Key.Y or Key.C)
             {
                 Session.ConfirmPreview();
             }
-            else if (code is Key.Escape or Key.N)
+            else if (code is Key.Escape or Key.N or Key.A)
             {
                 Session.CancelPreview();
             }
@@ -1179,6 +1326,11 @@ public partial class Main : Control
                 if (key.CtrlPressed) Session.JumpCursor(lineDx, lineDy);
                 else Session.MoveCursor(lineDx, lineDy);
             }
+            return true;
+        }
+        if ((key.CtrlPressed || key.MetaPressed) && code == Key.Z)
+        {
+            Session.RequestUndo();
             return true;
         }
         int dx = code == Key.Left ? -1 : code == Key.Right ? 1 : 0;
@@ -1256,6 +1408,7 @@ public partial class Main : Control
             case Key.F7: Session.ShowReport(); break;
             case Key.F8: Session.ShowGrowthReport(); break;
             case Key.F9: Session.RequestLoad(Session.SavePath); break;
+            case Key.F10: if (!key.Echo) ToggleMusic(); break;
             case Key.F12: Session.ToggleInputDebug(); break;
             case Key.Escape: ShowCityMenu(); break;
             case Key.Q: Session.RequestQuit(); break;
@@ -1423,7 +1576,7 @@ public partial class Main : Control
     private void OnFocusEntered()
     {
         _focused = true;
-        _music.StreamPaused = !MusicEnabled;
+        _music.StreamPaused = !MusicEnabled || MusicVolume == 0;
     }
 
     private void ResetTrackpadScroll()
@@ -1436,6 +1589,7 @@ public partial class Main : Control
     {
         _focused = false;
         _music.StreamPaused = true;
+        _clickPlayer.Stop();
         StopPointerGesture();
         _hover = false;
         _panel.Minimap.StopDrag();
@@ -1465,7 +1619,7 @@ public partial class Main : Control
     {
         _helpVisible = true;
         Session.ShowPrompt(HelpContent.Title, HelpContent.Text(),
-            [new("Close", () => { _helpVisible = false; Session.ClosePrompt(); })], footer: HelpContent.Footer);
+            [new("Close", () => { _helpVisible = false; Session.CancelPrompt(); })], footer: HelpContent.Footer);
     }
 
     private void CenterModal()
@@ -1498,12 +1652,23 @@ public partial class Main : Control
     private void StopMusic()
     {
         if (_musicStopped) return;
+        _musicCancellation.Cancel();
+        if (_musicPump is not null)
+        {
+            try { _musicPump.GetAwaiter().GetResult(); }
+            catch (OperationCanceledException) when (_musicCancellation.IsCancellationRequested) { }
+            catch (InvalidOperationException error)
+            {
+                GD.PushError($"Music playback stopped: {error.Message}");
+            }
+        }
         _musicStopped = true;
         _music.Stop();
         _music.Stream = null;
         _musicPlayback.Dispose();
         _musicTrack?.Dispose();
         _musicTrack = null;
+        _musicCancellation.Dispose();
     }
 
     private void Quit()

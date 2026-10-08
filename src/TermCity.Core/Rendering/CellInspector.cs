@@ -60,6 +60,8 @@ public static class CellInspector
         else if (map.BuildingAt(pos.X, pos.Y) is { } standalone)
         {
             lines.Add(standalone.Name);
+            var footprint = map.BuildingFootprintAt(pos.X, pos.Y);
+            if (footprint.Area > 1) lines.Add($"{footprint.Width}x{footprint.Height} cells");
             if (map.ZoneRemovalAt(pos.X, pos.Y) is { } removal)
             {
                 double days = Math.Max(0, removal.RemoveAtDay - game.ElapsedDays);
