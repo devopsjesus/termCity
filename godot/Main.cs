@@ -70,6 +70,8 @@ public partial class Main : Control
     private Pos _panAnchor;
     private double _hudElapsed;
     private bool _started;
+    private WindowsResizeGuard? _resizeGuard;
+    internal WindowsResizeGuard? ResizeGuard => _resizeGuard;
     public bool MusicEnabled { get; private set; } = true;
     public bool SoundEnabled { get; private set; } = true;
     public const double DefaultMusicVolume = 70, DefaultSoundVolume = 60;
@@ -140,6 +142,8 @@ public partial class Main : Control
             Map.VerifyGlyphs(Session.Game.Map.Content);
             CreateEffects();
             CreateLayout(font);
+            if (OS.GetName() == "Windows" && DisplayServer.GetName() != "headless")
+                _resizeGuard = new WindowsResizeGuard(GetWindow());
             CreateMusic();
             CreateClicks();
             Session.Placed += PlayPlacementClick;
@@ -1679,6 +1683,8 @@ public partial class Main : Control
 
     public override void _ExitTree()
     {
+        _resizeGuard?.Dispose();
+        _resizeGuard = null;
         if (!_started)
         {
             return;
@@ -1748,7 +1754,7 @@ public partial class Main : Control
             await ToSignal(GetTree().CreateTimer(0.1), SceneTreeTimer.SignalName.Timeout);
             GetTree().Quit();
         }
-        catch (Exception error) when (error is InvalidOperationException or IOException or ArgumentException)
+        catch (Exception error) when (error is InvalidOperationException or IOException or ArgumentException or System.ComponentModel.Win32Exception or TimeoutException)
         {
             GD.PushError($"TermCity Godot smoke failed: {error}");
             GetTree().Quit(1);

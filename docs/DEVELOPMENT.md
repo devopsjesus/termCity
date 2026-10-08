@@ -30,25 +30,71 @@ Generated `bin`, `obj`, `.godot` state and export outputs are ignored.
 ### Windows rendering and resize checks
 
 [project.godot](../godot/project.godot) keeps the Compatibility renderer, with
-`rendering/gl_compatibility/driver.windows=opengl3_angle` selecting ANGLE / Direct3D11 only on Windows.
-This reduces the native OpenGL resize stall without adopting the Vulkan path that crashed during
-live resizing. Other platforms retain their default drivers. Native OpenGL remains an explicit
-fallback via `--rendering-driver opengl3`, placed before the game-argument separator.
+`rendering/gl_compatibility/driver.windows=opengl3` selecting native OpenGL on Windows.
+The native resize-loop guard below prevents reentrant updates during edge dragging, and
+native OpenGL with that guard passes the native-loop and repaint checks. ANGLE / Direct3D11
+avoided the earlier resize stalls but exhibited
+delayed completed frames after release; native samples caught texture allocation and presentation
+in the D3D11 driver path. Native OpenGL with the guard avoids that path without adopting Vulkan.
+Other platforms retain their default drivers. ANGLE remains an explicit fallback via
+`--rendering-driver opengl3_angle`, placed before the game-argument separator.
 
-The graphical smoke test checks large resizes and maximize against a one-second budget on ANGLE.
+The graphical smoke test checks large resizes and maximize against a one-second budget on Windows.
 [WindowsResizeSmoke.cs](../godot/WindowsResizeSmoke.cs) also exercises native enter/sizing/paint/exit
 messages and window-size changes on the test window, without moving the system cursor or interacting
 with other applications. It restores the original bounds, checks city data is unchanged, and emits
 `TERMCITY_WINDOWS_RESIZE_OK`. Headless and non-Windows runs skip native Windows calls.
 
-These checks do not establish stability during physical edge dragging. Rapid live resizing has
-also been reported to hang with ANGLE: mouse input remains captured, opening Task Manager releases
-the mouse, but the game stays frozen. No managed exception or graphics-reset event was found in
-the observed logs. A native rendering/driver wait and a UI-thread deadlock remain unconfirmed
-possibilities. Avoid aggressive automated GUI stress on an interactive desktop.
-For diagnosis, keep the frozen process alive and use Task Manager's Details view to create a
-memory dump of the specific game process before ending it. Keep dumps local; they contain process
-memory. Inspect native and managed thread stacks rather than inferring the cause from resize timings.
+[WindowsResizeGuard.cs](../godot/WindowsResizeGuard.cs) subclasses only the main game window on
+graphical Windows runs. During `WM_ENTERSIZEMOVE`/`WM_EXITSIZEMOVE`, it suppresses Godot 4.7's
+move-redraw timer (ID 1), which otherwise calls `Main::iteration` from the native modal sizing loop.
+Activation timer 2 and all other messages retain their normal handling. The native loop therefore
+finishes before normal game updates/redraws resume, avoiding reentrant rendering while Windows
+owns mouse capture. The last frame remains visible during physical dragging; audio still has its
+independent buffer pump. The subclass delegate stays rooted until it is removed on scene teardown.
+Native window destruction also removes the subclass before forwarding `WM_NCDESTROY`.
+
+The native smoke uses 256 rapid reversing size changes, checks timer suppression and completed
+sizing, and verifies layout and unchanged city data afterwards. Cross-thread positioning uses
+`SWP_ASYNCWINDOWPOS`. It exercises the sizing protocol, not physical mouse input; do not infer
+hardware-wide guarantees from it. For aggressive diagnostics, use a private, non-interactive
+Windows desktop rather than capturing the user's mouse. On a desktop named
+`TermCityResize_<32-digit GUID>` that is not the active input desktop, the smoke additionally enters the actual Windows modal sizing
+loop with `SC_SIZE`. It verifies `GUI_INMOVESIZE` (flag `0x0002`) and the sizing window handle,
+applies and checks every one of 256 reversing bounds changes, cancels sizing, verifies that
+mouse capture is released, restores the original bounds, and waits for resumed game frames.
+It additionally measures release-to-completed-frame latency at new 1280x720, 1920x1040 and
+3840x2160 client sizes. After cancelling the modal loop, it reapplies the target size because
+Windows may restore its internally tracked rectangle on cancellation. This approximates a
+physical release without injecting mouse input. The first accepted `RenderingServer.FramePostDraw`
+must follow a map draw after the native exit timestamp, at the final layout size; the native OpenGL
+budget is 500 ms. ANGLE fallback runs report latency without imposing that native-driver budget.
+`TERMCITY_WINDOWS_REPAINT_OK` is required in addition to the native loop and overall smoke markers.
+This measures engine render completion on an inactive diagnostic desktop, not physical DWM presentation.
+It checks additional timer suppression, layout and unchanged city data,
+and emits `TERMCITY_WINDOWS_NATIVE_MODAL_RESIZE_OK`. Normal interactive smoke never invokes
+this modal-loop test. Keep process dumps local. A frozen-process
+dump can distinguish a native wait from a slow frame; short timeouts alone cannot.
+The guard is a mitigation for nested game-loop execution, not a confirmed diagnosis of the
+original physical-drag hang. These tests validate the native loop without injecting global
+mouse input; a responsive window alone is not evidence that a native sizing loop ran.
+
+After building, run the modal-loop regression on Windows with
+[RunWindowsResizeSmoke.ps1](../tests/RunWindowsResizeSmoke.ps1):
+
+```powershell
+.\tests\RunWindowsResizeSmoke.ps1
+.\tests\RunWindowsResizeSmoke.ps1 -Seed 42 -Size large
+.\tests\RunWindowsResizeSmoke.ps1 -Driver opengl3_angle -TimeoutSeconds 180
+```
+
+The runner uses the project's driver by default and verifies native OpenGL was selected.
+Use `-Driver opengl3` to force native OpenGL, or `-Godot "C:\path\to\godot.exe"` if needed.
+Run these sequentially because smoke tests share
+a save path. The runner creates but never switches to a private desktop, enforces a bounded
+timeout, and stops only its own process on failure. A zero process exit code and all four
+resize/game success markers are required. Logs remain in the Windows temporary directory
+for diagnosis; the runner prints their paths and releases its native handles.
 
 ## Architecture
 

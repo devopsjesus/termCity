@@ -1,4 +1,5 @@
 using Godot;
+using System.Diagnostics;
 using TermCity.Core.Effects;
 using TermCity.Core.Rendering;
 using TermCity.Core.Session;
@@ -27,6 +28,8 @@ public partial class TerminalMap : Control
 
     /// <summary>Frames drawn so far (diagnostics and the smoke test).</summary>
     public int DrawCount { get; private set; }
+    internal long DrawTimestamp { get; private set; }
+    internal Vector2 DrawSize { get; private set; }
 
     /// <summary>How many glyphs the last frame drew because of effects (modified cells, ghosts and sprites).</summary>
     public int EffectGlyphsDrawn { get; private set; }
@@ -187,6 +190,8 @@ public partial class TerminalMap : Control
         }
         DrawSetTransform(Vector2.Zero, 0f, Vector2.One);
         EffectGlyphsDrawn = drawn;
+        DrawSize = Size;
+        DrawTimestamp = Stopwatch.GetTimestamp();
     }
 
     private void DrawBuildingFootprints(int cellWidth, int cellHeight)

@@ -24,17 +24,19 @@ Replace `godot` with your Godot .NET executable's full path if it is not on `PAT
 On macOS, a typical path is `/Applications/Godot_mono.app/Contents/MacOS/godot`.
 The bundled map font loads directly from the project, without requiring an existing import cache.
 
-On Windows, Compatibility rendering uses **ANGLE / Direct3D11** to reduce native OpenGL resize
-stalls without switching to Vulkan. macOS and Linux retain their existing rendering drivers.
-To explicitly fall back to native OpenGL, put `--rendering-driver opengl3` before the game's `--` separator:
+On Windows, Compatibility rendering uses **native OpenGL with a native resize-loop guard**.
+The guard prevents nested game updates during edge dragging; native OpenGL avoids the delayed
+post-resize frames observed with ANGLE / Direct3D11. macOS and Linux retain their existing drivers.
+If native OpenGL is unavailable on your system, explicitly select ANGLE before the game's `--` separator:
 
 ```powershell
-godot --path godot --rendering-driver opengl3 -- --seed 42
+godot --path godot --rendering-driver opengl3_angle -- --seed 42
 ```
 
-Rapid live-edge resizing can still hang the game on some Windows systems, retaining mouse capture
-until another application gains focus. Scripted resize checks do not establish live-drag stability.
-Until this is resolved, avoid rapid edge dragging; native OpenGL is an alternative but may resize slowly.
+On Windows, native window moving/resizing defers live game redraws until the drag ends. Windows
+keeps the previous frame visible while sizing; the game redraws at the final dimensions on release.
+This avoids running the game loop inside the native resize timer while Windows owns mouse capture.
+The guard is also active with the ANGLE fallback, but that driver may repaint more slowly after release.
 
 ### Startup options
 

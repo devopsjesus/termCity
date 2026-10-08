@@ -683,22 +683,70 @@ internal static class GodotSmoke
                 window.Size = size;
                 await Frames();
                 CheckStatusPath();
-                Require(!angle || timer.Elapsed.TotalMilliseconds < 1000,
+                Require(timer.Elapsed.TotalMilliseconds < 1000,
                     $"Window resize stalled for {timer.Elapsed.TotalMilliseconds:F0} ms.");
             }
             var maximize = Stopwatch.StartNew();
             window.Mode = Window.ModeEnum.Maximized;
             await Frames();
             CheckStatusPath();
-            Require(!angle || maximize.Elapsed.TotalMilliseconds < 1000,
+            Require(maximize.Elapsed.TotalMilliseconds < 1000,
                 $"Maximize stalled for {maximize.Elapsed.TotalMilliseconds:F0} ms.");
             window.Mode = Window.ModeEnum.Windowed;
             window.Size = originalSize;
             await Frames();
             double nativeWorst = await WindowsResizeSmoke.Run(window);
             await Frames();
+            Require(host.ResizeGuard is { Sizing: false, SuppressedTicks: > 0 },
+                "Windows resize guard did not suppress the nested timer or finish sizing.");
+            if (WindowsResizeSmoke.IsIsolatedDesktop())
+            {
+                var guard = host.ResizeGuard ?? throw new InvalidOperationException("Native sizing has no resize guard.");
+                int suppressed = guard.SuppressedTicks;
+                double modalWorst = await WindowsResizeSmoke.RunModal(window);
+                await Frames();
+                Require(!guard.Sizing && guard.SuppressedTicks > suppressed,
+                    "The real native sizing loop did not suppress redraw ticks or resume the game afterwards.");
+                Require(modalWorst < 1000, $"Native modal resize stalled for {modalWorst:F0} ms.");
+                GD.Print($"TERMCITY_WINDOWS_NATIVE_MODAL_RESIZE_OK worst={modalWorst:F0}ms");
+                double repaintWorst = 0;
+                try
+                {
+                    foreach (var finalSize in new[] { new Vector2I(1280, 720), new Vector2I(1920, 1040),
+                        new Vector2I(3840, 2160) })
+                    {
+                        var frame = new TaskCompletionSource<double>();
+                        long previousExit = guard.ExitTimestamp;
+                        void Completed()
+                        {
+                            if (guard.ExitTimestamp > previousExit && !guard.Sizing &&
+                                window.Size == finalSize && host.Size == new Vector2(finalSize.X, finalSize.Y) &&
+                                host.Map.DrawTimestamp > guard.ExitTimestamp && host.Map.DrawSize == host.Map.Size)
+                                frame.TrySetResult(Stopwatch.GetElapsedTime(guard.ExitTimestamp).TotalMilliseconds);
+                        }
+                        RenderingServer.FramePostDraw += Completed;
+                        try
+                        {
+                            await WindowsResizeSmoke.RunModal(window, finalSize);
+                            double latency = await frame.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                            CheckStatusPath();
+                            Require(!guard.Sizing, "The completed resize frame still owns the native sizing loop.");
+                            Require(angle || latency < 500, $"Post-resize repaint at {finalSize} took {latency:F0} ms.");
+                            repaintWorst = Math.Max(repaintWorst, latency);
+                            GD.Print($"TERMCITY_WINDOWS_REPAINT_FRAME size={finalSize} latency={latency:F0}ms");
+                        }
+                        finally
+                        {
+                            RenderingServer.FramePostDraw -= Completed;
+                        }
+                    }
+                }
+                finally { window.Size = originalSize; }
+                await Frames();
+                GD.Print($"TERMCITY_WINDOWS_REPAINT_OK worst={repaintWorst:F0}ms");
+            }
             CheckStatusPath();
-            Require(!angle || nativeWorst < 1000, $"Native edge resize stalled for {nativeWorst:F0} ms.");
+            Require(nativeWorst < 1000, $"Native edge resize stalled for {nativeWorst:F0} ms.");
             Require(beforeResize == SaveGameStore.Serialize(session.Game), "Resizing changed city data.");
             GD.Print($"TERMCITY_WINDOWS_RESIZE_OK driver={RenderingServer.GetCurrentRenderingDriverName()} native_worst={nativeWorst:F0}ms");
         }

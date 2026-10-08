@@ -23,5 +23,5 @@ project/assembly_name="TermCity.Godot"
 environment/defaults/default_clear_color=Color(0, 0, 0, 1)
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
-gl_compatibility/driver.windows="opengl3_angle"
+gl_compatibility/driver.windows="opengl3"
 textures/default_filters/use_nearest_mipmap_filter=false
