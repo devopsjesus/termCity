@@ -19,7 +19,7 @@ public class BudgetUiTests
         fire.Select();
         Assert.Equal(0.75, session.Game.Budget.Funding(TermCity.Core.Buildings.ServiceKind.Fire), 3);
         Assert.NotNull(session.Prompt);
-        Assert.Contains(session.Prompt!.Choices, c => c.Label.StartsWith("Fire watch") && c.Cells![0] == "75%");
+        Assert.Contains(session.Prompt!.Choices, c => c.Label.StartsWith("Fire watch") && c.Cells![0] == 0.75.ToString("P0"));
     }
 
     [Fact]

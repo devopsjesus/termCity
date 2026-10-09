@@ -45,7 +45,7 @@ public class SidebarReportTests
         game.Touch();
         var rows = SidebarReport.CityRows(game);
 
-        Assert.Equal("0%", Value("Fuel").Text);
+        Assert.Equal(0d.ToString("P0"), Value("Fuel").Text);
         Assert.Equal(SidebarReport.BadColor, Value("Fuel").Color);
         Assert.Equal(SidebarReport.BadColor, Value("Water").Color);
         Assert.Contains("FAMINE", Value("Grain").Text);
