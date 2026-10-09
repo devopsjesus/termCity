@@ -278,7 +278,7 @@ public class MinimapAndSessionTests
     }
 
     [Fact]
-    public void ThePersistedGameKeepsItsDayAndPlaysAtTheCurrentSpeeds()
+    public void ThePersistedGameKeepsItsDayAndConfiguredSpeeds()
     {
         var game = TestCity.Flat();
         for (int i = 0; i < 12; i++)
@@ -298,8 +298,9 @@ public class MinimapAndSessionTests
 
         Assert.Equal(5, loaded.Day);
         Assert.Equal(1, loaded.Week);
-        Assert.Equal(new GameConfig().MediumSecondsPerWeek, loaded.Config.MediumSecondsPerWeek);
-        Assert.Equal(new GameConfig().FastSecondsPerWeek, loaded.Config.FastSecondsPerWeek);
+        Assert.Equal(3.0, loaded.Config.SlowSecondsPerWeek);
+        Assert.Equal(1.5, loaded.Config.MediumSecondsPerWeek);
+        Assert.Equal(0.5, loaded.Config.FastSecondsPerWeek);
     }
 
     [Fact]

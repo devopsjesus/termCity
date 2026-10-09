@@ -931,7 +931,10 @@ internal static class GodotSmoke
         var map = session.Game.Map;
         session.ClosePrompt();
         session.SetZoom(0);
-        session.CenterOn(new Pos(map.Width / 2, map.Height / 2));
+        var openCell = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf)
+            .First(p => p.X >= 2 && p.Y >= 2 && p.X < map.Width - 2 && p.Y < map.Height - 2 &&
+                session.Game.Network.IsServed(map.Index(p.X, p.Y)) && session.Game.CanPlaceRoad(p.X, p.Y));
+        session.CenterOn(openCell);
         host.Map.RefreshCells();
         await frames();
         Require(host.Effects.Settings.Level == TermCity.Core.Effects.EffectLevel.High && host.Map.Effects == host.Effects,

@@ -363,7 +363,7 @@ public class SessionFeatureTests
         for (int i = 0; i < 3; i++) session.Game.AdvanceDay();
         session.Game.Update(0.1);
         string before = SaveGameStore.Serialize(session.Game);
-        var control = SaveGameStore.Deserialize(before, preserveTimings: true);
+        var control = SaveGameStore.Deserialize(before);
         session.PlaceCursor(new Pos(50, 18));
         session.BuildRoad();
         session.Game.AdvanceWeek();

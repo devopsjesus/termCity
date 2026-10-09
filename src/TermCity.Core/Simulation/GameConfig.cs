@@ -26,18 +26,10 @@ public sealed record GameConfig
     public int MapHeight { get; init; } = 96;
 
     public int Seed { get; init; } = 1;
+    [System.Text.Json.Serialization.JsonRequired]
     public CityScenario Scenario { get; init; }
-    // Retains compatibility with saves created before the other city presets existed.
-    public bool SanFrancisco
-    {
-        get => Scenario == CityScenario.SanFrancisco;
-        init
-        {
-            if (value) Scenario = CityScenario.SanFrancisco;
-            else if (Scenario == CityScenario.SanFrancisco) Scenario = CityScenario.Random;
-        }
-    }
 
+    [System.Text.Json.Serialization.JsonRequired]
     public int? StartingYear { get; init; }
 
     /// <summary>Enough for about 100 street cells: an access road plus a small neighbourhood grid before any tax comes in.</summary>
@@ -78,6 +70,7 @@ public sealed record GameConfig
     /// The weekly cap grows by this fraction of the cells already filled (of the commercial and industrial cells that
     /// the residents allow, for those zones), so growth compounds: 0.02 is two percent a week.
     /// </summary>
+    [System.Text.Json.Serialization.JsonRequired]
     public double GrowthRatePerWeek { get; init; } = 0.02;
 
     /// <summary>Share of adults who work (and, for seniors, still work).</summary>

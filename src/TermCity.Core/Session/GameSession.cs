@@ -542,7 +542,7 @@ public sealed partial class GameSession
     {
         Game.Paused = !Game.Paused;
         SetMessage(Game.Paused ? "Paused." : "Resumed.");
-        Game.Touch();
+        Game.NotifyStateChanged();
     }
 
     public void SetSpeed(GameSpeed speed)
@@ -550,7 +550,7 @@ public sealed partial class GameSession
         Game.Speed = speed;
         Game.Paused = false;
         SetMessage($"Speed: {speed}.");
-        Game.Touch();
+        Game.NotifyStateChanged();
     }
 
     // ---- Games ------------------------------------------------------------------------------------------------

@@ -323,7 +323,7 @@ public sealed partial class GameSession
             return;
         }
 
-        var restored = SaveGameStore.Deserialize(snapshot, Game.Map.Content, preserveTimings: true);
+        var restored = SaveGameStore.Deserialize(snapshot, Game.Map.Content);
         ReplaceGame(restored);
         Game.Paused = true;
         SetMessage("Last action undone; city restored and paused.", MessageKind.Success);
@@ -551,7 +551,7 @@ public sealed partial class GameSession
     {
         GuideVisible = false;
         Game.GuideDismissed = true;
-        Game.Touch();
+        Game.NotifyStateChanged();
         CancelPrompt();
     }
 
@@ -559,7 +559,7 @@ public sealed partial class GameSession
     {
         GuideVisible = true;
         Game.GuideDismissed = false;
-        Game.Touch();
+        Game.NotifyStateChanged();
         CancelPrompt();
     }
 

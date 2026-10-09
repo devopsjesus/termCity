@@ -17,7 +17,7 @@ onto it, how medieval populations differ in the simulation, and where the game c
 | Industry | Workshop, Mill, Great Forge |
 | Mayor / council | The steward; the **budget menu** sets funding for the watch, sheriff, physic and so on |
 
-Old saves use the old names (House, Police Station, ...) and load with them mapped to the new ones.
+Content registries and saves use only the current medieval names; historical modern-name aliases are not supported.
 
 ## Services
 
@@ -81,7 +81,7 @@ Details and constants are in [POPULATION.md](POPULATION.md).
 - **Settlement** (`Settlement`): rank, charters and the crown's tribute with arrears.
 - Medieval **disasters** (`Disasters`): plague, raids and fires with seasonal and service effects.
 
-Each is deterministic, saved with old-save defaults, and covered in `tests/TermCity.Tests`.
+Each is deterministic, required in current-format saves, and covered in `tests/TermCity.Tests`.
 
 ## Ideas not implemented
 

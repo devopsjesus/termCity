@@ -55,11 +55,6 @@ public sealed class RoadRegistry : TypeRegistry<RoadType>
         registry.Register(DefaultRoads.Track());
         registry.Register(DefaultRoads.CobbledRoad());
         registry.Register(DefaultRoads.KingsRoad());
-
-        // Saves from before the medieval setting named these Street, Avenue and Highway.
-        registry.Alias("Street", DefaultRoads.TrackName);
-        registry.Alias("Avenue", DefaultRoads.CobbledName);
-        registry.Alias("Highway", DefaultRoads.KingsRoadName);
         return registry;
     }
 }
@@ -115,7 +110,7 @@ public static class DefaultRoads
         CostMultiplier = 3.0,
         Rank = 3,
         TrafficCapacity = 60,
-        WeeklyUpkeep = 0,
-        Description = "The King's Road: a paved, patrolled highway maintained by the crown",
+        WeeklyUpkeep = 3,
+        Description = "The King's Road: a paved, patrolled highway",
     };
 }

@@ -129,9 +129,14 @@ public sealed class CityGame
             CityName = config.Scenario != CityScenario.Random ? CityScenarioMap.Name(config.Scenario)
                 : prefixes[names.Next(prefixes.Length)] + suffixes[names.Next(suffixes.Length)],
         };
-        if (config.Scenario != CityScenario.Random && config.FullRules)
+        if (config.Scenario != CityScenario.Random)
         {
-            ScenarioSeeder.Seed(game);
+            if (config.FullRules) ScenarioSeeder.Seed(game);
+            else
+            {
+                CityScenarioMap.Populate(map, config);
+                game.Touch();
+            }
         }
 
         return game;
@@ -246,7 +251,8 @@ public sealed class CityGame
     /// <summary>Fraction (0-1) of the current week that has elapsed.</summary>
     public double WeekProgress => Math.Clamp((Day + Math.Clamp(_dayProgress / SecondsPerDay, 0, 1)) / Config.DaysPerWeek, 0, 1);
 
-    public int Year => Week / Config.WeeksPerYear + (Config.StartingYear ?? 1);
+    public int Year => Week / Config.WeeksPerYear +
+        (Config.StartingYear ?? throw new InvalidOperationException("A running city must have a starting year."));
 
     public int WeekOfYear => Week % Config.WeeksPerYear + 1;
 
@@ -406,7 +412,10 @@ public sealed class CityGame
         double roads = 0;
         foreach (int i in Map.RoadCells)
         {
-            roads += Map.Content.Roads[Map.RoadTypeLayer[i]].WeeklyUpkeep;
+            if (Map.PlayerRoadLayer[i])
+            {
+                roads += Map.Content.Roads[Map.RoadTypeLayer[i]].WeeklyUpkeep;
+            }
         }
 
         double bureaucracy = Config.AdministrationShare *
@@ -419,7 +428,7 @@ public sealed class CityGame
     public void SetTax(ZoneType zone, double rate)
     {
         Taxes.Set(zone, Math.Clamp(double.IsFinite(rate) ? rate : 0.09, 0, 0.3));
-        Invalidate();
+        NotifyStateChanged();
     }
 
     /// <summary>Sets how much of its full cost a service is funded (0-1). Lower funding saves money and weakens the service.</summary>
@@ -487,6 +496,8 @@ public sealed class CityGame
     /// the player actions below use <see cref="Notify"/> to invalidate only what they affect.
     /// </summary>
     public void Touch() => Notify(roadsChanged: true);
+
+    internal void NotifyStateChanged() => Notify(roadsChanged: false, mapChanged: false);
 
     private void Notify(bool roadsChanged, bool mapChanged = true, bool servicesChanged = false)
     {
@@ -605,9 +616,8 @@ public sealed class CityGame
         if (Config.FullRules)
         {
             PopulationEngine.RunWeek(this, Tally);
-            Invalidate();
+            Invalidate(servicesChanged: true);
             Settlement.RunWeek(this);
-            _serviceVersion++;
         }
 
         var finance = Finance;
@@ -654,7 +664,7 @@ public sealed class CityGame
             Map.SetHousehold(p.X, p.Y, default);
         }
 
-        Invalidate();
+        Invalidate(servicesChanged: true);
         return due.Count;
     }
 
@@ -760,7 +770,11 @@ public sealed class CityGame
     internal int WeeklyCap(int baseCap, int existing) =>
         baseCap + (int)Math.Ceiling(Math.Max(0, existing) * Math.Max(0, Config.GrowthRatePerWeek));
 
-    private void Invalidate() => _version++;
+    private void Invalidate(bool servicesChanged = false)
+    {
+        _version++;
+        if (servicesChanged) _serviceVersion++;
+    }
 
     /// <summary>Fills up to <paramref name="limit"/> (and <paramref name="room"/>) served, empty cells of a zone type.</summary>
     private int Grow(ZoneType zone, int limit, int room)
@@ -805,6 +819,7 @@ public sealed class CityGame
             filled++;
         }
 
+        if (filled > 0) _serviceVersion++;
         return filled;
     }
 
@@ -1001,7 +1016,7 @@ public sealed class CityGame
         foreach (var p in PlanRoad(area, type))
         {
             Map.SetFeature(p.X, p.Y, null);
-            Map.SetRoad(p.X, p.Y, type);
+            Map.SetRoad(p.X, p.Y, type, playerBuilt: true);
         }
 
         Money -= quote.Cost;
@@ -1100,7 +1115,7 @@ public sealed class CityGame
             return ActionResult.Fail($"No cells could be designated {info.Name}: water, roads and buildings are skipped.");
         }
 
-        Notify(roadsChanged: false);
+        Notify(roadsChanged: false, servicesChanged: true);
         string note = skipped > 0 ? $" ({skipped} blocked cell(s) skipped.)" : string.Empty;
         return ActionResult.Ok($"Designated {changed} {info.Name} cell(s).{note}", 0, changed);
     }
@@ -1133,7 +1148,7 @@ public sealed class CityGame
             return ActionResult.Fail("No zones to remove here.");
         }
 
-        Notify(roadsChanged: false);
+        Notify(roadsChanged: false, servicesChanged: true);
         string note = scheduled > 0 ? $" {scheduled} building(s) will be removed in 2-3 game weeks unless their original zone is restored." : "";
         return ActionResult.Ok($"Dezoned {changed} cell(s).{note}", 0, changed);
     }

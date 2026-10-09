@@ -44,7 +44,7 @@ public class BuildingArtTests
     }
 
     [Fact]
-    public void ArtSurvivesSavingAndUsesCanonicalIconsWhenZoomedOutOrLegacy()
+    public void ArtSurvivesSavingAndUsesCanonicalIconsWhenZoomedOut()
     {
         var game = TestCity.Flat();
         var type = game.Map.Content.Buildings.Get("Parish Church");
@@ -57,8 +57,6 @@ public class BuildingArtTests
             Assert.Equal(type.Glyphs[0], CellRenderer.Render(loaded, p.X, p.Y, buildingArt: false).Glyph);
         }
         Assert.Equal(type.Glyphs[0], new BlockSampler(loaded).Sample(11, 18, 2).Glyph);
-        loaded.Map.SetBuilding(30, 19, loaded.Map.Content.Buildings.Get(type.Name));
-        Assert.Equal(type.Glyphs[0], CellRenderer.Render(loaded, 30, 19).Glyph);
     }
 
     [Fact]

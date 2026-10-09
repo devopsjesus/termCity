@@ -28,6 +28,13 @@ public class CityScenarioTests
         Assert.Equal(640, game.Map.Width);
         Assert.Equal(384, game.Map.Height);
         Assert.True(game.Stats.Population > 1_000);
+        Assert.All(game.Map.ServiceCells, index =>
+        {
+            var type = game.Map.Content.Buildings[game.Map.BuildingLayer[index]];
+            var area = game.Map.BuildingFootprintAt(index % game.Map.Width, index / game.Map.Width);
+            Assert.Equal(type.Width, area.Width);
+            Assert.Equal(type.Height, area.Height);
+        });
         foreach (var zone in Zones.Placeable)
         {
             Assert.True(game.Stats.For(zone).Filled > 100);
@@ -106,14 +113,14 @@ public class CityScenarioTests
     }
 
     [Fact]
-    public void LegacySfFlagStillLoadsWithoutScenarioMetadata()
+    public void ScenarioMetadataIsRequiredAndObsoleteFlagsAreRejected()
     {
-        var game = City("SF");
-        var json = System.Text.Json.Nodes.JsonNode.Parse(SaveGameStore.Serialize(game))!;
+        var json = System.Text.Json.Nodes.JsonNode.Parse(SaveGameStore.Serialize(TestCity.Flat()))!;
         json["Config"]!.AsObject().Remove("Scenario");
-        var loaded = SaveGameStore.Deserialize(json.ToJsonString());
-        Assert.Equal(CityScenario.SanFrancisco, loaded.Config.Scenario);
-        Assert.Equal(game.Map.ZoneLayer, loaded.Map.ZoneLayer);
+        Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(json.ToJsonString()));
+        json["Config"]!["Scenario"] = "SanFrancisco";
+        json["Config"]!["SanFrancisco"] = true;
+        Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(json.ToJsonString()));
     }
 
     private static CityGame City(string preset) => CityGame.New(
@@ -128,6 +135,8 @@ public class ScenarioSeedingTests
     [Theory]
     [InlineData(CityScenario.SanFrancisco)]
     [InlineData(CityScenario.LosAngeles)]
+    [InlineData(CityScenario.SanDiego)]
+    [InlineData(CityScenario.Chicago)]
     [InlineData(CityScenario.StLouis)]
     public void ScenarioCitiesStartPoweredWateredAndServed(CityScenario scenario)
     {

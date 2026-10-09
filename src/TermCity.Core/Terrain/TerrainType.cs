@@ -73,7 +73,6 @@ public sealed class TerrainRegistry : TypeRegistry<TerrainType>
         registry.Register(DefaultTerrains.Grass());
         registry.Register(DefaultTerrains.Hill());
         registry.Register(DefaultTerrains.Water());
-        registry.Alias("Grass", DefaultTerrains.GrassName);
         return registry;
     }
 }

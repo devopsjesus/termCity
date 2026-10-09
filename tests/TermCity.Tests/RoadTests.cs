@@ -118,16 +118,46 @@ public class RoadTypeTests
     }
 
     [Fact]
-    public void SavesFromBeforeRoadTypesLoadWithEveryRoadAStreet()
+    public void OnlyPlayerBuiltRoadsChargeUpkeep()
+    {
+        var game = TestCity.Flat(config: new GameConfig(), rules: CityRules.Full);
+        var track = Type(game, DefaultRoads.TrackName);
+        var kingsRoad = Type(game, DefaultRoads.KingsRoadName);
+
+        Assert.Equal(0, game.Finance.RoadUpkeep);
+        Assert.True(game.BuildRoad(new CellRect(10, 10, 3, 1), track).Success);
+        Assert.True(game.BuildRoad(new CellRect(20, 10, 2, 1), kingsRoad).Success);
+        Assert.Equal(3 * track.WeeklyUpkeep + 2 * kingsRoad.WeeklyUpkeep, game.Finance.RoadUpkeep);
+
+        Assert.True(game.BuildRoad(new CellRect(10, 20, 3, 1), kingsRoad).Success);
+        Assert.Equal(3 * track.WeeklyUpkeep + 2 * kingsRoad.WeeklyUpkeep, game.Finance.RoadUpkeep);
+    }
+
+    [Fact]
+    public void PlayerBuiltRoadUpkeepRoundTripsThroughSaves()
+    {
+        var game = TestCity.Flat(config: new GameConfig(), rules: CityRules.Full);
+        Assert.True(game.BuildRoad(new CellRect(10, 10, 3, 1), Type(game, DefaultRoads.TrackName)).Success);
+
+        string save = SaveGameStore.Serialize(game);
+        var loaded = SaveGameStore.Deserialize(save);
+
+        Assert.Equal(3, loaded.Finance.RoadUpkeep);
+
+        var incomplete = JsonNode.Parse(save)!.AsObject();
+        incomplete.Remove("PlayerRoads");
+        Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(incomplete.ToJsonString()));
+    }
+
+    [Fact]
+    public void RoadTypesAreRequired()
     {
         var game = TestCity.Flat();
         game.BuildRoad(new CellRect(5, 5, 4, 1), Type(game, DefaultRoads.KingsRoadName));
         var root = JsonNode.Parse(SaveGameStore.Serialize(game))!.AsObject();
         root.Remove("RoadTypes");
 
-        var loaded = SaveGameStore.Deserialize(root.ToJsonString());
-        Assert.Equal(game.Map.RoadCount, loaded.Map.RoadCount);
-        Assert.All(loaded.Map.RoadCells, i => Assert.Equal(DefaultRoads.TrackName, loaded.Map.RoadTypeAt(i % loaded.Map.Width, i / loaded.Map.Width)!.Name));
+        Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(root.ToJsonString()));
     }
 }
 

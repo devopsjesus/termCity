@@ -2,8 +2,8 @@
 
 TermCity plays by one of two rule sets (`GameConfig.Rules`):
 
-- **Classic** is the original sandbox: a steady stream of families, a flat tax, no utilities and no disasters. Saves made
-  before the full engine load as Classic, and the unit tests that predate it run on it.
+- **Classic** is an explicit sandbox ruleset: a steady stream of families, a flat tax, no utilities and no disasters.
+  It is also used by focused simulation tests, but never selected as a fallback for incomplete saves.
 - **Full** is the default for new games. Everything below describes Full.
 
 Everything is deterministic for a seed. Nothing in `TermCity.Core` knows about the UI.
@@ -146,7 +146,7 @@ cells intersected by the visible road bed, including angled-road smoothing and j
 Road access retains the normal two-cell land-based reach and also includes clear ground within
 0.75 cell widths horizontally and 0.75 cell heights vertically of a connected visible road bed.
 Disconnected roads never grant access. Existing buildings are not removed by this clearance rule.
-The crown maintains the King's Road at no cost to the city; tracks and cobbles retain their upkeep.
+Roads generated with the map have no upkeep. The city pays upkeep only for roads the player builds.
 Expenses are the upkeep of every civic building (scaled by the funding level), local road upkeep, loan interest and
 administration: a share of tax income (up to 55%) that grows with population from 2,000 up to 50,000 people, so large
 cities cannot coast on surpluses.
@@ -169,7 +169,8 @@ Fires, plague, raids, famine, floods and earthquakes, harvests, feast days and r
 `CityProfile.For(scenario)` tilts the shared engine (appeal, water, power load, crime, fire, flood, quake, smog, car
 dependence, density appetite, fair tax). The pre-built cities are seeded by `ScenarioSeeder` with power plants, water
 works and a lattice of civic buildings sized to the city, thinner or thicker depending on how well provided for the real
-city is. Over two game years from the default start:
+city is. Full service plots are reserved before the remaining district plots receive buildings and households.
+Over two game years from the default start:
 
 | City | Trajectory |
 |---|---|
@@ -178,8 +179,6 @@ city is. Over two game years from the default start:
 | San Diego | Slow growth; water-limited and fire-prone |
 | Los Angeles | Flat; smoke and crowding hold it back |
 | St. Louis | Shrinks: thin services, flood and crime, low appeal. Fix services to turn it around |
-
-(The old San Francisco, Chicago, San Diego, Los Angeles and St. Louis save names read as these cities.)
 
 ## Playing it
 

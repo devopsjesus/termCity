@@ -101,13 +101,10 @@ public class CastleTests
     }
 
     [Fact]
-    public void OldSavesWithEightFundingSlotsStillLoad()
+    public void IncompleteFundingIsRejected()
     {
         var budget = new Budget();
-        budget.Restore([0.4, 1, 1, 0.3, 1, 1, 1, 1]);
-        Assert.Equal(0.4, budget.Roads);
-        Assert.Equal(0.3, budget.Funding(ServiceKind.Fire));
-        Assert.Equal(1, budget.Funding(ServiceKind.Defence));
+        Assert.Throws<ArgumentException>(() => budget.Restore([0.4, 1, 1, 0.3, 1, 1, 1, 1]));
     }
 
     [Fact]

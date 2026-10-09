@@ -3,10 +3,19 @@ using TermCity.Core.World;
 
 namespace TermCity.Core.Simulation;
 
+internal sealed record WeekTallyState(int Births, int Deaths, int MovedIn, int MovedOut, int Events);
+
 /// <summary>Counts of what happened during the current week, reported when it ends.</summary>
 internal sealed class WeekTally
 {
     public int Births, Deaths, MovedIn, MovedOut, Events;
+
+    public WeekTallyState State
+    {
+        get => new(Births, Deaths, MovedIn, MovedOut, Events);
+        set => (Births, Deaths, MovedIn, MovedOut, Events) =
+            (value.Births, value.Deaths, value.MovedIn, value.MovedOut, value.Events);
+    }
 
     public void Reset() => Births = Deaths = MovedIn = MovedOut = Events = 0;
 }

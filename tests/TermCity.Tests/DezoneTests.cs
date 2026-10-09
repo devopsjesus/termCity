@@ -275,17 +275,14 @@ public class DezoneTests
     }
 
     [Fact]
-    public void UnzonedBuildingsWithoutRemovalMetadataAreNotAutomaticallyDemolished()
+    public void UnzonedBuildingsRequireTheRemovalMetadataField()
     {
         var game = Occupied();
         game.Map.SetZone(Cell.X, Cell.Y, ZoneType.None);
         game.Touch();
         var data = JsonNode.Parse(SaveGameStore.Serialize(game))!.AsObject();
         data.Remove("ZoneRemovals");
-        var loaded = SaveGameStore.Deserialize(data.ToJsonString());
-        TestCity.Advance(loaded, 4);
-        Assert.NotNull(loaded.Map.BuildingAt(Cell.X, Cell.Y));
-        Assert.Empty(loaded.Map.ZoneRemovals);
+        Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(data.ToJsonString()));
     }
 
     [Fact]

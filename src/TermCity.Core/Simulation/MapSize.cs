@@ -6,7 +6,6 @@ namespace TermCity.Core.Simulation;
 public readonly record struct MapSize(int Width, int Height)
 {
     public CityScenario Scenario { get; init; }
-    public bool SanFrancisco => Scenario == CityScenario.SanFrancisco;
     public const int MinWidth = 80;
     public const int MinHeight = 24;
     public const int MaxWidth = 640;

@@ -31,6 +31,7 @@ public sealed class GameMap
     internal readonly byte[] FeatureLayer;
     internal readonly bool[] RoadLayer;
     internal readonly byte[] RoadTypeLayer;
+    internal readonly bool[] PlayerRoadLayer;
     internal readonly ZoneType[] ZoneLayer;
     internal readonly byte[] BuildingLayer;
     internal readonly Household[] HouseholdLayer;
@@ -94,6 +95,7 @@ public sealed class GameMap
         FeatureLayer = new byte[count];
         RoadLayer = new bool[count];
         RoadTypeLayer = new byte[count];
+        PlayerRoadLayer = new bool[count];
         ZoneLayer = new ZoneType[count];
         BuildingLayer = new byte[count];
         HouseholdLayer = new Household[count];
@@ -172,15 +174,22 @@ public sealed class GameMap
         else
         {
             RoadTypeLayer[i] = 0;
+            PlayerRoadLayer[i] = false;
             _roadCells.Remove(i);
         }
     }
 
     /// <summary>Places a road of the given type, replacing the type of any road already there.</summary>
-    public void SetRoad(int x, int y, RoadType type)
+    public void SetRoad(int x, int y, RoadType type, bool playerBuilt = false)
     {
+        bool wasRoad = HasRoad(x, y);
         SetRoad(x, y, true);
-        RoadTypeLayer[Index(x, y)] = type.Id;
+        int i = Index(x, y);
+        RoadTypeLayer[i] = type.Id;
+        if (!wasRoad)
+        {
+            PlayerRoadLayer[i] = playerBuilt;
+        }
     }
 
     /// <summary>The type of road at a cell, or null if there is none.</summary>
@@ -192,7 +201,7 @@ public sealed class GameMap
         }
 
         int i = Index(x, y);
-        return RoadLayer[i] ? Content.Roads[RoadTypeLayer[i] == 0 ? Content.Roads.Default.Id : RoadTypeLayer[i]] : null;
+        return RoadLayer[i] ? Content.Roads[RoadTypeLayer[i]] : null;
     }
 
     /// <summary>Indexes of all road cells.</summary>

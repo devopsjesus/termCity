@@ -47,8 +47,6 @@ public static class SanFranciscoMap
         var hill = content.Terrains.Get(DefaultTerrains.HillName);
         var water = content.Terrains.Get(DefaultTerrains.WaterName);
         var tree = content.Features.Get(DefaultFeatures.TreeName);
-        var rng = GameRandom.ForStage(config.Seed, "sf-occupants");
-
         for (int y = 0; y < map.Height; y++)
         {
             for (int x = 0; x < map.Width; x++)
@@ -87,10 +85,6 @@ public static class SanFranciscoMap
         }, street, avenue);
         RoadSeparation.RemoveFragments(map, 16);
 
-        foreach (var zone in Zones.Placeable)
-            if (content.Buildings.ForZone(zone) is null)
-                throw new InvalidOperationException($"SF requires a registered growth building for {zone}.");
-
         for (int y = 0; y < map.Height; y++)
         {
             for (int x = 0; x < map.Width; x++)
@@ -99,11 +93,6 @@ public static class SanFranciscoMap
                 ZoneType zone = DistrictAt(u, v);
                 if (zone == ZoneType.None || !map.TerrainAt(x, y).Buildable || map.HasRoad(x, y)) continue;
                 map.SetZone(x, y, zone);
-                if (CellHash.Pick(x, y, 10) < 8)
-                {
-                    map.SetBuilding(x, y, content.Buildings.ForZone(zone)!);
-                    if (zone == ZoneType.Residential) map.SetHousehold(x, y, Household.Random(rng));
-                }
             }
         }
         return map;

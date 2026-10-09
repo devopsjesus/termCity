@@ -47,9 +47,11 @@ public sealed class Budget
 
     internal double[] Snapshot() => (double[])_funding.Clone();
 
-    internal void Restore(IReadOnlyList<double>? values)
+    internal void Restore(IReadOnlyList<double> values)
     {
-        for (int i = 0; i < _funding.Length && values is not null && i < values.Count; i++)
+        if (values.Count != _funding.Length)
+            throw new ArgumentException("Funding must contain one value per service kind.", nameof(values));
+        for (int i = 0; i < _funding.Length; i++)
         {
             _funding[i] = Clamp(values[i]);
         }

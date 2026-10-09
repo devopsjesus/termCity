@@ -131,17 +131,16 @@ the service mapping and ideas for the future are in [docs/MEDIEVAL.md](docs/MEDI
 
 Roads cost money: a street starts at **500g per cell**, an avenue at **900g**, and a highway at
 **1,500g**. Upgrades charge the difference; hills multiply construction costs by 1.5.
-The crown maintains the King's Road, so it has no weekly upkeep; dirt tracks and cobbled roads
-still cost 1g and 2g per cell each week at full funding.
+Roads generated with the map have no weekly upkeep. Roads the player builds cost 1g, 2g, or 3g
+per cell each week at full funding for dirt tracks, cobbled roads, and King's Roads respectively.
 Road/building menus include registered player-placeable types. Service menus show each building's
 footprint: a Sheriff's Hall occupies 2x1 cells, a Parish Church 2x2, and a Castle 4x3.
 Larger buildings fill their footprint with type-specific ASCII art at normal and close zoom,
 including roofs, walls, church crosses, aqueduct arches and castle battlements.
-Coarse zoom and older single-cell buildings retain the representative building glyph.
+Coarse zoom uses the representative building glyph.
 A click previews a whole building; larger selections tile complete, non-overlapping buildings.
 Blocked footprints are skipped as a whole. Cost, upkeep and service supply are per building,
 not per occupied cell; demolition of any part removes the entire building.
-Existing single-cell buildings in older saves keep their original footprint.
 
 Selected area services and smoke/clean-air sources show faint white pixelated range circles,
 including during valid placement previews. Selecting any cell of a building's footprint shows
@@ -160,8 +159,8 @@ not replace the undo slot. New/load clears it.
 
 ### Calendar and economy
 
-New cities begin in the current local year. Saves retain their starting year; legacy saves without
-that value retain year-1 behavior. A year has 52 weeks and a week has 7 days.
+New cities begin in the current local year. Saves retain their starting year.
+A year has 52 weeks and a week has 7 days.
 Growth is spread over the week and tax income arrives at its end.
 
 The day bar uses `>` for today and `=` for completed days: `[>......]`, `[==>....]`, `[======>]`.
@@ -206,7 +205,7 @@ visible at the right edge. TermCity and the header geometry stay fixed.
 
 Delete/Backspace removes characters. Ctrl+A/Command+A selects all. Enter or clicking outside commits;
 Esc cancels. Editing pauses the game and restores its previous clock state afterwards.
-Names are stored in city saves; legacy cities without a name display **New City**.
+Names are stored in city saves.
 
 ### Font, sidebar, and menus
 
@@ -317,12 +316,12 @@ or street-accurate GIS maps. They include occupied R/C/I districts, residents, r
 - **CHI:** a lake and its river branches, flat ground, a market quarter and busy yards.
 - **STL:** rivers and a floodplain, a minster park and riverside trades.
 
-Old saves keep loading: the original scenario names inside save files are still recognised.
+Saves are development-version-specific. Only the current format and type names are supported;
+obsolete or incomplete saves show a load error rather than being migrated.
 
 Scenarios start paused without the automatic first-city guide; F6 still offers it explicitly.
 Geography and districts stay fixed across seeds; seeds vary households and future growth.
 Save/load preserves the map. Restart/new-city actions retain the selected scenario.
-Older medium-sized San Francisco saves load at their original dimensions; restarting generates the large map.
 
 ## Saving and loading
 

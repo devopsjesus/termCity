@@ -273,7 +273,7 @@ public static class GuideContent
         "  Income is tithes and rents: hearth tithe on homes, market tolls on shops and guild dues\n" +
         "  on workshops, each a share of the plot's value, cut by unemployment and empty jobs.\n" +
         "  Outgoings are upkeep of services and roads, loan interest and the reeve's administration.",
-        "  The crown maintains the King's Road (no weekly upkeep); your tracks and cobbles still cost.\n" +
+        "  Roads already on the map have no weekly upkeep; you maintain every road you build.\n" +
         "  Grain purchases, tribute and raid losses also take gold; keep a reserve beyond weekly upkeep.",
         "BUDGET (Esc, Budget)\n" +
         "  Select a service to step its funding down by quarters: half funding gives about two thirds of\n" +

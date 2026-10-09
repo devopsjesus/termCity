@@ -90,6 +90,58 @@ public class FullRulesTests
     }
 
     [Fact]
+    public void DailyGrowthRefreshesUtilityDemandAndPollutionWithoutRebuildingRoads()
+    {
+        var game = Town();
+        for (int x = 10; x < 20; x++)
+        {
+            game.Map.SetBuilding(x, 18, game.Map.Content.Buildings.ForZone(ZoneType.Residential));
+            game.Map.SetHousehold(x, 18, new Household(2, 1, 0));
+        }
+        game.Touch();
+        Power(game);
+        game.GrowthState = new(true, 0, 7, 7, 0, 0, 0);
+        var network = game.Network;
+        var before = game.Services;
+        var shop = game.Map.Content.Buildings.ForZone(ZoneType.Commercial)!;
+        var factory = game.Map.Content.Buildings.ForZone(ZoneType.Industrial)!;
+
+        game.AdvanceDay();
+
+        Assert.Equal(1, game.Day);
+        Assert.Equal(1, game.Stats.Commercial.Filled);
+        Assert.Equal(1, game.Stats.Industrial.Filled);
+        Assert.Same(network, game.Network);
+        Assert.Equal(before.Power.Demand + shop.PowerUse + factory.PowerUse, game.Services.Power.Demand);
+        Assert.Equal(before.Water.Demand + shop.WaterUse + factory.WaterUse, game.Services.Water.Demand);
+        int industry = Assert.Single(game.Map.ZoneCells(ZoneType.Industrial), i => game.Map.BuildingLayer[i] != 0);
+        Assert.True(game.Services.Pollution(industry) > before.Pollution(industry));
+    }
+
+    [Fact]
+    public void RezoningRefreshesUtilityDemandAndIndustrialPollution()
+    {
+        var game = Town();
+        Power(game);
+        var factory = game.Map.Content.Buildings.ForZone(ZoneType.Industrial)!;
+        game.Map.SetBuilding(60, 21, factory);
+        game.Touch();
+        var before = game.Services;
+        var cell = new CellRect(60, 21, 1, 1);
+        int index = game.Map.Index(60, 21);
+
+        Assert.True(game.Dezone(cell).Success);
+        Assert.Equal(before.Power.Demand - factory.PowerUse, game.Services.Power.Demand);
+        Assert.Equal(before.Water.Demand - factory.WaterUse, game.Services.Water.Demand);
+        Assert.True(game.Services.Pollution(index) < before.Pollution(index));
+
+        Assert.True(game.Designate(cell, ZoneType.Industrial).Success);
+        Assert.Equal(before.Power, game.Services.Power);
+        Assert.Equal(before.Water, game.Services.Water);
+        Assert.Equal(before.Pollution(index), game.Services.Pollution(index));
+    }
+
+    [Fact]
     public void PumpsMustStandOnTheShore()
     {
         var game = Town();
@@ -217,11 +269,11 @@ public class FullRulesTests
     }
 
     [Fact]
-    public void SavesWithoutAnEngineMarkerPlayByClassicRules()
+    public void ObsoleteSaveVersionsAreRejected()
     {
         var game = Town();
-        string json = SaveGameStore.Serialize(game).Replace("\"Engine\": \"city-rules-2\"", "\"Engine\": null");
-        var loaded = SaveGameStore.Deserialize(json);
-        Assert.Equal(CityRules.Classic, loaded.Config.Rules);
+        var json = System.Text.Json.Nodes.JsonNode.Parse(SaveGameStore.Serialize(game))!;
+        json["Version"] = 1;
+        Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(json.ToJsonString()));
     }
 }

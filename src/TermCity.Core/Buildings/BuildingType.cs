@@ -232,25 +232,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         });
 
         RegisterServices(registry);
-        RegisterOldNames(registry);
         return registry;
-    }
-
-    // Saves from before the medieval setting used these names.
-    private static void RegisterOldNames(BuildingRegistry registry)
-    {
-        foreach (var (old, current) in new[]
-        {
-            ("House", "Cottage"), ("Shop", "Market Stall"), ("Factory", "Workshop"), ("Apartments", "Burgage House"),
-            ("Office", "Merchant House"), ("Plant", "Mill"), ("Tower", "Tenement"), ("Skyscraper", "Market Hall"),
-            ("Complex", "Great Forge"), ("Coal Plant", "Charcoal Burners"), ("Solar Farm", "Woodlot"),
-            ("Water Pump", "Aqueduct"), ("Water Tower", "Town Well"), ("Fire Station", "Fire Watch"),
-            ("Police Station", "Sheriff's Hall"), ("Clinic", "Apothecary"), ("Hospital", "Infirmary"),
-            ("School", "Chantry School"), ("University", "Monastery"), ("Park", "Village Green"),
-        })
-        {
-            registry.Alias(old, current);
-        }
     }
 
     private static void RegisterServices(BuildingRegistry registry)

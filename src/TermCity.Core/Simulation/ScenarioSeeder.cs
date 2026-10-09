@@ -1,4 +1,5 @@
 using TermCity.Core.Buildings;
+using TermCity.Core.Util;
 using TermCity.Core.World;
 
 namespace TermCity.Core.Simulation;
@@ -31,15 +32,8 @@ internal static class ScenarioSeeder
     public static void Seed(CityGame game)
     {
         game.Touch();
-        for (int pass = 0; pass < 4 && !Supplied(game.Services.Power); pass++)
-        {
-            PlaceUtility(game, ServiceKind.Power);
-        }
-
-        for (int pass = 0; pass < 4 && !Supplied(game.Services.Water); pass++)
-        {
-            PlaceUtility(game, ServiceKind.Water);
-        }
+        PlaceUtility(game, ServiceKind.Power, PlannedDemand(game, ServiceKind.Power));
+        PlaceUtility(game, ServiceKind.Water, PlannedDemand(game, ServiceKind.Water));
 
         double provision = Provision(game.Config.Scenario);
         int offset = 0;
@@ -53,13 +47,26 @@ internal static class ScenarioSeeder
         PlaceCentral(game, "Stone Keep", Centroid(game.Map, ZoneType.Residential));
         PlaceCentral(game, "Granary", Centroid(game.Map, ZoneType.Commercial));
 
+        CityScenarioMap.Populate(game.Map, game.Config);
         game.Touch();
         game.Money = Math.Max(game.Money, 8 * game.Finance.Expenses);
     }
 
-    private static bool Supplied(ServiceSupply supply) => supply.Supply >= supply.Demand * 1.05;
+    private static int PlannedDemand(CityGame game, ServiceKind kind)
+    {
+        int demand = 0;
+        foreach (var zone in Zones.Placeable)
+        {
+            var type = game.Map.Content.Buildings.ForZone(zone)
+                ?? throw new InvalidOperationException($"City scenarios require a growth building for {zone}.");
+            foreach (int index in game.Map.ZoneCells(zone))
+                if (game.Network.IsServed(index) && CellHash.Pick(index % game.Map.Width, index / game.Map.Width, 10) < 8)
+                    demand += kind == ServiceKind.Power ? type.PowerUse : type.WaterUse;
+        }
+        return kind == ServiceKind.Power ? (int)Math.Round(demand * game.Profile.PowerDemand) : demand;
+    }
 
-    private static void PlaceUtility(CityGame game, ServiceKind kind)
+    private static void PlaceUtility(CityGame game, ServiceKind kind, int demand)
     {
         var map = game.Map;
         var supply = kind == ServiceKind.Power ? game.Services.Power : game.Services.Water;
@@ -87,24 +94,24 @@ internal static class ScenarioSeeder
         }
 
         candidates.Sort((a, b) => Distance2(map, a, centre).CompareTo(Distance2(map, b, centre)) is var c && c != 0 ? c : a.CompareTo(b));
-        double needed = supply.Demand * 1.15 - supply.Supply;
+        double needed = demand * 1.15 - supply.Supply;
         foreach (var option in options)
         {
+            if (needed <= 0) break;
             foreach (int i in candidates)
             {
                 if (needed <= 0)
                 {
-                    return;
+                    break;
                 }
 
                 int x = i % map.Width, y = i / map.Width;
-                if (map.BuildingLayer[i] != 0 || (option.RequiresWaterNearby && !map.NearWater(x, y, 1)))
+                if (!CanSeed(game, option, x, y) || UtilityCrowdsDistrict(map, option, x, y))
                 {
                     continue;
                 }
 
-                map.ClearCell(x, y);
-                map.SetBuilding(x, y, option);
+                Place(game.Map, option, x, y);
                 needed -= option.Capacity * (kind == ServiceKind.Water ? game.Profile.WaterSupply : 1);
             }
         }
@@ -131,11 +138,8 @@ internal static class ScenarioSeeder
                             continue;
                         }
 
-                        if (map.BuildingLayer[i] != 0)
-                        {
-                            built++;
-                        }
-                        else if (game.Network.IsServed(i))
+                        if (CellHash.Pick(x, y, 10) < 8) built++;
+                        if (game.Network.IsServed(i) && CanSeed(game, type, x, y))
                         {
                             int d = (x - gx) * (x - gx) + (y - gy) * (y - gy);
                             if (d < bestD)
@@ -150,22 +154,23 @@ internal static class ScenarioSeeder
                 if (best >= 0 && built >= spacing * spacing / 6)
                 {
                     int x = best % map.Width, y = best / map.Width;
-                    map.ClearCell(x, y);
-                    map.SetBuilding(x, y, type);
+                    Place(map, type, x, y);
                 }
             }
         }
     }
 
-    /// <summary>Puts one building on the served, vacant, zoned cell nearest <paramref name="centre"/>.</summary>
+    /// <summary>Puts one building on the served, vacant footprint nearest <paramref name="centre"/>.</summary>
     private static void PlaceCentral(CityGame game, string name, (int X, int Y) centre)
     {
         var map = game.Map;
+        var type = map.Content.Buildings.Get(name);
         int best = -1;
         long bestD = long.MaxValue;
         for (int i = 0; i < map.Width * map.Height; i++)
         {
-            if (map.ZoneAt(i % map.Width, i / map.Width) == ZoneType.None || map.BuildingLayer[i] != 0 || !game.Network.IsServed(i))
+            if (map.ZoneAt(i % map.Width, i / map.Width) == ZoneType.None || !game.Network.IsServed(i) ||
+                !CanSeed(game, type, i % map.Width, i / map.Width))
             {
                 continue;
             }
@@ -180,9 +185,35 @@ internal static class ScenarioSeeder
 
         if (best >= 0)
         {
-            map.ClearCell(best % map.Width, best / map.Width);
-            map.SetBuilding(best % map.Width, best / map.Width, map.Content.Buildings.Get(name));
+            Place(map, type, best % map.Width, best / map.Width);
         }
+    }
+
+    private static bool CanSeed(CityGame game, BuildingType type, int x, int y)
+    {
+        var map = game.Map;
+        var area = new CellRect(x, y, type.Width, type.Height);
+        foreach (var p in area.Cells())
+            if (!map.InBounds(p) || !map.TerrainAt(p.X, p.Y).Buildable || map.HasRoad(p.X, p.Y) ||
+                map.BuildingAt(p.X, p.Y) is not null || game.Network.RoadOverlapsCell(map.Index(p.X, p.Y)))
+                return false;
+        return !type.RequiresWaterNearby || area.Cells().Any(p => map.NearWater(p.X, p.Y, 1));
+    }
+
+    private static void Place(GameMap map, BuildingType type, int x, int y)
+    {
+        var area = new CellRect(x, y, type.Width, type.Height);
+        foreach (var p in area.Cells()) map.ClearCell(p.X, p.Y);
+        map.SetBuildingFootprint(type, area);
+    }
+
+    private static bool UtilityCrowdsDistrict(GameMap map, BuildingType type, int x, int y)
+    {
+        // Keep a strip of district plots between utility reservations, rather than consuming a whole neighbourhood.
+        for (int cy = y - 1; cy <= y + type.Height; cy++)
+            for (int cx = x - 1; cx <= x + type.Width; cx++)
+                if (map.InBounds(cx, cy) && map.BuildingAt(cx, cy) is not null) return true;
+        return false;
     }
 
     private static (int X, int Y) Centroid(GameMap map, ZoneType zone)

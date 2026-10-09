@@ -35,30 +35,30 @@ public class MedievalVocabularyTests
     }
 
     [Fact]
-    public void OldNamesStillResolveToTheirMedievalSuccessors()
+    public void OnlyCanonicalNamesAreRegistered()
     {
         var content = new GameContent();
-        Assert.Same(content.Buildings.Get("Cottage"), content.Buildings.Get("House"));
-        Assert.Same(content.Buildings.Get("Sheriff's Hall"), content.Buildings.Get("Police Station"));
-        Assert.Same(content.Roads.Get(DefaultRoads.KingsRoadName), content.Roads.Get("Highway"));
-        Assert.Same(content.Roads.Get(DefaultRoads.TrackName), content.Roads.Get("Street"));
-        Assert.Same(content.Terrains.Get(DefaultTerrains.GrassName), content.Terrains.Get("Grass"));
+        Assert.NotNull(content.Buildings.Find("Cottage"));
+        Assert.NotNull(content.Roads.Find(DefaultRoads.TrackName));
+        Assert.NotNull(content.Terrains.Find(DefaultTerrains.GrassName));
+        Assert.Null(content.Buildings.Find("House"));
+        Assert.Null(content.Buildings.Find("Police Station"));
+        Assert.Null(content.Roads.Find("Highway"));
+        Assert.Null(content.Roads.Find("Street"));
+        Assert.Null(content.Terrains.Find("Grass"));
     }
 
-    [Fact]
-    public void SavesWrittenBeforeTheMedievalSettingOrWithItsStandInNamesStillLoad()
+    [Theory]
+    [InlineData("Constantinople")]
+    [InlineData("Naples")]
+    [InlineData("Genoa")]
+    [InlineData("Lubeck")]
+    [InlineData("York")]
+    public void ObsoleteScenarioNamesAreRejected(string scenario)
     {
-        var game = CityGame.New(new GameConfig { Scenario = CityScenario.SanDiego, MapWidth = 640, MapHeight = 384, Seed = 5 });
-        string json = SaveGameStore.Serialize(game)
-            .Replace("\"Scenario\": \"SanDiego\"", "\"Scenario\": \"Genoa\"")
-            .Replace("\"Cottage\"", "\"House\"")
-            .Replace("\"Dirt Track\"", "\"Street\"")
-            .Replace("\"Meadow\"", "\"Grass\"");
-        var loaded = SaveGameStore.Deserialize(json);
-        Assert.Equal(CityScenario.SanDiego, loaded.Config.Scenario);
-        Assert.Equal(game.Map.TerrainLayer, loaded.Map.TerrainLayer);
-        Assert.Equal(game.Map.BuildingLayer, loaded.Map.BuildingLayer);
-        Assert.Equal(game.Map.RoadLayer, loaded.Map.RoadLayer);
+        var json = System.Text.Json.Nodes.JsonNode.Parse(SaveGameStore.Serialize(TestCity.Flat()))!;
+        json["Config"]!["Scenario"] = scenario;
+        Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(json.ToJsonString()));
     }
 
     [Fact]
