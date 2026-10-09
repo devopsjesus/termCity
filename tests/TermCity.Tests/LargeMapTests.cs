@@ -1,4 +1,3 @@
-using System.IO.Compression;
 using System.Text.Json.Nodes;
 using TermCity.Core.Persistence;
 using TermCity.Core.Simulation;
@@ -119,6 +118,29 @@ public class LargeMapTests
     }
 
     [Fact]
+    public void SessionPreferencesDoNotInvalidateMapOrRoadCaches()
+    {
+        var game = TestCity.Flat();
+        var session = new TermCity.Core.Session.GameSession(game);
+        var network = game.Network;
+        var services = game.Services;
+        int mapVersion = game.MapVersion;
+        var roads = new TermCity.Core.Rendering.RoadVectorLayer();
+        Assert.True(roads.Sync(game));
+
+        session.TogglePause();
+        session.SetSpeed(GameSpeed.Fast);
+        session.DismissGuide();
+        session.EnableGuide();
+
+        Assert.Same(network, game.Network);
+        Assert.Same(services, game.Services);
+        Assert.Equal(mapVersion, game.MapVersion);
+        Assert.False(roads.Sync(game));
+        Assert.True(session.HasUnsavedChanges);
+    }
+
+    [Fact]
     public void SparseIndexesStayConsistentWithTheLayers()
     {
         var game = Generate(320, 192, seed: 8);
@@ -164,38 +186,15 @@ public class LargeMapTests
         Assert.True(designated.Cells > 0);
     }
 
-    [Fact]
-    public void UncompressedLegacySavesStillLoad()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("raw")]
+    public void UnsupportedCompressionIsRejected(string? compression)
     {
-        var game = TestCity.Flat(seed: 4);
-        game.Designate(new CellRect(0, 21, 20, 1), ZoneType.Residential);
-        TestCity.Advance(game, 4);
-
-        // Rewrite the save the way the first version stored it: raw base64, no Compression field.
-        var root = JsonNode.Parse(SaveGameStore.Serialize(game))!.AsObject();
-        static string Raw(string packed)
-        {
-            using var inflate = new DeflateStream(new MemoryStream(Convert.FromBase64String(packed)), CompressionMode.Decompress);
-            using var output = new MemoryStream();
-            inflate.CopyTo(output);
-            return Convert.ToBase64String(output.ToArray());
-        }
-
-        root.Remove("Compression");
-        root.Remove("RoadTypes"); // the first version had no road types
-        foreach (string layer in new[] { "Terrain", "Features", "Buildings" })
-        {
-            root[layer]!["Data"] = Raw(root[layer]!["Data"]!.GetValue<string>());
-        }
-
-        foreach (string key in new[] { "Roads", "Zones", "Households" })
-        {
-            root[key] = Raw(root[key]!.GetValue<string>());
-        }
-
-        var loaded = SaveGameStore.Deserialize(root.ToJsonString());
-        Assert.Equal(game.Stats, loaded.Stats);
-        Assert.Equal(game.Map.HouseholdLayer, loaded.Map.HouseholdLayer);
+        var root = JsonNode.Parse(SaveGameStore.Serialize(TestCity.Flat()))!.AsObject();
+        if (compression is null) root.Remove("Compression");
+        else root["Compression"] = compression;
+        Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(root.ToJsonString()));
     }
 
     [Fact]

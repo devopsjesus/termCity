@@ -176,7 +176,7 @@ public class SettlementTests
     }
 
     [Fact]
-    public void RankAndArrearsSurviveASaveAndOldSavesLoadWithoutThem()
+    public void RankAndArrearsSurviveASaveAndAreRequired()
     {
         var game = Hamlet();
         game.TributeArrears = 1234;
@@ -185,15 +185,9 @@ public class SettlementTests
         Assert.Equal(game.HighestRank, loaded.HighestRank);
 
         var node = System.Text.Json.Nodes.JsonNode.Parse(SaveGameStore.Serialize(game))!.AsObject();
-        foreach (var key in node.Select(p => p.Key).Where(k => k.Equals("HighestRank", StringComparison.OrdinalIgnoreCase) ||
-                                                                k.Equals("TributeArrears", StringComparison.OrdinalIgnoreCase)).ToList())
-        {
-            node.Remove(key);
-        }
-
-        var old = SaveGameStore.Deserialize(node.ToJsonString());
-        Assert.Equal(-1, old.HighestRank);
-        Assert.Equal(0, old.TributeArrears);
+        node.Remove("HighestRank");
+        node.Remove("TributeArrears");
+        Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(node.ToJsonString()));
     }
 
     [Fact]

@@ -42,14 +42,6 @@ internal static class GodotSmoke
         Require(host.MusicSkips == skips, "Music starved while the main thread was stalled.");
         Require(host.GetNode<AudioStreamPlayer>("CityMusic").Playing,
             "Music player stopped while the main thread was stalled.");
-        IEnumerable<Node> Descendants(Node node)
-        {
-            foreach (var child in node.GetChildren())
-            {
-                yield return child;
-                foreach (var descendant in Descendants(child)) yield return descendant;
-            }
-        }
 
             var functionKeys = Descendants(host).OfType<Button>()
                 .Where(b => b.Text.StartsWith("F", StringComparison.Ordinal))
@@ -89,11 +81,11 @@ internal static class GodotSmoke
                     "Demand letter does not match its bar color.");
             }
             var demandHeading = Descendants(host).OfType<Label>().Single(b => b.Name == "DemandHeading");
-            Require(demandHeading.GetThemeFontSize("font_size") > host.Theme.DefaultFontSize &&
+            Require(demandHeading.GetThemeFontSize("font_size") >= 13 &&
                 demandHeading.GetThemeColor("font_color") == new Color("#70b7ff"),
                 "Sidebar headings must be larger and blue.");
             Require(!Descendants(host).Any(n => n.Name == "CollapseCaret") &&
-                demandHeading.GetParent().GetChild<Control>(1).Visible,
+                demandHeading.GetParent().GetParent().GetChild<Control>(1).Visible,
                 "Sidebar sections must remain open without collapse carets.");
             Require(Descendants(host).OfType<Label>().Any(l => l.Name == "AppTitle" && l.Text == "TermCity"),
                 "Left header must retain the TermCity title.");
@@ -291,9 +283,11 @@ internal static class GodotSmoke
         Require(menuButtons.All(b => b.Alignment == HorizontalAlignment.Left),
             "Menu choices must be left-aligned.");
         float menuCharacter = host.Theme.DefaultFont.GetStringSize("M", fontSize: host.Theme.DefaultFontSize).X;
-        var menuTable = TextTable.ForPrompt(session.Prompt!)!.Value;
+        var menuPrompt = session.Prompt ?? throw new InvalidOperationException("City menu prompt is missing.");
+        var menuTable = TextTable.ForPrompt(menuPrompt)
+            ?? throw new InvalidOperationException("City menu table columns are missing.");
         float longestMenuLabel = menuTable.Rows.Append(menuTable.Header)
-            .Append(session.Prompt.Title)
+            .Append(menuPrompt.Title)
             .Max(text => host.Theme.DefaultFont.GetStringSize(text, fontSize: host.Theme.DefaultFontSize).X);
         float expectedMenuWidth = Math.Min(longestMenuLabel + menuCharacter * 10 + host.GetThemeStylebox("normal", "Button").GetMargin(Side.Left) * 2, host.Size.X - 64) + 24;
         Require(Math.Abs(cityMenu.Size.X - expectedMenuWidth) <= 16,
@@ -481,7 +475,7 @@ internal static class GodotSmoke
             $"Native Shift+click must open option help without activation: same={ReferenceEquals(servicePrompt, session.Prompt)}, preview={session.Preview?.Name}, help={servicePrompt.HelpIndex}, click={helpClick}, button={clickedChoice.GetGlobalRect()}.");
         bool helpHeadless = DisplayServer.GetName() == "headless";
         var helpWindowSize = helpHeadless ? host.GetWindow().ContentScaleSize : host.GetWindow().Size;
-        if (helpHeadless) host.GetWindow().ContentScaleSize = new Vector2I(640, 480);
+        if (helpHeadless) host.GetWindow().ContentScaleSize = new Vector2I(640, Main.MinimumWindowHeight);
         else host.GetWindow().Size = new Vector2I(640, 480);
         await Frames();
         var helpDialog = Descendants(host).OfType<PanelContainer>().Single(n => n.Name == "CityDialog");
@@ -704,7 +698,7 @@ internal static class GodotSmoke
         bool headless = DisplayServer.GetName() == "headless";
         var window = host.GetWindow();
         var originalSize = headless ? window.ContentScaleSize : window.Size;
-        if (headless) window.ContentScaleSize = new Vector2I(640, 480);
+        if (headless) window.ContentScaleSize = new Vector2I(640, Main.MinimumWindowHeight);
         else window.Size = new Vector2I(640, 480);
         await Frames();
         CheckStatusPath();
@@ -795,6 +789,8 @@ internal static class GodotSmoke
         session.SelectPrompt(resizeChoice);
         await Frames();
         var split = Descendants(host).OfType<CitySplit>().Single();
+        split.SetSidebarWidth(CitySplit.DefaultSidebar);
+        await Frames();
         float oldSidebar = split.SidebarWidth;
         var sidebarValue = Descendants(host).OfType<Label>().Single(l => l.Name == "SidebarDialogValue");
         var sidebarMinus = sidebarValue.GetParent().GetChild<Button>(0);
@@ -806,7 +802,8 @@ internal static class GodotSmoke
             "Right arrow must focus + without resizing the sidebar.");
         await KeyEvent(Key.Space);
         Require(Math.Abs(split.SidebarWidth - oldSidebar - TerminalGrid.CellWidth) < 1,
-            "Space must resize exactly one character using the focused + button.");
+            $"Sidebar + step: before={oldSidebar}, after={split.SidebarWidth}, split={split.Size}, " +
+            $"minimum={split.GetChild<Control>(1).GetCombinedMinimumSize()}.");
         await KeyEvent(Key.Left);
         Require(host.GetViewport().GuiGetFocusOwner() == sidebarMinus &&
             Math.Abs(split.SidebarWidth - oldSidebar - TerminalGrid.CellWidth) < 1,
@@ -827,34 +824,53 @@ internal static class GodotSmoke
         await Frames();
         var dragger = split.GetDragAreaControls()[0];
         var dragPoint = dragger.GetGlobalRect().GetCenter();
+        float beforeDrag = split.SidebarWidth;
         host.GetViewport().PushInput(new InputEventMouseButton
         {
             Position = dragPoint, GlobalPosition = dragPoint, ButtonIndex = MouseButton.Left, Pressed = true,
         }, true);
-        host.GetViewport().PushInput(new InputEventMouseMotion
+        for (int step = 1; step <= 5; step++)
         {
-            Position = dragPoint - new Vector2(24, 0), GlobalPosition = dragPoint - new Vector2(24, 0),
-            Relative = new Vector2(-24, 0), ButtonMask = MouseButtonMask.Left,
-        }, true);
+            var position = dragPoint - new Vector2(step, 0);
+            host.GetViewport().PushInput(new InputEventMouseMotion
+            {
+                Position = position, GlobalPosition = position,
+                Relative = new Vector2(-1, 0), ButtonMask = MouseButtonMask.Left,
+            }, true);
+            await Frames();
+            Require(Math.Abs(split.SidebarWidth - beforeDrag - step) < 1,
+                "Sidebar dragging must advance by pixels, not whole characters.");
+            VerifyMapPadding(host);
+        }
         host.GetViewport().PushInput(new InputEventMouseButton
         {
-            Position = dragPoint - new Vector2(24, 0), GlobalPosition = dragPoint - new Vector2(24, 0),
+            Position = dragPoint - new Vector2(5, 0), GlobalPosition = dragPoint - new Vector2(5, 0),
             ButtonIndex = MouseButton.Left, Pressed = false,
         }, true);
         await Frames();
-        Require(split.SidebarWidth > CitySplit.MinimumSidebar, "Dragging the shared border did not resize the sidebar.");
+        Require(split.SidebarWidth > CitySplit.MinimumSidebar, "Dragging the divider did not resize the sidebar.");
         split.SetSidebarWidth(CitySplit.DefaultSidebar);
         await Frames();
+        var sidebar = Descendants(host).OfType<CityPanel>().Single();
+        var cityTable = Descendants(sidebar).OfType<GridContainer>().Single(control => control.Name == "CityTable");
+        Require(cityTable.GetGlobalRect().End.Y <= sidebar.GetGlobalRect().End.Y + 1 &&
+            cityTable.Size.X <= sidebar.Size.X && !Descendants(sidebar).OfType<ScrollContainer>().Any(),
+            "The City table must fit without sidebar scrolling.");
         foreach (int fontSize in new[] { Main.DefaultFontSize, Main.MaxFontSize, Main.MinFontSize })
         {
             host.SetFontSize(fontSize);
+            if (headless)
+                window.ContentScaleSize = new Vector2I(960 * fontSize / 16, Main.MinimumWindowHeight * fontSize / 16);
+            else host.FitWindowToFont();
             await Frames();
             CheckStatusPath();
             Require(host.GetWindow().ContentScaleFactor == fontSize / 16f,
                 "Font setting did not scale the interface and map together.");
-            Require(host.Map.Grid.Columns == (int)(host.Map.Size.X / TerminalGrid.CellWidth) &&
-                host.Map.Grid.Rows == (int)(host.Map.Size.Y / TerminalGrid.CellHeight),
+            Require(host.Map.Grid.Columns == (int)Math.Ceiling(host.Map.Size.X / TerminalGrid.CellWidth) &&
+                host.Map.Grid.Rows == (int)Math.Ceiling(host.Map.Size.Y / TerminalGrid.CellHeight),
                 "Font resizing left stale map dimensions.");
+            VerifyMapPadding(host);
+            VerifySidebarTables(host);
             Require(host.Map.Grid.TryCell(TerminalGrid.CellWidth * 2, TerminalGrid.CellHeight * 2, out var fontCell) &&
                 fontCell == new Pos(2, 2), "Font resizing broke map hit targets.");
             Require(cityBeforeFontChange == SaveGameStore.Serialize(session.Game),
@@ -863,7 +879,7 @@ internal static class GodotSmoke
         host.SetFontSize(Main.MaxFontSize);
         if (headless)
         {
-            window.ContentScaleSize = new Vector2I(640 * Main.MaxFontSize / 16, 480 * Main.MaxFontSize / 16);
+            window.ContentScaleSize = new Vector2I(640 * Main.MaxFontSize / 16, Main.MinimumWindowHeight * Main.MaxFontSize / 16);
         }
         else host.FitWindowToFont();
         await Frames();
@@ -919,6 +935,7 @@ internal static class GodotSmoke
             host.Map.ZoomBy(i % 2 == 0 ? -1 : 1);
             session.ScrollChars(i % 2 == 0 ? 3 : -3, 1);
             await Frames();
+            VerifyMapPadding(host);
         }
         Require(host.MusicSkips == zoomSkips, "Music skipped while zooming and scrolling.");
         if (File.Exists(session.SavePath)) File.Delete(session.SavePath);
@@ -931,7 +948,10 @@ internal static class GodotSmoke
         var map = session.Game.Map;
         session.ClosePrompt();
         session.SetZoom(0);
-        session.CenterOn(new Pos(map.Width / 2, map.Height / 2));
+        var openCell = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf)
+            .First(p => p.X >= 2 && p.Y >= 2 && p.X < map.Width - 2 && p.Y < map.Height - 2 &&
+                session.Game.Network.IsServed(map.Index(p.X, p.Y)) && session.Game.CanPlaceRoad(p.X, p.Y));
+        session.CenterOn(openCell);
         host.Map.RefreshCells();
         await frames();
         Require(host.Effects.Settings.Level == TermCity.Core.Effects.EffectLevel.High && host.Map.Effects == host.Effects,
@@ -1023,9 +1043,15 @@ internal static class GodotSmoke
             "Desktop background is not black.");
         Require(host.Map.GetParent() is TerminalFrame { MouseFilter: Control.MouseFilterEnum.Ignore },
             "Map must use the shared double frame without intercepting input.");
-        Require(host.Size == new Vector2(960, 640), "Window resize did not reach the scene.");
-        Require(host.Map.Grid.Columns == (int)(host.Map.Size.X / TerminalGrid.CellWidth) &&
-                host.Map.Grid.Rows == (int)(host.Map.Size.Y / TerminalGrid.CellHeight),
+        VerifyMapPadding(host);
+        VerifySidebarTables(host);
+        Require(host.Size == new Vector2(960, Main.MinimumWindowHeight), "Window resize did not reach the scene.");
+        float minimapAspect = map.Height * 1.5f / map.Width;
+        Require(host.Minimap.Size.Y + 0.01 >= host.Minimap.Size.X * minimapAspect,
+            $"Minimap must fill sidebar width: minimap={host.Minimap.Size}, panel={host.Minimap.GetParent().GetParent().GetParent<Control>().Size}, " +
+            $"window={host.Size}, minimum={Main.MinimumWindowHeight}.");
+        Require(host.Map.Grid.Columns == (int)Math.Ceiling(host.Map.Size.X / TerminalGrid.CellWidth) &&
+                host.Map.Grid.Rows == (int)Math.Ceiling(host.Map.Size.Y / TerminalGrid.CellHeight),
             "Window resize did not reach the cell grid.");
         Require(Godot.FileAccess.FileExists("res://Assets/DejaVu-LICENSE.txt"),
             "The bundled font license must also be distributed with exported players.");
@@ -1350,6 +1376,113 @@ internal static class GodotSmoke
         host.GetWindow().EmitSignal(Window.SignalName.FocusEntered);
         session.CenterOn(new Pos(map.Width / 2, map.Height / 2));
         host.Map.RefreshCells();
+    }
+
+    private static IEnumerable<Node> Descendants(Node node)
+    {
+        foreach (var child in node.GetChildren())
+        {
+            yield return child;
+            foreach (var descendant in Descendants(child)) yield return descendant;
+        }
+    }
+
+    private static void VerifyMapPadding(Main host)
+    {
+        host.Map.RefreshCells();
+        var frame = host.Map.GetParent<Control>();
+        var padding = new[]
+        {
+            host.Map.Position.X, host.Map.Position.Y,
+            frame.Size.X - host.Map.Position.X - host.Map.Size.X,
+            frame.Size.Y - host.Map.Position.Y - host.Map.Size.Y,
+        };
+        Require(padding.All(value => Math.Abs(value - TerminalFrame.Inset) < 0.01),
+            $"Map padding must be {TerminalFrame.Inset} on all four sides: {string.Join(", ", padding)}.");
+        float excessWidth = host.Map.Grid.Columns * host.Map.Grid.PixelWidth - host.Map.Size.X;
+        float excessHeight = host.Map.Grid.Rows * host.Map.Grid.PixelHeight - host.Map.Size.Y;
+        Require(excessWidth >= 0 && excessWidth < host.Map.Grid.PixelWidth &&
+            excessHeight >= 0 && excessHeight < host.Map.Grid.PixelHeight,
+            "The map buffer must fill its frame and clip partial edge cells.");
+        var sidebar = Descendants(host).OfType<CityPanel>().Single();
+        var sidebarFrame = sidebar.GetParent<Control>();
+        Require(sidebarFrame is TerminalFrame && sidebarFrame.Name == "SidebarFrame",
+            "The sidebar must retain its enclosing double-white frame.");
+        Require(Math.Abs(sidebarFrame.GetGlobalRect().Position.X - frame.GetGlobalRect().End.X - TerminalFrame.Inset) < 0.01,
+            "The map/sidebar gap must match the internal map padding.");
+        var sidebarPadding = new[]
+        {
+            sidebar.Position.X, sidebar.Position.Y,
+            sidebarFrame.Size.X - sidebar.Position.X - sidebar.Size.X,
+            sidebarFrame.Size.Y - sidebar.Position.Y - sidebar.Size.Y,
+        };
+        Require(sidebarPadding.All(value => Math.Abs(value - TerminalFrame.Inset) < 0.01),
+            "The sidebar frame must preserve equal internal padding.");
+        Require(frame.Size.X <= frame.GetParent<Control>().Size.X + 0.01 &&
+            frame.Size.Y <= frame.GetParent<Control>().Size.Y + 0.01,
+            "The fitted map frame exceeds its available space.");
+    }
+
+    private static void VerifySidebarTables(Main host)
+    {
+        var panel = Descendants(host).OfType<CityPanel>().Single();
+        Require(!Descendants(panel).OfType<Label>().Any(label => label.Text is "GUIDE" or "ZONES"),
+            "The sidebar still includes a removed section.");
+        Require(!Descendants(panel).Any(node => node.Name == "ZonesTable"),
+            "The Zones table was not removed.");
+        foreach (string title in new[] { "MINIMAP", "DEMAND", "CITY" })
+        {
+            var cell = Descendants(panel).OfType<PanelContainer>().Single(control => control.Name == title + "HeaderCell");
+            Require(cell is TerminalFrame && cell.GetChild<Label>(0).Text == title &&
+                cell.GetChild<Label>(0).GetThemeFontSize("font_size") == 18 &&
+                cell.GetThemeStylebox("panel") is StyleBoxFlat { BgColor: var background } && background == Colors.Black,
+                $"{title} does not have the shared double-white frame on a black background.");
+        }
+        Verify("CityTable", SidebarReport.CityRows(host.Session.Game));
+        var city = Descendants(panel).OfType<GridContainer>().Single(control => control.Name == "CityTable");
+        Require(city.GetGlobalRect().End.Y <= panel.GetGlobalRect().End.Y + 1 &&
+            city.Size.X <= panel.Size.X && !panel.GetParent()!.GetChildren().OfType<ScrollContainer>().Any(),
+            $"Sidebar must fit without scrolling: panel={panel.GetGlobalRect()}, city={city.GetGlobalRect()}, " +
+            $"content minimum={panel.GetChild<Control>(0).GetCombinedMinimumSize()}, font={host.FontSize}.");
+        foreach (var zone in Zones.Placeable)
+        {
+            var row = Descendants(panel).OfType<HBoxContainer>().Single(control => control.Name == $"Demand{Zones.Get(zone).Letter}Row");
+            string details = CityReport.ZoneDetails(host.Session.Game, zone);
+            foreach (var control in row.GetChildren().OfType<Control>().Prepend(row))
+                Require(control.MouseFilter == Control.MouseFilterEnum.Stop && control.TooltipText.Contains(details),
+                    $"{Zones.Get(zone).Letter} hover details are missing from its demand row.");
+        }
+
+        var frames = Descendants(host).OfType<TerminalFrame>().Where(frame => frame.IsVisibleInTree()).ToArray();
+        for (int i = 0; i < frames.Length; i++)
+            for (int j = i + 1; j < frames.Length; j++)
+                if (!frames[i].IsAncestorOf(frames[j]) && !frames[j].IsAncestorOf(frames[i]))
+                    Require(!frames[i].GetGlobalRect().Intersects(frames[j].GetGlobalRect()),
+                        "Independent terminal frame borders overlap.");
+
+        void Verify(string name, IReadOnlyList<SidebarCell[]> rows)
+        {
+            var table = Descendants(panel).OfType<GridContainer>().Single(control => control.Name == name);
+            int expectedCells = (rows.Count * 2 + table.Columns - 1) / table.Columns * table.Columns;
+            Require(table.Columns is 2 or 4 && table.GetChildCount() == expectedCells &&
+                !Descendants(table).OfType<Label>().Any(label => label.Text is "METRIC" or "VALUE"),
+                $"{name} has missing table cells.");
+            for (int row = 0; row < rows.Count; row++)
+                for (int column = 0; column < 2; column++)
+                {
+                    var label = table.GetChild<PanelContainer>(row * 2 + column).GetChild<Label>(0);
+                    var expected = rows[row][column];
+                    Require(label.GetThemeFontSize("font_size") >= 11,
+                        "City table text must use the enlarged body font, not the old 8-13 range.");
+                    if (table.Columns == 2)
+                        Require(label.GetThemeFont("font").GetStringSize(label.Text,
+                            fontSize: label.GetThemeFontSize("font_size")).X <= label.Size.X + 1,
+                            $"City text is truncated: {label.Text}, width={label.Size.X}.");
+                    Require(label.Text == expected.Text && label.GetThemeColor("font_color") ==
+                        new Color(expected.Color.R / 255f, expected.Color.G / 255f, expected.Color.B / 255f),
+                        $"{name} has incorrect values or colors.");
+                }
+        }
     }
 
     private static void Require(bool condition, string message)

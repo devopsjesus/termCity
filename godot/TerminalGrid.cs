@@ -78,8 +78,8 @@ public sealed class TerminalGrid
         _height = height;
         PixelWidth = CellWidth * scale;
         PixelHeight = CellHeight * scale;
-        int columns = Math.Max(1, (int)(width / PixelWidth));
-        int rows = Math.Max(1, (int)(height / PixelHeight));
+        int columns = Math.Max(1, (int)Math.Ceiling(width / PixelWidth));
+        int rows = Math.Max(1, (int)Math.Ceiling(height / PixelHeight));
         if (columns == Columns && rows == Rows)
         {
             return;
@@ -96,7 +96,7 @@ public sealed class TerminalGrid
     {
         cell = default;
         if (!float.IsFinite(x) || !float.IsFinite(y) || x < 0 || y < 0 ||
-            x >= Columns * PixelWidth || y >= Rows * PixelHeight)
+            x >= _width || y >= _height)
         {
             return false;
         }
@@ -108,7 +108,7 @@ public sealed class TerminalGrid
     public void Fill(GameSession session)
     {
         Resize(_width, _height, session.ZoomLevel > 0 ? 2 : 1);
-        session.SetViewport(Columns, Rows);
+        session.SetViewport(Math.Max(1, (int)(_width / PixelWidth)), Math.Max(1, (int)(_height / PixelHeight)));
         VectorRoads = session.Overlay == MapOverlay.Off;
         var sampler = new BlockSampler(session.Game) { Overlay = session.Overlay, VectorRoads = VectorRoads };
         var hillGlyphs = session.Game.Map.Content.Terrains

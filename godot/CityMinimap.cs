@@ -14,6 +14,16 @@ public partial class CityMinimap : Control
     private TermCity.Core.Simulation.CityGame? _game;
     private Rect2 _picture;
     private bool _dragging;
+    public void SetHeight(float height)
+    {
+        if (!float.IsFinite(height) || height < 0) throw new ArgumentOutOfRangeException(nameof(height));
+        var size = new Vector2(80, height);
+        if (CustomMinimumSize != size)
+        {
+            CustomMinimumSize = size;
+            QueueRedraw();
+        }
+    }
     private int ImageWidth => Math.Min(240, Session.Game.Map.Width);
     private float PictureAspect => Session.Game.Map.Height * 1.5f / Session.Game.Map.Width;
     private int ImageHeight => Math.Min(Session.Game.Map.Height,
@@ -31,7 +41,6 @@ public partial class CityMinimap : Control
 
     private void UpdateSize()
     {
-        CustomMinimumSize = new Vector2(240, Size.X * PictureAspect);
         QueueRedraw();
     }
 
@@ -58,8 +67,9 @@ public partial class CityMinimap : Control
             _version = game.MapVersion;
             _game = game;
         }
-        var pictureSize = new Vector2(Size.X, Size.X * PictureAspect);
-        _picture = new Rect2(new Vector2(0, (Size.Y - pictureSize.Y) / 2), pictureSize);
+        float pictureWidth = Math.Min(Size.X, Size.Y / PictureAspect);
+        var pictureSize = new Vector2(pictureWidth, pictureWidth * PictureAspect);
+        _picture = new Rect2((Size - pictureSize) / 2, pictureSize);
         DrawTextureRect(_texture!, _picture, false);
         var view = Session.ViewRect;
         var start = new Vector2(view.X / (float)game.Map.Width, view.Y / (float)game.Map.Height);

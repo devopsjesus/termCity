@@ -19,7 +19,7 @@ public class BudgetUiTests
         fire.Select();
         Assert.Equal(0.75, session.Game.Budget.Funding(TermCity.Core.Buildings.ServiceKind.Fire), 3);
         Assert.NotNull(session.Prompt);
-        Assert.Contains(session.Prompt!.Choices, c => c.Label.StartsWith("Fire watch") && c.Cells![0] == "75%");
+        Assert.Contains(session.Prompt!.Choices, c => c.Label.StartsWith("Fire watch") && c.Cells![0] == 0.75.ToString("P0"));
     }
 
     [Fact]
@@ -32,6 +32,35 @@ public class BudgetUiTests
         Assert.True(session.Game.Taxes.Residential > before);
         session.Game.SetTax(ZoneType.Commercial, 5);
         Assert.Equal(0.3, session.Game.Taxes.Commercial, 3);
+    }
+
+    [Fact]
+    public void TaxChangesMarkAPausedSavedSessionDirtyWithoutChangingTheMap()
+    {
+        string path = Path.Combine(Path.GetTempPath(), "termcity-tax-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            var game = TestCity.Flat();
+            game.Paused = true;
+            var session = new GameSession(game, path);
+            Assert.True(session.QuickSave());
+            Assert.False(session.HasUnsavedChanges);
+            int mapVersion = game.MapVersion;
+            var network = game.Network;
+            int changes = 0;
+            game.Changed += () => changes++;
+
+            game.SetTax(ZoneType.Residential, 0.1);
+
+            Assert.True(session.HasUnsavedChanges);
+            Assert.Equal(1, changes);
+            Assert.Equal(mapVersion, game.MapVersion);
+            Assert.Same(network, game.Network);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [Fact]

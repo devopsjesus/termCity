@@ -276,12 +276,11 @@ public class GrowthTests
     }
 
     [Fact]
-    public void SavesWithoutAGrowthRateLoadWithTheDefault()
+    public void SavedGrowthRateIsRequired()
     {
         var game = TestCity.Flat();
         var root = System.Text.Json.Nodes.JsonNode.Parse(TermCity.Core.Persistence.SaveGameStore.Serialize(game))!.AsObject();
         root["Config"]!.AsObject().Remove("GrowthRatePerWeek");
-        var loaded = TermCity.Core.Persistence.SaveGameStore.Deserialize(root.ToJsonString());
-        Assert.Equal(0.02, loaded.Config.GrowthRatePerWeek);
+        Assert.Throws<InvalidDataException>(() => TermCity.Core.Persistence.SaveGameStore.Deserialize(root.ToJsonString()));
     }
 }

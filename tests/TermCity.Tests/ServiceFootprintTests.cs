@@ -128,19 +128,17 @@ public class ServiceFootprintTests
     }
 
     [Fact]
-    public void LegacySingleCellBuildingsStaySingleAndMalformedFootprintsAreRejected()
+    public void MissingAndMalformedFootprintsAreRejected()
     {
         var game = TestCity.Flat();
         var type = game.Map.Content.Buildings.Get("Sheriff's Hall");
-        game.Map.SetBuilding(10, 19, type);
+        Assert.True(game.PlaceBuilding(type, new CellRect(10, 19, 1, 1)).Success);
         var json = JsonNode.Parse(SaveGameStore.Serialize(game))!;
         json.AsObject().Remove("BuildingFootprints");
-        var legacy = SaveGameStore.Deserialize(json.ToJsonString());
-        Assert.Equal(1, legacy.Map.BuildingFootprintAt(10, 19).Area);
-        Assert.Null(legacy.Map.BuildingAt(11, 19));
-        Assert.True(legacy.Demolish(new CellRect(10, 19, 1, 1)).Success);
-        Assert.Empty(legacy.Map.ServiceCells);
-        json["BuildingFootprints"] = JsonNode.Parse("""[{"X":10,"Y":19,"Width":2,"Height":1}]""");
+        Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(json.ToJsonString()));
+        json["BuildingFootprints"] = JsonNode.Parse("[]");
+        Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(json.ToJsonString()));
+        json["BuildingFootprints"] = JsonNode.Parse("""[{"X":10,"Y":19,"Width":1,"Height":1}]""");
         Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(json.ToJsonString()));
     }
 }

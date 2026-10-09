@@ -24,7 +24,7 @@ public class SanFranciscoTests
             Assert.Null(session.Prompt);
             session.RequestNewCity(restart: true);
             session.SelectPrompt(1); // Discard the unsaved initial city if guarded.
-            Assert.True(session.Game.Config.SanFrancisco);
+            Assert.Equal(CityScenario.SanFrancisco, session.Game.Config.Scenario);
             Assert.True(session.Game.Paused);
             Assert.False(session.GuideVisible);
             Assert.Null(session.Prompt);
@@ -61,16 +61,16 @@ public class SanFranciscoTests
         Assert.True(MapSize.TryParse(name, out var size, out _));
         Assert.Equal(640, size.Width);
         Assert.Equal(384, size.Height);
-        Assert.True(size.SanFrancisco);
-        Assert.True(GodotOptions.Parse(["--size", name]).Config.SanFrancisco);
-        Assert.False(GodotOptions.Parse(["--size", "SF", "--size", "medium"]).Config.SanFrancisco);
-        Assert.False(GodotOptions.Parse(["--size", "SF", "--size", "320x192"]).Config.SanFrancisco);
+        Assert.Equal(CityScenario.SanFrancisco, size.Scenario);
+        Assert.Equal(CityScenario.SanFrancisco, GodotOptions.Parse(["--size", name]).Config.Scenario);
+        Assert.Equal(CityScenario.Random, GodotOptions.Parse(["--size", "SF", "--size", "medium"]).Config.Scenario);
+        Assert.Equal(CityScenario.Random, GodotOptions.Parse(["--size", "SF", "--size", "320x192"]).Config.Scenario);
     }
 
     [Fact]
     public void NewScenarioNormalizesDimensionsToLarge()
     {
-        var game = CityGame.New(new GameConfig { SanFrancisco = true });
+        var game = CityGame.New(new GameConfig { Scenario = CityScenario.SanFrancisco });
         Assert.Equal(640, game.Map.Width);
         Assert.Equal(384, game.Map.Height);
     }
@@ -106,6 +106,10 @@ public class SanFranciscoTests
         Assert.True(map.HasRoad(strait.X, strait.Y));
         Assert.False(map.TerrainAt(strait.X, strait.Y).Buildable);
         Assert.True(game.Network.IsConnected(map, strait.X, strait.Y));
+        var bayBridge = At(map, 65, 55);
+        Assert.Contains(new CellRect(bayBridge.X - 2, bayBridge.Y - 2, 5, 5).Cells(),
+            p => map.HasRoad(p.X, p.Y) && !map.TerrainAt(p.X, p.Y).Buildable &&
+                game.Network.IsConnected(map, p.X, p.Y));
     }
 
     [Fact]
@@ -164,13 +168,13 @@ public class SanFranciscoTests
         Assert.Equal(game.Map.BuildingLayer, differentSeed.Map.BuildingLayer);
         Assert.Equal(game.Map.HouseholdLayer, again.Map.HouseholdLayer);
         var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
-        Assert.True(loaded.Config.SanFrancisco);
+        Assert.Equal(CityScenario.SanFrancisco, loaded.Config.Scenario);
         Assert.Equal(game.CityName, loaded.CityName);
         Assert.Equal(game.Stats, loaded.Stats);
         Assert.Equal(game.Map.RoadLayer, loaded.Map.RoadLayer);
         var session = new GameSession(game);
         session.NewGame(loaded.Config);
-        Assert.True(session.Game.Config.SanFrancisco);
+        Assert.Equal(CityScenario.SanFrancisco, session.Game.Config.Scenario);
         Assert.Equal("San Francisco", session.Game.CityName);
         Assert.Equal(game.Map.ZoneLayer, session.Game.Map.ZoneLayer);
     }

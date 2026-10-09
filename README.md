@@ -61,7 +61,7 @@ leave a visible error in the dialog. When loading, the saved map/configuration o
 
 ## How to play
 
-Random cities start paused with a next-step first-city guide. Connect a short track to an existing highway or a map
+Random cities start paused; **F6 > Start** contains next-step first-city advice. Connect a short track to an existing highway or a map
 edge and zone 20-30 nearby homes with **R**, leaving open service plots. **Before resuming with P**,
 build a road-connected **Woodlot (8,000g)** and **Town Well (4,000g)** through Enter > Services.
 Together they cost 12,000g and 60g/week, leaving 38,000g of the starting 50,000g before road costs.
@@ -131,17 +131,16 @@ the service mapping and ideas for the future are in [docs/MEDIEVAL.md](docs/MEDI
 
 Roads cost money: a street starts at **500g per cell**, an avenue at **900g**, and a highway at
 **1,500g**. Upgrades charge the difference; hills multiply construction costs by 1.5.
-The crown maintains the King's Road, so it has no weekly upkeep; dirt tracks and cobbled roads
-still cost 1g and 2g per cell each week at full funding.
+Roads generated with the map have no weekly upkeep. Roads the player builds cost 1g, 2g, or 3g
+per cell each week at full funding for dirt tracks, cobbled roads, and King's Roads respectively.
 Road/building menus include registered player-placeable types. Service menus show each building's
 footprint: a Sheriff's Hall occupies 2x1 cells, a Parish Church 2x2, and a Castle 4x3.
 Larger buildings fill their footprint with type-specific ASCII art at normal and close zoom,
 including roofs, walls, church crosses, aqueduct arches and castle battlements.
-Coarse zoom and older single-cell buildings retain the representative building glyph.
+Coarse zoom uses the representative building glyph.
 A click previews a whole building; larger selections tile complete, non-overlapping buildings.
 Blocked footprints are skipped as a whole. Cost, upkeep and service supply are per building,
 not per occupied cell; demolition of any part removes the entire building.
-Existing single-cell buildings in older saves keep their original footprint.
 
 Selected area services and smoke/clean-air sources show faint white pixelated range circles,
 including during valid placement previews. Selecting any cell of a building's footprint shows
@@ -160,8 +159,8 @@ not replace the undo slot. New/load clears it.
 
 ### Calendar and economy
 
-New cities begin in the current local year. Saves retain their starting year; legacy saves without
-that value retain year-1 behavior. A year has 52 weeks and a week has 7 days.
+New cities begin in the current local year. Saves retain their starting year.
+A year has 52 weeks and a week has 7 days.
 Growth is spread over the week and tax income arrives at its end.
 
 The day bar uses `>` for today and `=` for completed days: `[>......]`, `[==>....]`, `[======>]`.
@@ -178,7 +177,8 @@ fast-forward the simulation.
 
 ## Interface
 
-The interface uses a black background and shared/intersecting double-white borders.
+The interface uses a black background and closed double-white borders with square corners.
+Frames stay separated; their borders never extend into neighboring frames or form crossing joins.
 Top-header text is uniformly larger than body text and fits to narrower windows:
 
 - **Left:** TermCity and the right-aligned city name.
@@ -186,8 +186,20 @@ Top-header text is uniformly larger than body text and fits to narrower windows:
 - **Right:** left-aligned population and right-aligned budget; depleted funds are red.
 
 PAUSED is yellow with a gentle four-second brightness/glow pulse, frozen while unfocused.
-The sidebar has an enlarged minimap, `[-] 1x [+]` zoom controls, and always-open Demand, City, and
-Zones sections with larger blue headings. Demand letters match their bar colors.
+The sidebar retains its enclosing double-white border and an aspect-correct minimap sized to the
+full available width where desktop space permits, plus `[-] 1x [+]` zoom controls, Demand and City.
+Section titles use black backgrounds and the same double-white borders as the map.
+The City table has no redundant column-heading row and shows only age groups/hearths, season,
+grain, mood, supplies, service strength and the top complaint. Healthy readings are green and
+warnings use gold or red. Population and treasury remain in the top header.
+Hover over any R/C/I Demand letter, bar or row for its demand, built/zoned/road-served cells,
+plots without road access and pending removals. Those same details are always available in
+**F7 Report**, **F8 Growth**, and the full-rules City health report for keyboard users.
+There is no separate Zones section and the sidebar never scrolls. Its minimap and table layout
+adapt to smaller windows so all remaining details stay visible.
+The sidebar has no Guide section; next-step advice remains in the **F6 > Start** dialog.
+The map fills its frame with the same 12-logical-pixel inset on every side; partial cells are
+clipped at the right/bottom edges. The map/sidebar gap is also 12 logical pixels.
 Cell details appear in the bottom status line, alongside dimensions/counts for selections larger
 than one cell and any current message.
 
@@ -206,16 +218,20 @@ visible at the right edge. TermCity and the header geometry stay fixed.
 
 Delete/Backspace removes characters. Ctrl+A/Command+A selects all. Enter or clicking outside commits;
 Esc cancels. Editing pauses the game and restores its previous clock state afterwards.
-Names are stored in city saves; legacy cities without a name display **New City**.
+Names are stored in city saves.
 
 ### Font, sidebar, and menus
 
 - **F3 FONT** opens `[-] size [+]` with **OK** and **RESET**. Default interface size is 20;
   supported sizes are 16-28, with map spacing and input scaled consistently.
 - Increasing font size grows the preferred 1440x900 window when desktop space permits, without
-  exceeding the usable screen. Panels scroll and the function header wraps on smaller screens.
+  exceeding the usable screen. The sidebar fits without scrolling; dialogs may scroll and the
+  function header wraps on smaller screens.
+  The minimum logical window height is 780 so the larger minimap and remaining details have room;
+  actual minimum bounds remain capped to the usable desktop.
 - Drag the map/sidebar divider to resize it, or use **Esc > Resize sidebar**.
   Sidebar widths are bounded to 280-480 logical pixels; the maximum reduces to preserve map space.
+  Mouse dragging slides by pixels rather than snapping to character widths.
 - **Arrows navigate dialog controls**, without changing values. **Space/Enter** activates the
   focused button; minus/plus resize the sidebar by one logical character step.
 - Menu choices are left-aligned. Dialog width fits its longest choice/title with **five
@@ -317,12 +333,12 @@ or street-accurate GIS maps. They include occupied R/C/I districts, residents, r
 - **CHI:** a lake and its river branches, flat ground, a market quarter and busy yards.
 - **STL:** rivers and a floodplain, a minster park and riverside trades.
 
-Old saves keep loading: the original scenario names inside save files are still recognised.
+Saves are development-version-specific. Only the current format and type names are supported;
+obsolete or incomplete saves show a load error rather than being migrated.
 
 Scenarios start paused without the automatic first-city guide; F6 still offers it explicitly.
 Geography and districts stay fixed across seeds; seeds vary households and future growth.
 Save/load preserves the map. Restart/new-city actions retain the selected scenario.
-Older medium-sized San Francisco saves load at their original dimensions; restarting generates the large map.
 
 ## Saving and loading
 

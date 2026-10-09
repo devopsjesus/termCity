@@ -73,10 +73,28 @@ dotnet test tests/TermCity.Tests/TermCity.Tests.csproj --filter 'Category=Playth
 
 See [the playtest report](PLAYTEST.md) for measured game-time equivalents and balance decisions.
 
-`Main` connects session events to desktop controls. `TerminalMap` and `TerminalGrid` implement the
-terminal-styled cell display; they are Godot presentation components, not a console frontend.
+`Main` connects session events to desktop controls. It remains one Godot `Control`, attached through
+[Main.cs](../godot/Main.cs) in [Main.tscn](../godot/Main.tscn), with cohesive partial files:
+
+| File | Responsibility |
+|---|---|
+| [Main.cs](../godot/Main.cs) | Startup, frame processing, session notifications, focus, shutdown and smoke-test orchestration |
+| [Main.Audio.cs](../godot/Main.Audio.cs) | Streaming music, placement sounds, volume/mute controls and audio resource cleanup |
+| [Main.Display.cs](../godot/Main.Display.cs) | Preferences, font/window sizing, layout, HUD/status refresh and city-name editing |
+| [Main.Dialogs.cs](../godot/Main.Dialogs.cs) | Menus, modal construction/sizing, tabbed prompts, choice help and dialog keyboard navigation |
+| [Main.Input.cs](../godot/Main.Input.cs) | Gameplay keys, pointer/trackpad/pinch gestures, selection, panning and edge scrolling |
+| [Main.Effects.cs](../godot/Main.Effects.cs) | Effect setup, level/celebration controls and redraw scheduling |
+
+Fields live beside their owning behavior. The partials share the same scene instance and private state;
+they do not introduce extra nodes, controllers, subscriptions or a second lifecycle.
+`LoadPreferences`/`SavePreferences` handle the shared display/audio settings file.
+
+`TerminalMap` and `TerminalGrid` implement the terminal-styled cell display; they are Godot presentation
+components, not a console frontend.
 `CityPanel`, `CityMinimap`, `CitySplit` and `TerminalFrame` provide sidebar sections, overview,
-bounded divider resizing and shared double-border rendering.
+bounded divider resizing and closed double-border rendering. `SidebarReport` supplies the reduced
+City table and semantic colors without a Godot dependency. `CityReport.ZoneDetails` is shared by
+Demand hover tooltips, weekly/growth reports and the full-rules health report.
 
 ## World and content
 
@@ -88,7 +106,7 @@ expanded selection, rejecting blocked buildings atomically. `GameMap.BuildingFoo
 sparse cell-owner lookup associate occupied cells with one building; `ServiceCells` contains
 only its anchor. Road access through any occupied cell activates the building, but upkeep,
 supply, coverage and pilgrimage are counted once. Area effects originate at the anchor.
-Saves retain explicit footprints; legacy single-cell buildings are not expanded on load.
+Saves retain explicit footprints; service buildings without them are rejected on load.
 
 `GameContent` combines terrain, feature, building and road registries. Types receive compact byte
 IDs in memory; saves resolve their names instead, allowing content reorderings.
@@ -151,17 +169,24 @@ orthogonally connected road paths.
 These are hand-shaped, north-up regional approximations, not GIS/current land-use datasets.
 The layouts include city-specific coastlines/rivers/hills/parks and road-served occupied R/C/I
 districts. They keep the medieval setting's vocabulary and economy. Households use independent scenario RNG stages.
+Scenario road strokes cross water only when the crossing has land approaches at both ends.
+Water-starting/ending road spurs are skipped, street grids stay on buildable land and cannot
+branch directly onto bridge water cells. Chicago and St. Louis highway bends stay off their rivers,
+while deliberate bridges (including Golden Gate and Bay Bridge) remain. These rules apply to
+new/restarted scenarios; loading does not rewrite a saved city's roads.
+Scenario generation first zones districts, then reserves complete service footprints on clear buildable
+land, then populates the remaining district plots. Utility capacity is planned against those future
+occupied plots. Existing services and road beds are not overwritten.
 
 Named cities start paused without automatic onboarding. Explicit F6 guide requests still work.
-Saved dimensions/layers remain unchanged on load; restarting an older medium San Francisco save generates
-the expanded large scenario. The legacy `SanFrancisco` configuration alias and the medieval stand-in scenario names
-(`Constantinople`, `Naples`, `Genoa`, `Lubeck`, `York`) written by earlier medieval builds are still read.
+Saved dimensions/layers remain unchanged on load. Scenarios use only the current `CityScenario` names
+and `GameConfig.Scenario`; there are no historical aliases or per-city configuration flags.
 
 ## Simulation
 
 `CityGame.Update` advances real time, capped to 0.5 seconds per call to prevent catch-up after stalls.
 Paused updates do not advance gameplay. A game week has seven days and a year has 52 weeks.
-New games capture the local starting year; old saves without it start at year 1.
+New games capture the local starting year; saves must contain it.
 
 Growth is planned weekly and distributed across days. Empty, served lots fill up to their daily
 allocation. Candidates are sorted before random selection so results remain stable after loading
@@ -175,22 +200,25 @@ crown's tribute) and the castle tiers in `CityServices` (`SeatRank`). Each runs 
 `CityGame.AdvanceWeek` in a fixed order and draws only from `game.Rng`, so a seed stays reproducible. See
 [POPULATION.md](POPULATION.md) and [MEDIEVAL.md](MEDIEVAL.md).
 
-Taxes arrive weekly. Occupied R/C/I cells have weekly values 200/350/500 at the default 5% tax rate.
+Taxes arrive weekly. Occupied R/C/I cells have base weekly values 200/350/500 before the default 9% tax rate.
 Dezoned occupied buildings retain population/tax income until their random 14-21-game-day deadline.
 Restoring their original zone cancels removal. Demolition is immediate, free and unreimbursed.
 Full-funded service upgrades compare supply capacity or summed actual strength-weighted coverage.
 Higher tiers have strictly cheaper normalized cost over 52 weeks on flat ground; road upgrades
 have corresponding value tests.
 
-Statistics visit sparse zones/removal queues and use stack counters. Connectivity/service is cached
-separately from weekly growth; road changes invalidate it. Road service spreads through buildable
+Statistics visit sparse zones/removal queues and use stack counters. Road connectivity is cached
+separately from growth; road changes invalidate it. Utility demand and pollution refresh when
+buildings grow, disappear or change zone, before subsequent statistics and weekly settlement assessment.
+Road service spreads through buildable
 terrain from roads connected to the map boundary. Default reach is two cells.
 Nearby connected visible road beds supplement this access when within 0.75 cell widths horizontally
 and cell heights vertically of a building cell's footprint edge.
 
 `Changed` notifies possible UI changes; `MapVersion` advances only for map-visible changes.
-Renaming raises a non-map change notification, allowing dirty/autosave tracking without changing
-the map version. Failure results carry user-visible explanations.
+Renaming, taxes, speed, pause and guide preferences raise non-map change notifications, allowing
+dirty/autosave tracking without changing the map version or discarding road geometry and service caches.
+Failure results carry user-visible explanations.
 
 ## Session and zoom
 
@@ -203,7 +231,10 @@ Zoom levels are -2 (0.25x), -1 (0.5x), 0 (1x), and +1 (2x). Negative levels samp
 of four or two cells. At +1, `TerminalGrid` doubles **both** pixel dimensions and `TerminalMap`
 doubles glyph size; logical cells are never horizontally duplicated.
 
-`Grid.Fill` sets the session viewport using actual visible-cell counts. Pixel hit testing uses
+`Grid.Fill` sets the session viewport using fully visible-cell counts so keyboard navigation stays
+on whole cells. Its buffer includes partial edge cells to paint the entire viewport, clipped by
+`TerminalMap`. Pixel hit testing rejects coordinates beyond the actual viewport, including unused
+parts of clipped cells, and uses
 `PixelWidth`/`PixelHeight`; `TerminalMap.ZoomBy` remaps the world anchor after resizing so pointer
 or center zoom stays anchored. Coarse cameras/selections align to whole sampled blocks.
 
@@ -213,7 +244,7 @@ Session prompts/previews suspend simulation. Autosave still tracks elapsed real 
 
 ## Godot UI and input
 
-The default window is 1440x900 with a 640x480 base minimum. Display font size defaults to 20,
+The default window is 1440x900 with a 640x780 base minimum, capped to the usable desktop. Display font size defaults to 20,
 supports 16-28, and sets shared content scale `font size / 16`. Window sizing stays within usable
 desktop bounds. F3 opens live font controls with OK/RESET.
 
@@ -228,12 +259,30 @@ stationary right edge; an overlay slot leaves branding and header geometry uncha
 pauses the clock and restores its previous state on commit/cancel. Invalid names remain editable
 with a visible error.
 
-`TerminalFrame` draws double outlines with a 12-pixel inset and detects neighboring frames to
-share/intersect dividers. Popups fit the longest title/choice plus five `M` glyph-widths per side,
+`TerminalFrame` draws two closed rectangular outlines inside its own bounds, with square corners and
+a shared 12-pixel content inset. Neighboring frames are separated instead of extending edges into
+crossing or T-shaped joins. The map fills its expanding frame; partial edge cells are clipped rather
+than snapping the frame to cell widths. This keeps all four map insets exactly equal and sidebar
+dragging continuous. `CitySplit.Divider` matches the map inset, so the external gap is also 12 pixels.
+Popups fit the longest title/choice plus five `M` glyph-widths per side,
 with inner vertical margins of 2 pixels. Deferred minimum-size changes re-fit wrapped content
 and keep smaller dialogs from retaining stale heights. Oversized content scrolls.
 
-All sidebar sections stay open. `CitySplit` supports an 8-pixel drag area, 280-pixel sidebar minimum
+The non-scrolling sidebar contains Minimap, Demand and City, with black double-white header cells.
+An enclosing `SidebarFrame` retains the full-height double-white outline and the same 12-pixel
+content inset as the map frame. The divider gap is measured between the two outer frames.
+City uses colored native cells without a Metric/Value heading row. It omits population, tax/budget,
+standing and employment rows duplicated elsewhere. Demand tooltips contain all per-zone counts;
+keyboard users get the identical formatter through F7, F8 and the full-rules health report.
+City body text targets 16 logical pixels (three larger than the previous body setting); section
+headers stay at 18. Constrained layouts adapt the body size without changing the header font.
+`CityPanel` prioritizes an aspect-correct minimap at the full content width, adjusting text spacing
+and using paired City rows when height is constrained. Minimap and Demand remain full-width blocks.
+Width/height/row-count caching avoids redundant fitting. Screen-constrained layouts preserve the
+minimap's shape and fit the largest overview that leaves the remaining details visible.
+The Guide sidebar section is removed; optional next-step coaching is on the F6 Start tab, and its
+existing dismiss/enable controls and saved preference still work there.
+`CitySplit` supports a 12-pixel drag area, 280-pixel sidebar minimum
 and 480-pixel maximum, reduced to retain 320 pixels for the map where possible.
 Esc > Resize sidebar offers 12-pixel steps via focused minus/plus buttons.
 Arrows navigate dialog buttons; Space/Enter activates the focused button. Text-field dialogs retain
@@ -307,7 +356,7 @@ Utilities with citywide supply and no spatial radius do not have a fictitious ra
 tiles at normal/close zoom, and `TerminalMap.DrawCellGlyph` draws them at half font size within
 the original cell bounds, including effect scaling/tints. `MapSnapshot` preserves their footprint
 ownership so demolition ghosts retain the art. `BlockSampler` and `--dump-map` explicitly request
-the canonical single-line glyph; legacy single-cell buildings also keep that glyph.
+the canonical single-line glyph.
 
 The raw bundled DejaVu Sans Mono bytes load directly, without depending on an import cache.
 Startup verifies registered map glyph coverage. Export presets include the font and
@@ -318,7 +367,9 @@ Terminal effects (glyphs that shrink, grow, burn and roam) are a separate engine
 
 ## Persistence
 
-`SaveGameStore` writes JSON version 1, atomically via `<path>.tmp` followed by replacement.
+`SaveGameStore` writes JSON version 2, atomically via `<path>.tmp` followed by replacement.
+Development saves are not backward compatible: other versions, obsolete names, unknown fields,
+missing state and unsupported compression are rejected explicitly rather than migrated or defaulted.
 Godot supplies `user://quicksave.json` in the distinct `TermCityGodot` user-data directory.
 The reusable core's fallback path remains local application data plus `TermCity/quicksave.json`;
 the desktop application does not use that fallback.
@@ -328,13 +379,14 @@ It shares a single row with cell information, uses at most half the row width, a
 the full absolute path in a tooltip. Save guards do not duplicate the path in prompt footers.
 
 Saves include configuration/scenario, name, cash/calendar, RNG state, speed/pause/taxes, growth plan,
-last report, milestones, guide dismissal, pending dezone removals and all map layers.
+last report, the current week's birth/death/migration/event tally, milestones, guide dismissal,
+pending dezone removals, building footprints and all map layers.
 Terrain/features/buildings/road types use name palettes. Layers are deflate-compressed and
-base64-encoded; older uncompressed layers remain readable. Load refreshes clock timings from
-current defaults unless explicitly preserving test timings, rebuilds sparse indexes and starts
-the session paused. Legacy starting years, city names, SF metadata and the old building names (`House`, `Police Station`, ...) have compatibility
-defaults. Medieval state (grain, harvest, hunger, outbreaks, town rank, tribute arrears) is optional in the file, so older
-saves load with sensible defaults; saves with no engine marker still load as Classic rules.
+base64-encoded. Encoding resolves palette indexes once per registered type, not once per cell.
+Terrain uses every byte ID, including 255; the empty-cell marker is only used by optional layers.
+Load preserves saved configuration and clock timings, rebuilds sparse indexes and starts the session
+paused. Medieval state (grain, harvest, hunger, outbreaks, town rank, tribute arrears) is required.
+Classic remains an explicit sandbox ruleset, not a fallback for incomplete saves.
 
 Autosave checks every 60 real seconds, rotates three sibling files and never overwrites the
 quick-save. Unsaved-progress guards offer save/continue, discard/continue or cancel, and failed
@@ -352,7 +404,7 @@ Core tuning is in [GameConfig.cs](../src/TermCity.Core/Simulation/GameConfig.cs)
 | StartingMoney / RoadCostPerCell | 50,000 / 500 |
 | MinResidentialCells | 10 |
 | ResidentialPerCommercial / ResidentialPerIndustrial | 20 / 10 |
-| DefaultTaxRate / RoadServiceReach | 0.05 / 2 |
+| DefaultTaxRate / RoadServiceReach | 0.09 / 2 |
 | MaxNewResidential/Commercial/IndustrialPerWeek | 3 / 1 / 1 |
 | GrowthRatePerWeek | 0.02 |
 | WeeksPerYear / DaysPerWeek | 52 / 7 |
@@ -361,7 +413,7 @@ Core tuning is in [GameConfig.cs](../src/TermCity.Core/Simulation/GameConfig.cs)
 Add registered terrain/feature/building/road types through `GameContent`. Generators implement
 their existing ordered interfaces. Each glyph must be covered by the bundled font.
 Player-placeable roads/buildings appear automatically in area menus; growth buildings declare
-their zone. Named scenarios require the default named Grass/Hill/Water, Tree and road content,
+their zone. Named scenarios require the default named Meadow/Hill/Water, Tree and road content,
 plus growth buildings for every zone.
 
 ## Tests and CI
@@ -375,7 +427,7 @@ godot --path godot -- --smoke-test --seed 42 --size SF --capture /absolute/path/
 ```
 
 Unit tests cover economy/growth, calendar, road networks, generation/water, named-city geography,
-occupied districts/service, save/restart compatibility, sessions/previews/undo/autosave guards,
+occupied districts/service, current-format save/restart round trips and invalid-save rejection, sessions/previews/undo/autosave guards,
 minimap images, zoom/pixel mapping, animation density/rhythm, options, city names and synthesized music.
 Pure Godot helpers are linked into the test project; running unit tests does not require a display.
 

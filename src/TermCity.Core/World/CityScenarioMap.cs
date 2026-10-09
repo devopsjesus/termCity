@@ -46,12 +46,6 @@ public static class CityScenarioMap
         var street = content.Roads.Get(DefaultRoads.TrackName);
         var avenue = content.Roads.Get(DefaultRoads.CobbledName);
         var highway = content.Roads.Get(DefaultRoads.KingsRoadName);
-        var buildings = new BuildingType?[4];
-        foreach (var zone in Zones.Placeable)
-            buildings[(int)zone] = content.Buildings.ForZone(zone)
-                ?? throw new InvalidOperationException($"City scenarios require a growth building for {zone}.");
-        var rng = GameRandom.ForStage(config.Seed, "scenario-occupants");
-
         for (int y = 0; y < map.Height; y++)
         {
             for (int x = 0; x < map.Width; x++)
@@ -81,12 +75,27 @@ public static class CityScenarioMap
                 var zone = District(config.Scenario, u, v);
                 if (zone == ZoneType.None) continue;
                 map.SetZone(x, y, zone);
-                if (CellHash.Pick(x, y, 10) >= 8) continue;
-                map.SetBuilding(x, y, buildings[(int)zone]);
-                if (zone == ZoneType.Residential) map.SetHousehold(x, y, Household.Random(rng));
             }
         }
         return map;
+    }
+
+    internal static void Populate(GameMap map, GameConfig config)
+    {
+        var buildings = new BuildingType?[4];
+        foreach (var zone in Zones.Placeable)
+            buildings[(int)zone] = map.Content.Buildings.ForZone(zone)
+                ?? throw new InvalidOperationException($"City scenarios require a growth building for {zone}.");
+        var rng = GameRandom.ForStage(config.Seed,
+            config.Scenario == CityScenario.SanFrancisco ? "sf-occupants" : "scenario-occupants");
+        for (int y = 0; y < map.Height; y++)
+            for (int x = 0; x < map.Width; x++)
+            {
+                var zone = map.ZoneAt(x, y);
+                if (zone == ZoneType.None || CellHash.Pick(x, y, 10) >= 8) continue;
+                map.SetBuilding(x, y, buildings[(int)zone]);
+                if (zone == ZoneType.Residential) map.SetHousehold(x, y, Household.Random(rng));
+            }
     }
 
     private static bool IsWater(CityScenario city, double x, double y) => city switch
@@ -170,7 +179,7 @@ public static class CityScenarioMap
         ],
         CityScenario.Chicago =>
         [
-            [(47, 0), (49, 34), (59, 57), (47, 100)],
+            [(47, 0), (49, 34), (57, 57), (47, 100)],
             [(0, 57), (64, 57), (67, 74), (64, 100)],
             [(23, 0), (24, 44), (36, 78), (36, 100)],
             [(67, 0), (67, 49), (67, 60), (67, 100)],
@@ -179,7 +188,7 @@ public static class CityScenarioMap
         [
             [(57, 0), (58, 52), (55, 79), (46, 100)],
             [(0, 54), (63, 54), (75, 53), (100, 53)],
-            [(0, 80), (55, 79), (75, 74), (100, 74)],
+            [(0, 80), (55, 77), (75, 74), (100, 74)],
         ],
         _ => throw new ArgumentOutOfRangeException(nameof(city)),
     };

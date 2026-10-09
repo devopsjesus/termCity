@@ -333,7 +333,7 @@ public class SeasonTests
     }
 
     [Fact]
-    public void GrainAndHarvestSurviveASaveAndOldSavesLoadWithDefaults()
+    public void GrainAndHarvestSurviveASaveAndAreRequired()
     {
         var game = Village(weeks: 12);
         game.GrainWeeks = 3.5;
@@ -345,18 +345,8 @@ public class SeasonTests
         Assert.Equal(0.2, loaded.Hunger, 6);
 
         var node = System.Text.Json.Nodes.JsonNode.Parse(SaveGameStore.Serialize(game))!.AsObject();
-        foreach (var key in new[] { "GrainWeeks", "HarvestQuality", "Hunger" })
-        {
-            foreach (var prop in node.Select(p => p.Key).Where(k => string.Equals(k, key, StringComparison.OrdinalIgnoreCase)).ToList())
-            {
-                node.Remove(prop);
-            }
-        }
-
-        var old = SaveGameStore.Deserialize(node.ToJsonString());
-        Assert.Equal(0, old.Hunger);
-        Assert.Equal(1, old.HarvestQuality);
-        Assert.True(old.GrainWeeks > 0);
+        foreach (var key in new[] { "GrainWeeks", "HarvestQuality", "Hunger" }) node.Remove(key);
+        Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(node.ToJsonString()));
     }
 
     [Fact]

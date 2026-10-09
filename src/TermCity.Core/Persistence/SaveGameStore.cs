@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TermCity.Core.Buildings;
 using TermCity.Core.Registry;
 using TermCity.Core.Simulation;
 using TermCity.Core.Util;
@@ -10,21 +11,19 @@ namespace TermCity.Core.Persistence;
 
 /// <summary>
 /// JSON save files. Layers are stored as deflate-compressed, base64-encoded byte arrays; terrain, feature and building
-/// layers store names via a palette, so adding or reordering registered types never invalidates old saves.
+/// layers store names via a palette, independently of in-memory registry ordering.
 /// </summary>
 public static class SaveGameStore
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
     private const byte NoneMarker = 255;
     private const string Deflate = "deflate";
-
-    // Saves from before the city rules existed carry no marker and keep playing by the classic rules.
-    private const string EngineMarker = "city-rules-2";
 
     private static readonly JsonSerializerOptions Options = new()
     {
         WriteIndented = true,
-        Converters = { new CityScenarioConverter(), new JsonStringEnumConverter() },
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        Converters = { new JsonStringEnumConverter(allowIntegerValues: false) },
     };
 
     public static string DefaultPath { get; } = Path.Combine(
@@ -62,6 +61,7 @@ public static class SaveGameStore
             Speed = game.Speed,
             Paused = game.Paused,
             Growth = game.GrowthState,
+            Tally = game.Tally.State,
             LastReport = game.LastReport,
             HighestMilestone = game.HighestMilestone,
             GuideDismissed = game.GuideDismissed,
@@ -69,7 +69,6 @@ public static class SaveGameStore
             BuildingFootprints = map.BuildingFootprints.Values.ToList(),
             Compression = Deflate,
             Taxes = game.Taxes,
-            Engine = EngineMarker,
             Funding = game.Budget.Snapshot(),
             Loan = game.Budget.Loan,
             OutbreakWeeksLeft = game.OutbreakWeeksLeft,
@@ -81,7 +80,8 @@ public static class SaveGameStore
             Terrain = EncodeLayer(map.TerrainLayer, map.Content.Terrains, noneValue: null),
             Features = EncodeLayer(map.FeatureLayer, map.Content.Features, noneValue: 0),
             Buildings = EncodeLayer(map.BuildingLayer, map.Content.Buildings, noneValue: 0),
-            Roads = Pack(EncodeRoads(map)),
+            Roads = Pack(EncodeFlags(map.RoadLayer)),
+            PlayerRoads = Pack(EncodeFlags(map.PlayerRoadLayer)),
             RoadTypes = EncodeLayer(map.RoadTypeLayer, map.Content.Roads, noneValue: 0),
             Zones = Pack(EncodeZones(map)),
             Households = Pack(EncodeHouseholds(map)),
@@ -89,7 +89,7 @@ public static class SaveGameStore
         return JsonSerializer.Serialize(data, Options);
     }
 
-    public static CityGame Deserialize(string json, GameContent? content = null, bool preserveTimings = false)
+    public static CityGame Deserialize(string json, GameContent? content = null)
     {
         SaveData data;
         try
@@ -106,91 +106,75 @@ public static class SaveGameStore
             throw new InvalidDataException($"Unsupported save version {data.Version} (expected {CurrentVersion}).");
         }
 
+        if (data.Compression != Deflate)
+            throw new InvalidDataException($"Unsupported save compression '{data.Compression}'.");
+
         content ??= new GameContent();
         var config = data.Config ?? throw new InvalidDataException("Save file has no configuration.");
-        config = config with { StartingYear = config.StartingYear ?? 1 };
-        if (data.Engine is null)
-        {
-            config = config with { Rules = CityRules.Classic };
-        }
-
-        // Game speeds are a property of the game, not of the saved city: a save made with older, faster speeds
-        // plays at the current ones.
-        var current = new GameConfig();
-        if (!preserveTimings)
-        {
-            config = config with
-            {
-                SlowSecondsPerWeek = current.SlowSecondsPerWeek,
-                MediumSecondsPerWeek = current.MediumSecondsPerWeek,
-                FastSecondsPerWeek = current.FastSecondsPerWeek,
-                DaysPerWeek = current.DaysPerWeek,
-            };
-        }
+        ValidateState(data, config);
         var map = new GameMap(config.MapWidth, config.MapHeight, content);
         int count = map.Width * map.Height;
 
-        bool layersPacked = data.Compression == Deflate;
-        DecodeLayer(data.Terrain, map.TerrainLayer, content.Terrains, "terrain", layersPacked);
-        DecodeLayer(data.Features, map.FeatureLayer, content.Features, "feature", layersPacked);
-        DecodeLayer(data.Buildings, map.BuildingLayer, content.Buildings, "building", layersPacked);
+        DecodeLayer(data.Terrain, map.TerrainLayer, content.Terrains, "terrain", allowNone: false);
+        DecodeLayer(data.Features, map.FeatureLayer, content.Features, "feature");
+        DecodeLayer(data.Buildings, map.BuildingLayer, content.Buildings, "building");
+        DecodeLayer(data.RoadTypes, map.RoadTypeLayer, content.Roads, "road type");
 
-        bool packed = data.Compression == Deflate;
-        byte[] roads = DecodeBytes(data.Roads, count, "roads", packed);
-        byte[] zones = DecodeBytes(data.Zones, count, "zones", packed);
-        byte[] households = DecodeBytes(data.Households, count * 3, "households", packed);
+        byte[] roads = DecodeBytes(data.Roads, count, "roads");
+        byte[] playerRoads = DecodeBytes(data.PlayerRoads, count, "player roads");
+        byte[] zones = DecodeBytes(data.Zones, count, "zones");
+        byte[] households = DecodeBytes(data.Households, count * 3, "households");
         for (int i = 0; i < count; i++)
         {
+            if (roads[i] > 1 || playerRoads[i] > 1 || !Enum.IsDefined((ZoneType)zones[i]) ||
+                (roads[i] == 0 && (playerRoads[i] != 0 || map.RoadTypeLayer[i] != 0)) ||
+                (roads[i] != 0 && map.RoadTypeLayer[i] == 0))
+                throw new InvalidDataException("Invalid road or zone cell.");
             map.RoadLayer[i] = roads[i] != 0;
-            map.ZoneLayer[i] = Enum.IsDefined((ZoneType)zones[i]) ? (ZoneType)zones[i] : ZoneType.None;
+            map.PlayerRoadLayer[i] = playerRoads[i] != 0;
+            map.ZoneLayer[i] = (ZoneType)zones[i];
             map.HouseholdLayer[i] = new Household(households[i * 3], households[i * 3 + 1], households[i * 3 + 2]);
         }
 
-        DecodeRoadTypes(data.RoadTypes, map, layersPacked);
         map.RebuildIndexes();
-        if (data.BuildingFootprints is not null)
+        var occupied = new HashSet<int>();
+        foreach (var area in data.BuildingFootprints)
         {
-            var occupied = new HashSet<int>();
-            foreach (var area in data.BuildingFootprints)
+            if (area.Width <= 0 || area.Height <= 0 || !map.InBounds(area.X, area.Y) ||
+                area.Width > map.Width - area.X || area.Height > map.Height - area.Y ||
+                map.BuildingAt(area.X, area.Y) is not { PlayerPlaceable: true } building ||
+                area.Width != building.Width || area.Height != building.Height)
+                throw new InvalidDataException("Invalid building footprint.");
+            foreach (var p in area.Cells())
             {
-                if (area.Width <= 0 || area.Height <= 0 || !map.InBounds(area.X, area.Y) ||
-                    area.Width > map.Width - area.X || area.Height > map.Height - area.Y ||
-                    map.BuildingAt(area.X, area.Y) is not { PlayerPlaceable: true } building ||
-                    area.Width != building.Width || area.Height != building.Height)
-                    throw new InvalidDataException("Invalid building footprint.");
-                foreach (var p in area.Cells())
-                {
-                    int index = map.Index(p.X, p.Y);
-                    if (map.BuildingLayer[index] != building.Id || map.RoadLayer[index] ||
-                        map.ZoneLayer[index] != ZoneType.None || !occupied.Add(index))
-                        throw new InvalidDataException("Invalid or overlapping building footprint.");
-                }
-                map.RegisterBuildingFootprint(area);
+                int index = map.Index(p.X, p.Y);
+                if (map.BuildingLayer[index] != building.Id || map.RoadLayer[index] ||
+                    map.ZoneLayer[index] != ZoneType.None || !occupied.Add(index))
+                    throw new InvalidDataException("Invalid or overlapping building footprint.");
             }
+            map.RegisterBuildingFootprint(area);
         }
-        if (data.ZoneRemovals is not null)
+        foreach (int index in map.ServiceCells)
+            if (!occupied.Contains(index))
+                throw new InvalidDataException("Service building is missing its footprint.");
+        foreach (var (i, removal) in data.ZoneRemovals)
         {
-            foreach (var (i, removal) in data.ZoneRemovals)
+            if (i < 0 || i >= count || removal is null || removal.Zone == ZoneType.None ||
+                !Enum.IsDefined(removal.Zone) || !double.IsFinite(removal.RemoveAtDay) || removal.RemoveAtDay < 0 ||
+                map.ZoneLayer[i] != ZoneType.None || map.BuildingLayer[i] == 0)
             {
-                if (i < 0 || i >= count || removal is null || removal.Zone == ZoneType.None ||
-                    !Enum.IsDefined(removal.Zone) || !double.IsFinite(removal.RemoveAtDay) || removal.RemoveAtDay < 0 ||
-                    map.ZoneLayer[i] != ZoneType.None || map.BuildingLayer[i] == 0)
-                {
-                    throw new InvalidDataException("Invalid pending zone removal.");
-                }
-
-                map.ZoneRemovals.Add(i, removal);
+                throw new InvalidDataException("Invalid pending zone removal.");
             }
+
+            map.ZoneRemovals.Add(i, removal);
         }
 
-        if (data.CityName is not null && !CityGame.IsValidCityName(data.CityName))
-            throw new InvalidDataException("Invalid city name: expected 1-16 characters.");
         var game = new CityGame(config, map, new GameRandom(data.RngState))
         {
             Money = data.Money,
-            CityName = data.CityName ?? "New City",
+            CityName = data.CityName,
             Week = data.Week,
-            Day = Math.Clamp(data.Day, 0, Math.Max(0, config.DaysPerWeek - 1)),
+            Day = data.Day,
             DayProgressSeconds = data.DayProgressSeconds,
             Speed = data.Speed,
             Paused = data.Paused,
@@ -199,33 +183,66 @@ public static class SaveGameStore
             GuideDismissed = data.GuideDismissed,
         };
 
-        if (data.Growth is not null)
-        {
-            game.GrowthState = data.Growth;
-        }
-
-        if (data.Taxes is not null)
-        {
-            game.Taxes.Residential = data.Taxes.Residential;
-            game.Taxes.Commercial = data.Taxes.Commercial;
-            game.Taxes.Industrial = data.Taxes.Industrial;
-        }
+        game.GrowthState = data.Growth;
+        game.Tally.State = data.Tally;
+        game.Taxes.Residential = data.Taxes.Residential;
+        game.Taxes.Commercial = data.Taxes.Commercial;
+        game.Taxes.Industrial = data.Taxes.Industrial;
 
         game.Budget.Restore(data.Funding);
-        game.Budget.Loan = Math.Max(0, data.Loan);
-        game.OutbreakWeeksLeft = Math.Clamp(data.OutbreakWeeksLeft, 0, 52);
-        game.GrainWeeks = Math.Clamp(data.GrainWeeks ?? 8, 0, 200);
-        game.HarvestQuality = Math.Clamp(data.HarvestQuality ?? 1, 0.1, 2);
-        game.Hunger = Math.Clamp(data.Hunger ?? 0, 0, 1);
-        game.HighestRank = Math.Clamp(data.HighestRank ?? -1, -1, 4);
-        game.TributeArrears = Math.Max(0, data.TributeArrears ?? 0);
+        game.Budget.Loan = data.Loan;
+        game.OutbreakWeeksLeft = data.OutbreakWeeksLeft;
+        game.GrainWeeks = data.GrainWeeks;
+        game.HarvestQuality = data.HarvestQuality;
+        game.Hunger = data.Hunger;
+        game.HighestRank = data.HighestRank;
+        game.TributeArrears = data.TributeArrears;
         game.Touch();
         return game;
     }
 
+    private static void ValidateState(SaveData data, GameConfig config)
+    {
+        if (config.MapWidth is < 8 or > MapSize.MaxWidth || config.MapHeight is < 8 or > MapSize.MaxHeight ||
+            config.StartingYear is not > 0 || config.DaysPerWeek <= 0 || config.WeeksPerYear <= 0 ||
+            config.ResidentialPerCommercial <= 0 || config.ResidentialPerIndustrial <= 0 ||
+            config.AdministrationFullAt <= 2_000 ||
+            !Positive(config.SlowSecondsPerWeek) || !Positive(config.MediumSecondsPerWeek) ||
+            !Positive(config.FastSecondsPerWeek) || !Enum.IsDefined(config.Scenario) || !Enum.IsDefined(config.Rules))
+            throw new InvalidDataException("Invalid save configuration.");
+        if (!CityGame.IsValidCityName(data.CityName))
+            throw new InvalidDataException("Invalid city name: expected 1-16 characters.");
+        if (data.Week < 0 || data.Day < 0 || data.Day >= config.DaysPerWeek ||
+            !double.IsFinite(data.DayProgressSeconds) || data.DayProgressSeconds < 0 || !Enum.IsDefined(data.Speed))
+            throw new InvalidDataException("Invalid saved calendar or speed.");
+        if (data.Growth is null || data.Tally is null || data.Taxes is null ||
+            data.BuildingFootprints is null || data.ZoneRemovals is null || data.Funding is null)
+            throw new InvalidDataException("Save file has missing city state.");
+        if (!InRange(data.Taxes.Residential, 0, 0.3) || !InRange(data.Taxes.Commercial, 0, 0.3) ||
+            !InRange(data.Taxes.Industrial, 0, 0.3) || data.Funding.Length != ServiceKinds.Count ||
+            data.Funding.Any(level => !InRange(level, 0, 1)) || data.Loan < 0 || data.TributeArrears < 0 ||
+            data.OutbreakWeeksLeft is < 0 or > 52 || data.HighestRank is < -1 or > 4 ||
+            data.HighestMilestone < 0 || !InRange(data.GrainWeeks, 0, 200) ||
+            !InRange(data.HarvestQuality, 0.1, 2) || !InRange(data.Hunger, 0, 1) ||
+            data.Tally.Births < 0 || data.Tally.Deaths < 0 || data.Tally.MovedIn < 0 ||
+            data.Tally.MovedOut < 0 || data.Tally.Events < 0 ||
+            data.Growth.Homes < 0 || data.Growth.Shops < 0 || data.Growth.Factories < 0 ||
+            data.Growth.WeekHomes < 0 || data.Growth.WeekShops < 0 || data.Growth.WeekFactories < 0)
+            throw new InvalidDataException("Invalid saved city state.");
+
+        static bool Positive(double value) => double.IsFinite(value) && value > 0;
+        static bool InRange(double value, double min, double max) => double.IsFinite(value) && value >= min && value <= max;
+    }
+
     private static LayerData EncodeLayer<T>(byte[] layer, TypeRegistry<T> registry, int? noneValue) where T : RegisteredType
     {
-        var palette = registry.Select(t => t.Name).ToList();
+        var palette = new List<string>(registry.Count);
+        Span<byte> paletteIndexes = stackalloc byte[256];
+        foreach (var type in registry)
+        {
+            paletteIndexes[type.Id] = (byte)palette.Count;
+            palette.Add(type.Name);
+        }
         var bytes = new byte[layer.Length];
         for (int i = 0; i < layer.Length; i++)
         {
@@ -235,27 +252,35 @@ public static class SaveGameStore
             }
             else
             {
-                bytes[i] = (byte)palette.IndexOf(registry[layer[i]].Name);
+                bytes[i] = paletteIndexes[registry[layer[i]].Id];
             }
         }
 
         return new LayerData { Palette = palette, Data = Pack(bytes) };
     }
 
-    private static void DecodeLayer<T>(LayerData? layer, byte[] target, TypeRegistry<T> registry, string label, bool packed) where T : RegisteredType
+    private static void DecodeLayer<T>(LayerData? layer, byte[] target, TypeRegistry<T> registry, string label, bool allowNone = true) where T : RegisteredType
     {
         if (layer is null)
         {
             throw new InvalidDataException($"Save file is missing the {label} layer.");
         }
 
-        byte[] bytes = DecodeBytes(layer.Data, target.Length, label, packed);
+        byte[] bytes = DecodeBytes(layer.Data, target.Length, label);
 
         // Resolve each palette name once rather than once per cell.
-        var ids = layer.Palette.Select(name => registry.Find(name)?.Id ?? 0).ToArray();
+        if (layer.Palette is null || layer.Palette.Count > (allowNone ? 255 : 256))
+            throw new InvalidDataException($"Invalid {label} palette.");
+        var ids = new byte[layer.Palette.Count];
+        for (int i = 0; i < ids.Length; i++)
+        {
+            string? name = layer.Palette[i];
+            ids[i] = name is not null && registry.Find(name) is { } type
+                ? type.Id : throw new InvalidDataException($"Unknown {label} type '{name}'.");
+        }
         for (int i = 0; i < bytes.Length; i++)
         {
-            if (bytes[i] == NoneMarker)
+            if (allowNone && bytes[i] == NoneMarker)
             {
                 target[i] = 0;
                 continue;
@@ -266,30 +291,7 @@ public static class SaveGameStore
                 throw new InvalidDataException($"Corrupt {label} layer.");
             }
 
-            // Unknown terrain falls back to the base terrain (id 0); unknown features/buildings simply disappear.
             target[i] = ids[bytes[i]];
-        }
-    }
-
-    /// <summary>Saves from before road types existed have no such layer: every road is then a street.</summary>
-    private static void DecodeRoadTypes(LayerData? layer, GameMap map, bool packed)
-    {
-        if (layer is not null)
-        {
-            DecodeLayer(layer, map.RoadTypeLayer, map.Content.Roads, "road type", packed);
-        }
-
-        byte fallback = map.Content.Roads.Default.Id;
-        for (int i = 0; i < map.RoadLayer.Length; i++)
-        {
-            if (!map.RoadLayer[i])
-            {
-                map.RoadTypeLayer[i] = 0;
-            }
-            else if (map.RoadTypeLayer[i] == 0)
-            {
-                map.RoadTypeLayer[i] = fallback;
-            }
         }
     }
 
@@ -304,14 +306,9 @@ public static class SaveGameStore
         return Convert.ToBase64String(output.ToArray());
     }
 
-    private static byte[] Unpack(string base64, bool packed, int expectedLength)
+    private static byte[] Unpack(string base64, int expectedLength)
     {
         byte[] raw = Convert.FromBase64String(base64);
-        if (!packed)
-        {
-            return raw;
-        }
-
         // Read at most one byte more than expected so a corrupt or malicious file cannot expand without bound.
         using var input = new DeflateStream(new MemoryStream(raw), CompressionMode.Decompress);
         var result = new byte[expectedLength + 1];
@@ -324,12 +321,12 @@ public static class SaveGameStore
         return result.AsSpan(0, total).ToArray();
     }
 
-    private static byte[] EncodeRoads(GameMap map)
+    private static byte[] EncodeFlags(bool[] flags)
     {
-        var bytes = new byte[map.RoadLayer.Length];
+        var bytes = new byte[flags.Length];
         for (int i = 0; i < bytes.Length; i++)
         {
-            bytes[i] = map.RoadLayer[i] ? (byte)1 : (byte)0;
+            bytes[i] = flags[i] ? (byte)1 : (byte)0;
         }
 
         return bytes;
@@ -359,7 +356,7 @@ public static class SaveGameStore
 
         return bytes;
     }
-    private static byte[] DecodeBytes(string? base64, int expectedLength, string label, bool packed)
+    private static byte[] DecodeBytes(string? base64, int expectedLength, string label)
     {
         if (base64 is null)
         {
@@ -369,7 +366,7 @@ public static class SaveGameStore
         byte[] bytes;
         try
         {
-            bytes = Unpack(base64, packed, expectedLength);
+            bytes = Unpack(base64, expectedLength);
         }
         catch (Exception ex) when (ex is FormatException or InvalidDataException)
         {
@@ -386,80 +383,79 @@ public static class SaveGameStore
 
     private sealed class SaveData
     {
-        public int Version { get; set; }
+        public required int Version { get; set; }
 
-        public GameConfig? Config { get; set; }
+        public required GameConfig Config { get; set; }
 
-        public int Money { get; set; }
-        public string? CityName { get; set; }
+        public required int Money { get; set; }
+        public required string CityName { get; set; }
 
-        public int Week { get; set; }
+        public required int Week { get; set; }
 
-        public int Day { get; set; }
+        public required int Day { get; set; }
 
-        public double DayProgressSeconds { get; set; }
+        public required double DayProgressSeconds { get; set; }
 
-        public ulong RngState { get; set; }
+        public required ulong RngState { get; set; }
 
-        public GameSpeed Speed { get; set; }
+        public required GameSpeed Speed { get; set; }
 
-        public bool Paused { get; set; }
+        public required bool Paused { get; set; }
 
-        public GrowthState? Growth { get; set; }
+        public required GrowthState Growth { get; set; }
 
-        public WeekReport? LastReport { get; set; }
+        public required WeekTallyState Tally { get; set; }
 
-        public int HighestMilestone { get; set; }
+        public required WeekReport? LastReport { get; set; }
 
-        public bool GuideDismissed { get; set; }
+        public required int HighestMilestone { get; set; }
 
-        public Dictionary<int, ZoneRemoval>? ZoneRemovals { get; set; }
-        public List<CellRect>? BuildingFootprints { get; set; }
+        public required bool GuideDismissed { get; set; }
 
-        /// <summary>Absent in the earliest saves, which stored raw base64 layers.</summary>
-        public string? Compression { get; set; }
+        public required Dictionary<int, ZoneRemoval> ZoneRemovals { get; set; }
+        public required List<CellRect> BuildingFootprints { get; set; }
 
-        public TaxRates? Taxes { get; set; }
+        public required string Compression { get; set; }
 
-        /// <summary>Absent in saves made before the full city rules.</summary>
-        public string? Engine { get; set; }
+        public required TaxRates Taxes { get; set; }
 
-        public double[]? Funding { get; set; }
+        public required double[] Funding { get; set; }
 
-        public int Loan { get; set; }
+        public required int Loan { get; set; }
 
-        public int OutbreakWeeksLeft { get; set; }
+        public required int OutbreakWeeksLeft { get; set; }
 
-        /// <summary>Absent in saves made before grain and harvests.</summary>
-        public double? GrainWeeks { get; set; }
+        public required double GrainWeeks { get; set; }
 
-        public double? HarvestQuality { get; set; }
+        public required double HarvestQuality { get; set; }
 
-        public double? Hunger { get; set; }
+        public required double Hunger { get; set; }
 
-        public int? HighestRank { get; set; }
+        public required int HighestRank { get; set; }
 
-        public int? TributeArrears { get; set; }
+        public required int TributeArrears { get; set; }
 
-        public LayerData? Terrain { get; set; }
+        public required LayerData Terrain { get; set; }
 
-        public LayerData? Features { get; set; }
+        public required LayerData Features { get; set; }
 
-        public LayerData? Buildings { get; set; }
+        public required LayerData Buildings { get; set; }
 
-        public string? Roads { get; set; }
+        public required string Roads { get; set; }
 
-        public LayerData? RoadTypes { get; set; }
+        public required string PlayerRoads { get; set; }
 
-        public string? Zones { get; set; }
+        public required LayerData RoadTypes { get; set; }
 
-        public string? Households { get; set; }
+        public required string Zones { get; set; }
+
+        public required string Households { get; set; }
     }
 
     private sealed class LayerData
     {
-        public List<string> Palette { get; set; } = [];
+        public required List<string> Palette { get; set; }
 
-        public string? Data { get; set; }
+        public required string Data { get; set; }
     }
 }
