@@ -6,13 +6,14 @@ public partial class CitySplit : HSplitContainer
 {
     public const int MinimumSidebar = 280, MaximumSidebar = 480, DefaultSidebar = 280;
     public float SidebarWidth => GetChild<Control>(1).Size.X;
-    private const int Divider = 8;
+    public const int Divider = TerminalFrame.Inset;
 
     public override void _Ready()
     {
         DraggerVisibility = DraggerVisibilityEnum.Hidden;
         MouseDefaultCursorShape = CursorShape.Hsize;
         AddThemeConstantOverride("separation", Divider);
+        SplitOffsets = [-DefaultSidebar];
         Resized += UpdateBounds;
         UpdateBounds();
     }

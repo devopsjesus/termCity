@@ -12,9 +12,9 @@ public static class GuideContent
     /// <summary>Longest line, in characters, of any page: the dialog is sized to fit it.</summary>
     public const int MaxLineLength = 100;
 
-    public static IReadOnlyList<PromptTab> Tabs(CityGame game) =>
+    public static IReadOnlyList<PromptTab> Tabs(CityGame game, bool showNextStep = true) =>
     [
-        new("Start", Start(game)),
+        new("Start", Start(game, showNextStep)),
         new("Zones", Zones(game)),
         new("Roads", Roads(game)),
         new("Services", Services(game)),
@@ -24,16 +24,16 @@ public static class GuideContent
         new("Glossary", Glossary(game)),
     ];
 
-    private static string Join(params string[] blocks) => string.Join("\n\n", blocks);
+    private static string Join(params string[] blocks) => string.Join("\n\n", blocks.Where(block => block.Length > 0));
 
     private static string Table(TableColumn[] columns, IEnumerable<string[]> rows) =>
         TextTable.Text(columns, rows.Select(r => (IReadOnlyList<string>)r).ToArray());
 
-    private static string Start(CityGame game)
+    private static string Start(CityGame game, bool showNextStep)
     {
         int homes = game.Config.MinResidentialCells;
         return Join(
-            "YOUR NEXT STEP\n" + CityProgression.NextStep(game),
+            showNextStep ? "YOUR NEXT STEP\n" + CityProgression.NextStep(game) : "",
             "A town grows when people have somewhere to live, work to do, a road to reach both and\n" +
             "the services they need. You steer it by marking land, laying roads and building.",
             Table(["STEP", "KEYS", "WHAT TO DO"],
@@ -47,7 +47,7 @@ public static class GuideContent
             ]),
             "CITY GREW!\n" +
             "  Population milestones permanently unlock larger service buildings, even if people leave.\n" +
-            "  Dismiss the sidebar tip to turn off coaching, not milestones. F6 can enable it again.\n" +
+            "  Dismiss the Start-tab tip to turn off coaching, not milestones. F6 can enable it again.\n" +
             "  F7 lists every milestone and its unlocks. New-city-size announcements pause the clock.",
             "A SUSTAINABLE START\n" +
             "  Keep at least 8,000g to replace a lost Woodlot, plus money for winter grain and tribute.\n" +

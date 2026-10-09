@@ -1,5 +1,6 @@
 using TermCity.Core.Buildings;
 using TermCity.Core.Simulation;
+using TermCity.Core.World;
 
 namespace TermCity.Core.Rendering;
 
@@ -55,6 +56,19 @@ public static class CityReport
         return text;
     }
 
+    public static string ZoneDetails(CityGame game, ZoneType zone)
+    {
+        var info = Zones.Get(zone);
+        var count = game.Stats.For(zone);
+        return $"{info.Letter} {info.Name}\nDemand: {game.Demand.For(zone):P0}\n" +
+            $"Built: {count.Filled:N0} cells\nZoned: {count.Zoned:N0} lots\n" +
+            $"Road-served: {count.Served:N0} lots\nWithout road: {count.Zoned - count.Served:N0} lots\n" +
+            $"Awaiting removal: {count.AwaitingRemoval:N0} buildings";
+    }
+
+    public static string ZoneSummary(CityGame game) =>
+        "ZONES\n\n" + string.Join("\n\n", Zones.Placeable.Select(zone => ZoneDetails(game, zone)));
+
     /// <summary>Every complaint, coverage figure and finance line, for the city health report.</summary>
     public static string Health(CityGame game)
     {
@@ -82,6 +96,8 @@ public static class CityReport
         {
             lines.Add("Complaints: " + string.Join(", ", ind.Complaints.Select(c => $"{c.Reason} (-{c.Points:0})")));
         }
+
+        lines.Add(ZoneSummary(game));
 
         foreach (var e in game.Events.TakeLast(5).Reverse())
         {

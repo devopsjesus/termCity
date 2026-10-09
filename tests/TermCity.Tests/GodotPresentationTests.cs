@@ -18,19 +18,48 @@ public class GodotPresentationTests
     {
         var grid = new TerminalGrid();
         grid.Resize(125, 71);
-        Assert.Equal(10, grid.Columns);
-        Assert.Equal(3, grid.Rows);
+        Assert.Equal(11, grid.Columns);
+        Assert.Equal(4, grid.Rows);
         Assert.True(grid.TryCell(12, 22, out var cell));
         Assert.Equal(new Pos(1, 1), cell);
         Assert.True(grid.TryCell(119, 65, out cell));
         Assert.Equal(new Pos(9, 2), cell);
         Assert.False(grid.TryCell(-1, 0, out _));
         Assert.False(grid.TryCell(0, -1, out _));
-        Assert.False(grid.TryCell(120, 0, out _));
-        Assert.False(grid.TryCell(0, 66, out _));
+        Assert.True(grid.TryCell(124, 70, out cell));
+        Assert.Equal(new Pos(10, 3), cell);
+        Assert.False(grid.TryCell(125, 0, out _));
+        Assert.False(grid.TryCell(0, 71, out _));
         Assert.False(grid.TryCell(float.NaN, 0, out _));
         Assert.False(grid.TryCell(0, float.PositiveInfinity, out _));
         Assert.Throws<ArgumentOutOfRangeException>(() => grid.Resize(-1, 0));
+    }
+
+    [Theory]
+    [InlineData(766, 533, 1, 768, 550)]
+    [InlineData(766, 533, 2, 768, 572)]
+    [InlineData(120, 66, 1, 120, 66)]
+    [InlineData(120, 88, 2, 120, 88)]
+    public void CellBuffersCoverTheEntireViewportIncludingClippedEdges(
+        float width, float height, int scale, int expectedWidth, int expectedHeight)
+    {
+        var grid = new TerminalGrid();
+        grid.Resize(width, height, scale);
+        Assert.Equal(expectedWidth, grid.Columns * grid.PixelWidth);
+        Assert.Equal(expectedHeight, grid.Rows * grid.PixelHeight);
+        Assert.InRange(expectedWidth - width, 0, grid.PixelWidth - 1);
+        Assert.InRange(expectedHeight - height, 0, grid.PixelHeight - 1);
+        Assert.True(grid.TryCell(width - 1, height - 1, out _));
+        Assert.False(grid.TryCell(width, height - 1, out _));
+    }
+
+    [Fact]
+    public void FittedMapDimensionsRejectInvalidGeometry()
+    {
+        var grid = new TerminalGrid();
+        Assert.Throws<ArgumentOutOfRangeException>(() => grid.Resize(float.NaN, 100));
+        Assert.Throws<ArgumentOutOfRangeException>(() => grid.Resize(100, -1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => grid.Resize(100, 100, 3));
     }
 
     [Theory]
@@ -67,7 +96,7 @@ public class GodotPresentationTests
             }
         }
         Assert.Equal(grid.Columns, session.ViewWidth);
-        Assert.Equal(grid.Rows, session.ViewHeight);
+        Assert.Equal(Math.Max(1, 66 / grid.PixelHeight), session.ViewHeight);
     }
 
     [Fact]

@@ -73,10 +73,28 @@ dotnet test tests/TermCity.Tests/TermCity.Tests.csproj --filter 'Category=Playth
 
 See [the playtest report](PLAYTEST.md) for measured game-time equivalents and balance decisions.
 
-`Main` connects session events to desktop controls. `TerminalMap` and `TerminalGrid` implement the
-terminal-styled cell display; they are Godot presentation components, not a console frontend.
+`Main` connects session events to desktop controls. It remains one Godot `Control`, attached through
+[Main.cs](../godot/Main.cs) in [Main.tscn](../godot/Main.tscn), with cohesive partial files:
+
+| File | Responsibility |
+|---|---|
+| [Main.cs](../godot/Main.cs) | Startup, frame processing, session notifications, focus, shutdown and smoke-test orchestration |
+| [Main.Audio.cs](../godot/Main.Audio.cs) | Streaming music, placement sounds, volume/mute controls and audio resource cleanup |
+| [Main.Display.cs](../godot/Main.Display.cs) | Preferences, font/window sizing, layout, HUD/status refresh and city-name editing |
+| [Main.Dialogs.cs](../godot/Main.Dialogs.cs) | Menus, modal construction/sizing, tabbed prompts, choice help and dialog keyboard navigation |
+| [Main.Input.cs](../godot/Main.Input.cs) | Gameplay keys, pointer/trackpad/pinch gestures, selection, panning and edge scrolling |
+| [Main.Effects.cs](../godot/Main.Effects.cs) | Effect setup, level/celebration controls and redraw scheduling |
+
+Fields live beside their owning behavior. The partials share the same scene instance and private state;
+they do not introduce extra nodes, controllers, subscriptions or a second lifecycle.
+`LoadPreferences`/`SavePreferences` handle the shared display/audio settings file.
+
+`TerminalMap` and `TerminalGrid` implement the terminal-styled cell display; they are Godot presentation
+components, not a console frontend.
 `CityPanel`, `CityMinimap`, `CitySplit` and `TerminalFrame` provide sidebar sections, overview,
-bounded divider resizing and shared double-border rendering.
+bounded divider resizing and closed double-border rendering. `SidebarReport` supplies the reduced
+City table and semantic colors without a Godot dependency. `CityReport.ZoneDetails` is shared by
+Demand hover tooltips, weekly/growth reports and the full-rules health report.
 
 ## World and content
 
@@ -151,6 +169,11 @@ orthogonally connected road paths.
 These are hand-shaped, north-up regional approximations, not GIS/current land-use datasets.
 The layouts include city-specific coastlines/rivers/hills/parks and road-served occupied R/C/I
 districts. They keep the medieval setting's vocabulary and economy. Households use independent scenario RNG stages.
+Scenario road strokes cross water only when the crossing has land approaches at both ends.
+Water-starting/ending road spurs are skipped, street grids stay on buildable land and cannot
+branch directly onto bridge water cells. Chicago and St. Louis highway bends stay off their rivers,
+while deliberate bridges (including Golden Gate and Bay Bridge) remain. These rules apply to
+new/restarted scenarios; loading does not rewrite a saved city's roads.
 Scenario generation first zones districts, then reserves complete service footprints on clear buildable
 land, then populates the remaining district plots. Utility capacity is planned against those future
 occupied plots. Existing services and road beds are not overwritten.
@@ -208,7 +231,10 @@ Zoom levels are -2 (0.25x), -1 (0.5x), 0 (1x), and +1 (2x). Negative levels samp
 of four or two cells. At +1, `TerminalGrid` doubles **both** pixel dimensions and `TerminalMap`
 doubles glyph size; logical cells are never horizontally duplicated.
 
-`Grid.Fill` sets the session viewport using actual visible-cell counts. Pixel hit testing uses
+`Grid.Fill` sets the session viewport using fully visible-cell counts so keyboard navigation stays
+on whole cells. Its buffer includes partial edge cells to paint the entire viewport, clipped by
+`TerminalMap`. Pixel hit testing rejects coordinates beyond the actual viewport, including unused
+parts of clipped cells, and uses
 `PixelWidth`/`PixelHeight`; `TerminalMap.ZoomBy` remaps the world anchor after resizing so pointer
 or center zoom stays anchored. Coarse cameras/selections align to whole sampled blocks.
 
@@ -218,7 +244,7 @@ Session prompts/previews suspend simulation. Autosave still tracks elapsed real 
 
 ## Godot UI and input
 
-The default window is 1440x900 with a 640x480 base minimum. Display font size defaults to 20,
+The default window is 1440x900 with a 640x780 base minimum, capped to the usable desktop. Display font size defaults to 20,
 supports 16-28, and sets shared content scale `font size / 16`. Window sizing stays within usable
 desktop bounds. F3 opens live font controls with OK/RESET.
 
@@ -233,12 +259,30 @@ stationary right edge; an overlay slot leaves branding and header geometry uncha
 pauses the clock and restores its previous state on commit/cancel. Invalid names remain editable
 with a visible error.
 
-`TerminalFrame` draws double outlines with a 12-pixel inset and detects neighboring frames to
-share/intersect dividers. Popups fit the longest title/choice plus five `M` glyph-widths per side,
+`TerminalFrame` draws two closed rectangular outlines inside its own bounds, with square corners and
+a shared 12-pixel content inset. Neighboring frames are separated instead of extending edges into
+crossing or T-shaped joins. The map fills its expanding frame; partial edge cells are clipped rather
+than snapping the frame to cell widths. This keeps all four map insets exactly equal and sidebar
+dragging continuous. `CitySplit.Divider` matches the map inset, so the external gap is also 12 pixels.
+Popups fit the longest title/choice plus five `M` glyph-widths per side,
 with inner vertical margins of 2 pixels. Deferred minimum-size changes re-fit wrapped content
 and keep smaller dialogs from retaining stale heights. Oversized content scrolls.
 
-All sidebar sections stay open. `CitySplit` supports an 8-pixel drag area, 280-pixel sidebar minimum
+The non-scrolling sidebar contains Minimap, Demand and City, with black double-white header cells.
+An enclosing `SidebarFrame` retains the full-height double-white outline and the same 12-pixel
+content inset as the map frame. The divider gap is measured between the two outer frames.
+City uses colored native cells without a Metric/Value heading row. It omits population, tax/budget,
+standing and employment rows duplicated elsewhere. Demand tooltips contain all per-zone counts;
+keyboard users get the identical formatter through F7, F8 and the full-rules health report.
+City body text targets 16 logical pixels (three larger than the previous body setting); section
+headers stay at 18. Constrained layouts adapt the body size without changing the header font.
+`CityPanel` prioritizes an aspect-correct minimap at the full content width, adjusting text spacing
+and using paired City rows when height is constrained. Minimap and Demand remain full-width blocks.
+Width/height/row-count caching avoids redundant fitting. Screen-constrained layouts preserve the
+minimap's shape and fit the largest overview that leaves the remaining details visible.
+The Guide sidebar section is removed; optional next-step coaching is on the F6 Start tab, and its
+existing dismiss/enable controls and saved preference still work there.
+`CitySplit` supports a 12-pixel drag area, 280-pixel sidebar minimum
 and 480-pixel maximum, reduced to retain 320 pixels for the map where possible.
 Esc > Resize sidebar offers 12-pixel steps via focused minus/plus buttons.
 Arrows navigate dialog buttons; Space/Enter activates the focused button. Text-field dialogs retain

@@ -106,6 +106,10 @@ public class SanFranciscoTests
         Assert.True(map.HasRoad(strait.X, strait.Y));
         Assert.False(map.TerrainAt(strait.X, strait.Y).Buildable);
         Assert.True(game.Network.IsConnected(map, strait.X, strait.Y));
+        var bayBridge = At(map, 65, 55);
+        Assert.Contains(new CellRect(bayBridge.X - 2, bayBridge.Y - 2, 5, 5).Cells(),
+            p => map.HasRoad(p.X, p.Y) && !map.TerrainAt(p.X, p.Y).Buildable &&
+                game.Network.IsConnected(map, p.X, p.Y));
     }
 
     [Fact]

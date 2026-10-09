@@ -107,7 +107,7 @@ menu, placement preview, quote and final action all use the same permanent unloc
 Existing saves retain their achieved population milestones and normalize current population on load;
 already-built services continue working even if they now have a placement gate.
 
-The sidebar guide follows road access, supplies, first occupied homes, employment, finances, happiness
+The F6 guide's Start-tab advice follows road access, supplies, first occupied homes, employment, finances, happiness
 complaints, space for expansion and the next milestone. Dismissing it changes only coaching, and
 F6 can enable it again. Unlock announcements and the F7 milestone list are always available.
 

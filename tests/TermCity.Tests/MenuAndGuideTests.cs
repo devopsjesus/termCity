@@ -87,6 +87,7 @@ public class MenuAndGuideTests
         Assert.Null(session.Prompt);
         session.ShowGuide();
         Assert.True(session.GuideVisible);
+        Assert.Contains("YOUR NEXT STEP", session.Prompt!.Tabs![0].Text);
         session.SelectPrompt(0);
         Assert.True(session.GuideVisible);
         session.ShowGuide();
@@ -95,10 +96,13 @@ public class MenuAndGuideTests
         Assert.False(session.GuideVisible);
         session.ShowGuide();
         Assert.False(session.GuideVisible);
+        Assert.DoesNotContain("YOUR NEXT STEP", session.Prompt!.Tabs![0].Text);
         Assert.Equal("Enable guide", session.Prompt!.Choices[1].Label);
         session.SelectPrompt(1);
         Assert.True(session.GuideVisible);
         Assert.False(session.Game.GuideDismissed);
+        session.ShowGuide();
+        Assert.Contains("YOUR NEXT STEP", session.Prompt!.Tabs![0].Text);
     }
 
     [Fact]

@@ -14,7 +14,7 @@ window/size/viewport_height=900
 window/size/window_width_override=1440
 window/size/window_height_override=900
 window/size/min_width=640
-window/size/min_height=480
+window/size/min_height=780
 
 [dotnet]
 project/assembly_name="TermCity.Godot"

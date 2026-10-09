@@ -106,7 +106,7 @@ playthroughs or the 199.55-minute successful-run total.
 
 Essential smaller services stay available from the start. Previously gated building population
 requirements round up to the next milestone. Existing placed services are not removed or disabled.
-Achievements are permanent across population decline and save/load. Turning off the sidebar guide
+Achievements are permanent across population decline and save/load. Turning off the F6 Start-tab advice
 does not affect gates or announcements; F6 can enable it again, and F7 always lists progress.
 
 ## Verification and reproduction

@@ -1,5 +1,6 @@
 using TermCity.Core.Buildings;
 using TermCity.Core.Persistence;
+using TermCity.Core.Rendering;
 using TermCity.Core.Roads;
 using TermCity.Core.Simulation;
 using TermCity.Core.Util;
@@ -537,14 +538,14 @@ public sealed partial class GameSession
         var choices = new List<SessionChoice> { new("Close", CancelPrompt, ["Return to the previous menu"]) };
         if (GuideVisible)
         {
-            choices.Add(new("Dismiss tip", DismissGuide, ["Hide the sidebar tip for good"]));
+            choices.Add(new("Dismiss tip", DismissGuide, ["Hide next-step advice on the Start tab"]));
         }
         else
         {
-            choices.Add(new("Enable guide", EnableGuide, ["Show the next-step sidebar tip"]));
+            choices.Add(new("Enable guide", EnableGuide, ["Show next-step advice on the Start tab"]));
         }
 
-        ShowTabbedPrompt("TermCity guide", GuideContent.Tabs(Game), tab, choices, GuideChoiceColumns);
+        ShowTabbedPrompt("TermCity guide", GuideContent.Tabs(Game, GuideVisible), tab, choices, GuideChoiceColumns);
     }
 
     public void DismissGuide()
@@ -570,6 +571,7 @@ public sealed partial class GameSession
             $"Week {report.Week}: income {Fmt.Money(report.Income)}\nNew homes {report.NewHouseholds}, stalls {report.NewCommercial}, workshops {report.NewIndustrial}";
         text += $"\nPopulation: {Game.Stats.Population:N0}\nHighest milestone: {Game.HighestMilestone:N0}";
         text += NextMilestone is { } next ? $"\nNext milestone: {next:N0} people" : "\nAll population milestones reached.";
+        text += "\n\n" + CityReport.ZoneSummary(Game);
         text += "\n\n" + string.Join("\n\n", CityProgression.Milestones.Select(m =>
             $"{(Game.HighestMilestone >= m.Population ? "[Reached]" : "[Locked]")} {m.Name}: {m.Population:N0} souls\n" +
             CityProgression.Unlocks(Game, m)));
@@ -582,13 +584,10 @@ public sealed partial class GameSession
         foreach (var zone in Zones.Placeable)
         {
             var diagnostic = GrowthDiagnostics.ForZone(Game, zone);
+            lines.Add(CityReport.ZoneDetails(Game, zone));
             lines.Add($"{Zones.Get(zone).Name}: {diagnostic.EligibleVacancies} road-served vacancies");
             lines.Add(diagnostic.Message);
-            int leaving = Game.Stats.For(zone).AwaitingRemoval;
-            if (leaving > 0)
-            {
-                lines.Add($"{leaving} unzoned building(s) awaiting removal.");
-            }
+            lines.Add("");
         }
 
         if (Game.Paused)
