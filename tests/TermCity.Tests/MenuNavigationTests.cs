@@ -143,6 +143,7 @@ public class MenuNavigationTests
     public void CancellingUndoReturnsToItsParent()
     {
         var session = Session();
+        session.Game.Paused = true;
         session.PreviewRoad();
         Assert.True(session.ConfirmPreview().Success);
         session.ShowSessionMenu();

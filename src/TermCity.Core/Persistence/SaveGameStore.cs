@@ -9,6 +9,8 @@ using TermCity.Core.World;
 
 namespace TermCity.Core.Persistence;
 
+public sealed record SavedView(int CameraX, int CameraY, int ZoomLevel);
+
 /// <summary>
 /// JSON save files. Layers are stored as deflate-compressed, base64-encoded byte arrays; terrain, feature and building
 /// layers store names via a palette, independently of in-memory registry ordering.
@@ -29,7 +31,7 @@ public static class SaveGameStore
     public static string DefaultPath { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TermCity", "quicksave.json");
 
-    public static void Save(CityGame game, string path)
+    public static void Save(CityGame game, string path, SavedView? view = null)
     {
         string? directory = Path.GetDirectoryName(Path.GetFullPath(path));
         if (!string.IsNullOrEmpty(directory))
@@ -39,18 +41,21 @@ public static class SaveGameStore
 
         // Write to a temp file first so a crash mid-save cannot corrupt the previous save.
         string temp = path + ".tmp";
-        File.WriteAllText(temp, Serialize(game));
+        File.WriteAllText(temp, Serialize(game, view));
         File.Move(temp, path, overwrite: true);
     }
 
     public static CityGame Load(string path, GameContent? content = null) => Deserialize(File.ReadAllText(path), content);
+    public static CityGame Load(string path, out SavedView? view, GameContent? content = null) =>
+        Deserialize(File.ReadAllText(path), out view, content);
 
-    public static string Serialize(CityGame game)
+    public static string Serialize(CityGame game, SavedView? view = null)
     {
         var map = game.Map;
         var data = new SaveData
         {
             Version = CurrentVersion,
+            View = view,
             Config = game.Config,
             Money = game.Money,
             CityName = game.CityName,
@@ -89,7 +94,10 @@ public static class SaveGameStore
         return JsonSerializer.Serialize(data, Options);
     }
 
-    public static CityGame Deserialize(string json, GameContent? content = null)
+    public static CityGame Deserialize(string json, GameContent? content = null) =>
+        Deserialize(json, out _, content);
+
+    public static CityGame Deserialize(string json, out SavedView? view, GameContent? content = null)
     {
         SaveData data;
         try
@@ -198,6 +206,10 @@ public static class SaveGameStore
         game.HighestRank = data.HighestRank;
         game.TributeArrears = data.TributeArrears;
         game.Touch();
+        if (data.View is { } savedView && (savedView.CameraX < 0 || savedView.CameraX >= map.Width ||
+            savedView.CameraY < 0 || savedView.CameraY >= map.Height || savedView.ZoomLevel is < -2 or > 1))
+            throw new InvalidDataException("Saved camera position or zoom is invalid.");
+        view = data.View;
         return game;
     }
 
@@ -383,6 +395,9 @@ public static class SaveGameStore
 
     private sealed class SaveData
     {
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public SavedView? View { get; set; }
+
         public required int Version { get; set; }
 
         public required GameConfig Config { get; set; }

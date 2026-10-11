@@ -21,6 +21,7 @@ public static class GuideContent
         new("Population", Population(game)),
         new("Happiness", Happiness()),
         new("Economy", Economy()),
+        new("Milestones", Milestones(game)),
         new("Glossary", Glossary(game)),
     ];
 
@@ -48,7 +49,7 @@ public static class GuideContent
             "CITY GREW!\n" +
             "  Population milestones permanently unlock larger service buildings, even if people leave.\n" +
             "  Dismiss the Start-tab tip to turn off coaching, not milestones. F6 can enable it again.\n" +
-            "  F7 lists every milestone and its unlocks. New-city-size announcements pause the clock.",
+            "  F6, Milestones lists every size and its unlocks. New-city-size announcements pause the clock.",
             "A SUSTAINABLE START\n" +
             "  Keep at least 8,000g to replace a lost Woodlot, plus money for winter grain and tribute.\n" +
             "  Fuel and water work anywhere by a connected road; local care must be close to homes.\n" +
@@ -58,13 +59,38 @@ public static class GuideContent
             "  When space runs short, extend short tracks into open land. Leave plots for care, or\n" +
             "  dezone empty lots (U) to fit it. Do not wait for every poorly served vacant home to fill.",
             "SELECTING\n" +
-            "  Click a cell, or drag a box. Shift+click grows the selection to the cell you click.\n" +
+            "  Click a cell, or drag a box. Shift+click resizes from the original selection anchor.\n" +
             "  Ctrl/Alt+drag starts a new box. Shift+arrows (or S, arrows, S) select by keyboard.\n" +
             "  Every action (zone, road, build, demolish) applies to the selection or the cursor cell.",
             "DIALOGS\n" +
             "  Underlined letters pick a row, Up/Down move, Enter selects, Esc closes. Shift+click or\n" +
             "  Shift+Enter opens option help on the right without activating it. Shift+letter still selects.\n" +
             "  Left/Right (or a click) changes guide tabs. F1 is the short list of controls.");
+    }
+
+    private static string Milestones(CityGame game)
+    {
+        string text = "CITY SIZE AND MILESTONES\n\n" +
+            "Population milestones permanently unlock buildings, even if the population later falls.\n" +
+            "The Weekly Report shows your current size and progress toward the next size.\n\n" +
+            string.Join("\n\n", CityProgression.Milestones.Select(m =>
+                $"{(game.HighestMilestone >= m.Population ? "[Reached]" : "[Locked]")} {m.Name}: {m.Population:N0} souls\n" +
+                $"Gold grant: {Fmt.Money(CityProgression.GoldBonus(game, m))}\n" +
+                CityProgression.Unlocks(game, m) + "\n" + m.Advice));
+        var lines = new List<string>();
+        foreach (string line in text.Split('\n'))
+        {
+            string remaining = line;
+            while (remaining.Length > MaxLineLength)
+            {
+                int split = remaining.LastIndexOf(' ', MaxLineLength);
+                if (split < 1) split = MaxLineLength;
+                lines.Add(remaining[..split]);
+                remaining = remaining[split..].TrimStart();
+            }
+            lines.Add(remaining);
+        }
+        return string.Join("\n", lines);
     }
 
     public static string Glossary(CityGame game)
@@ -238,7 +264,7 @@ public static class GuideContent
             "WHEN IT STALLS\n" +
             "  Under happiness 32 nobody new arrives. Under 42 families leave (so do many if over 12%\n" +
             "  are jobless); under 40 an empty home is abandoned.\n" +
-            "  The City health report (Esc, Health) names the top complaint; fix that one first.",
+            "  The City health report (Esc, City management, Health) names the top complaint; fix that one first.",
             "RANK\n" +
             "  Hamlet, Village (120), Market Town (800), Borough (5,000), City (25,000). Each rank lifts\n" +
             "  shop and workshop tithes by 3%. A market (Cross or Guildhall) must cover the town for\n" +
@@ -254,7 +280,7 @@ public static class GuideContent
             ["No water", "25", "Town wells; an aqueduct on a shore"],
             ["Unemployment", "45 x (rate - 6%)", "Zone more markets and craftworks"],
             ["Traffic", "up to 18", "Better roads, a second route"],
-            ["Fire, health, learning", "up to 12, 14, 9", "Fire watch, apothecary, chantry school"],
+            ["Fire, health, learning", "up to 12, 14, 9", "Fire Watch, apothecary, chantry school"],
             ["Greens", "up to 8", "Village green or tavern"],
             ["Crime", "0.28 x felt crime", "Watch house, sheriff; greens and faith help"],
             ["Smog", "scaled by smoke", "Fewer smoky works, more greens, woodlots not charcoal"],
@@ -275,7 +301,7 @@ public static class GuideContent
         "  Outgoings are upkeep of services and roads, loan interest and the reeve's administration.",
         "  Roads already on the map have no weekly upkeep; you maintain every road you build.\n" +
         "  Grain purchases, tribute and raid losses also take gold; keep a reserve beyond weekly upkeep.",
-        "BUDGET (Esc, Budget)\n" +
+        "BUDGET (Esc, City management, Budget)\n" +
         "  Select a service to step its funding down by quarters: half funding gives about two thirds of\n" +
         "  the benefit. Taxes above the fair rate cost happiness. Loans: up to 40 weeks of income at\n" +
         "  0.2% a week. Fuel and water are always paid in full.",

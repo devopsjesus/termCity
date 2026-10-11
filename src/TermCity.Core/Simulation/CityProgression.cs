@@ -3,10 +3,23 @@ using TermCity.Core.Buildings;
 namespace TermCity.Core.Simulation;
 
 public sealed record CityMilestone(int Population, string Name, string Advice);
+public sealed record CitySizeProgress(string CurrentName, string? NextName, int Population, int From, int? Target)
+{
+    public double Fraction => Target is { } target
+        ? Math.Clamp((Population - From) / (double)(target - From), 0, 1) : 1;
+}
 
 /// <summary>Permanent city-size achievements, independent of the optional guide.</summary>
 public static class CityProgression
 {
+    public static CitySizeProgress SizeProgress(CityGame game)
+    {
+        var current = Milestones.LastOrDefault(m => m.Population <= game.HighestMilestone);
+        var next = Milestones.FirstOrDefault(m => m.Population > game.HighestMilestone);
+        return new(current?.Name ?? "Settlement", next?.Name, game.Stats.Population,
+            current?.Population ?? 0, next?.Population);
+    }
+
     public static IReadOnlyList<CityMilestone> Milestones { get; } = Array.AsReadOnly(new[]
     {
         new CityMilestone(100, "Hamlet", "Keep jobs growing with homes; add local care as the weekly surplus allows."),
@@ -24,6 +37,20 @@ public static class CityProgression
     public static bool IsUnlocked(CityGame game, BuildingType building) =>
         building.MinPopulation <= 0 || Math.Max(game.HighestMilestone, game.Stats.Population) >= RequiredPopulation(building);
 
+    public static int GoldBonus(CityGame game, CityMilestone milestone)
+    {
+        long bonus = 0;
+        foreach (var size in Milestones.Where(size => size.Population <= milestone.Population))
+        {
+            long buildingCosts = game.Map.Content.Buildings
+                .Where(building => building.PlayerPlaceable && building.MinPopulation > 0 &&
+                    RequiredPopulation(building) == size.Population)
+                .OrderBy(building => building.Cost).Take(2).Sum(building => (long)building.Cost);
+            bonus = Math.Max(bonus, Math.Max(buildingCosts, size.Population * 5L));
+        }
+        return checked((int)bonus);
+    }
+
     public static string Unlocks(CityGame game, CityMilestone milestone)
     {
         var names = game.Map.Content.Buildings
@@ -36,7 +63,7 @@ public static class CityProgression
 
     public static string Announcement(CityGame game, IEnumerable<CityMilestone> milestones) =>
         string.Join("\n\n", milestones.Select(m =>
-            $"City Grew! {m.Name} - {m.Population:N0} souls\n{Unlocks(game, m)}\n{m.Advice}"));
+            $"City Grew! {m.Name} - {m.Population:N0} souls\nGold grant: {Fmt.Money(GoldBonus(game, m))}\n{Unlocks(game, m)}\n{m.Advice}"));
 
     public static string NextStep(CityGame game)
     {
@@ -68,7 +95,7 @@ public static class CityProgression
             return "7. Save for a Motte and Bailey (14,000g): settlers, defence and denser homes at 500 souls.";
         var next = Milestones.FirstOrDefault(m => m.Population > game.HighestMilestone);
         return next is null
-            ? "Great City achieved! Keep supplies, jobs and local services in step. F7 reviews all unlocks."
-            : $"Next: {next.Name}, {next.Population:N0} souls. Expand homes, jobs, supplies and care. F7: unlocks.";
+            ? "Great City achieved! Keep supplies, jobs and local services in step. F6: Milestones reviews unlocks."
+            : $"Next: {next.Name}, {next.Population:N0} souls. Expand homes, jobs, supplies and care. F6: Milestones.";
     }
 }

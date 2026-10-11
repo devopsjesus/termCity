@@ -100,18 +100,18 @@ For repeated small/medium/large playthrough results and balance refinements, see
 Press **F6** (or Esc > Guide) for the GUIDE, a tabbed dialog (Start, Zones, Roads, Services, Population, Happiness,
 Economy; Left/Right or a click switches tab) that explains how each thing you place drives the town's population.
 **F1** is only the short table of controls. Placing a zone, road or building makes a soft click-clack keyboard sound
-(it is silenced with **Esc > Sound**, and when the window is unfocused).
-**Esc > Audio controls** provides separate Music and Sound volume sliders (0-100%) and mute buttons.
+(it is silenced through **Esc > GAME MENU**, and when the window is unfocused).
+**Esc > GAME MENU** provides inline MUSIC and SOUND volume sliders (0-100%) and speaker mute buttons.
 New audio preferences default to 70% music and 60% sound; existing saved volume choices are retained.
 Muting retains each volume setting; the controls are saved between runs. Music continues during
 gameplay pauses and dialogs, but pauses when the window loses focus.
 Population milestones can trigger decorative confetti bursts, not damage or disasters.
-They are off by default; **Esc > Celebrations** toggles them independently of other visual effects.
+They are off by default. Effects and Celebrations are not shown in the game menu.
 
 ### Services, budget and the full city engine
 
 New games run the full rules: homes and businesses need **power and water** (build plants, pumps and towers), residents
-want a **fire watch, a sheriff, an apothecary, a chantry school and a village green** as the town grows, and a lord's
+want a **Fire Watch, a sheriff, an apothecary, a chantry school and a village green** as the town grows, and a lord's
 **castle** to keep the peace. People must be fed: the harvest sets the grain in store, a bad year brings famine, and
 plague, raiders and fires are real dangers. Jobs matter and the treasury (in gold) has to balance, with the crown's
 tribute due each Michaelmas. Open **City menu > Budget, taxes and loans** to set service funding, tithes and loans, and
@@ -135,6 +135,27 @@ Roads generated with the map have no weekly upkeep. Roads the player builds cost
 per cell each week at full funding for dirt tracks, cobbled roads, and King's Roads respectively.
 Road/building menus include registered player-placeable types. Service menus show each building's
 footprint: a Sheriff's Hall occupies 2x1 cells, a Parish Church 2x2, and a Castle 4x3.
+The left icon sidebar opens Roads or an individual service category. Choose a road or building
+to see its icon and name, its full description, and a full-width statistics/effects
+details table below it. Cost and Upkeep appear first; Does and Placement rows are
+omitted. Cost shows only the gold amount and Footprint only the dimensions.
+Click another sidebar icon to switch the open catalog directly.
+Submenus open at the map's top-left. Building choices have enlarged names and icons;
+statistics/effects and descriptions use tightly padded bordered tables.
+The game menu, quit confirmation, guide, and other regular dialogs remain centered
+on the map, adjusted to stay on screen when space is limited.
+The **Add** button, with green text on a gray background, starts building placement or road-line drawing on the map.
+Building placement hides the yellow cursor highlight, leaving only green/red placement indicators.
+The icon rail has one shared double-line outer border and a single white outline around each icon.
+Buildings are listed vertically in single-bordered choices sized to fit their names,
+with one enclosing single-white border around the complete list,
+ordered by unlock progression then cost, with the first entry's details shown immediately.
+Statistics labels retain the width of the longest label. Colored catalog section headers use
+single-white borders.
+The description text has one enclosing box without a header; the details table
+also has no separate heading and uses uniform thin white lines.
+Locked buildings show their unlock requirements and cannot be added. **Cancel**, **Esc**, or
+clicking outside the catalog closes it without building or spending gold.
 Larger buildings fill their footprint with type-specific ASCII art at normal and close zoom,
 including roofs, walls, church crosses, aqueduct arches and castle battlements.
 Coarse zoom uses the representative building glyph.
@@ -147,32 +168,81 @@ including during valid placement previews. Selecting any cell of a building's fo
 its ranges; moving the selection away hides them. Their radii match the simulation's reach and scale with zoom.
 The rings are translucent white; fully opaque glyphs beneath each source's outermost circle
 identify its effects, side by side for multiple effects.
-Terminal cells are taller than they are wide, so a circular cell-distance range appears elliptical.
+Range rings are drawn as screen-space circles using the horizontal cell scale.
+Gameplay coverage still uses circular distance in map cells; rectangular cells mean
+the visual circle is not an exact outline of every affected cell.
 
 Placement previews show valid/skipped cells and the price. **Enter/Y** confirms and **Esc/N**
 cancels; insufficient funds leave the city unchanged. **T** starts a straight street line:
 arrows or dragging move its endpoint while the preview remains active.
 
-Undo restores a **whole-city snapshot**, not just the selected cells. It requires confirmation
-and is available while paused or for one game week after the action. Cancelled/failed actions do
-not replace the undo slot. New/load clears it.
+Undo keeps the last **10 successful placement, zoning, dezone and demolition actions**.
+Each confirmed undo restores a **whole-city snapshot**, not just selected cells, and
+is available only while paused. Failed/cancelled actions do not consume history;
+new/load clears it. Use **Command+Z on macOS** or **Ctrl+Z elsewhere**.
+Building catalogs show meaningful fuel, water, grain, resident or job capacities
+under the choices and in their details, alongside costs and upkeep.
+Area services and pollution have full strength within their listed radius, then
+fade smoothly to zero at 125% of that radius. The range overlay follows the same pattern.
 
 ### Calendar and economy
 
 New cities begin in the current local year. Saves retain their starting year.
 A year has 52 weeks and a week has 7 days.
+The date header uses ordinal weeks such as **Week the 1st** and **Week the 22nd**.
+The week comes first, followed by **AD** and the year (e.g. **Week the 17th AD 1289**).
+Desktop new maps start at approximately the current real-world week (January-based
+seven-day blocks, capped at week 52), then advance with gameplay. Loaded saves retain their date.
+Padded week labels and reserved header slots keep changing values from shifting the layout.
+Feast weeks instead display **Candlemas**, **Lady Day**, **May Day**, **Middsommer**,
+**Lammas**, **Michaelmas**, **All Hallow's**, or **Christmas**, with a corresponding
+pixel icon. These fixed feasts follow the game's January-based 52-week calendar;
+they do not change simulation timing.
 Growth is spread over the week and tax income arrives at its end.
 
 The day bar uses `>` for today and `=` for completed days: `[>......]`, `[==>....]`, `[======>]`.
 
 | Speed | Key | Real seconds per game week |
 |---|---|---|
-| Slow | `1` | 8.4 |
-| Medium | `2` | 4.2 |
-| Fast | `3` | 1.4 |
+| Slow | `1` | 16.8 |
+| Medium | `2` | 8.4 |
+| Fast | `3` | 2.8 |
 
-Choosing a speed resumes the simulation. `P`/Space pauses or resumes it. Dialogs and placement
-previews suspend gameplay; losing window focus stops updates. Returning after a stall does not
+These defaults apply to new cities. Saves retain their configured clock timings.
+
+Choosing a speed resumes the simulation. `P`/Space pauses or resumes it.
+Space pauses/resumes in dialogs and placement previews; P retains menu shortcuts.
+Explicitly resuming
+lets time run without closing them. Use Enter for dialog actions.
+While entering text, use Ctrl+P (Command+P on macOS) to toggle pause.
+Pausing displays yellow **[PAUSED]** in place of the header's week-progress bar.
+The speed indicator is omitted, and fixed header slots prevent any layout shift.
+Date/progress fields have extra spacing; POP and funds occupy separate frames,
+with no TREASURY label before the gold amount.
+The weekly gold balance uses brackets without `/wk`; zero displays as **[0g]**.
+**REPORTS** sits between POP and gold in its own header frame; click it for the weekly report.
+**GUIDE** follows REPORTS and opens the guide. Below 900 logical pixels of window
+width it disappears; **F6** remains available. POP is display-only.
+**VIEWS** opens a horizontal overlay-icon bar inside the map's top-left corner,
+including a clear overlay button. Close it by clicking **VIEWS** again or pressing **Esc**;
+the chosen overlay remains active when closed. REPORTS also hides on narrow windows;
+**F7** still opens reports.
+Click the gold text itself to open economy; empty header space does not activate it.
+Weekly Report shows the current settlement size and progress toward the next one.
+Its **Overview, Population, Economy, Services, Growth, Food & Seasons, and Events** tabs cover city/map
+details, demographics, jobs, income/expense breakdowns, supplies, growth blockers,
+and recent events. Projected budgets are distinguished from completed-week results.
+The full list of sizes, thresholds and unlocks is in **F6 > Milestones**.
+Reaching a new size pauses the game and opens **Your City Grew!**, with tables of
+newly unlocked buildings and their key features. **Previous/Next** browse sizes;
+**Continue** closes the dialog while keeping the game paused.
+New milestones award a one-time gold grant scaled to newly unlocked building
+costs—enough for the two cheapest new buildings, with larger sizes never receiving
+a smaller grant. The amount is shown in the growth dialog and Milestones guide.
+There is no pause dialog, fact or animation covering the map: building, selection,
+camera movement and menus remain available while paused.
+Space/P resumes and restores the day bar; Escape opens Game Menu without unpausing.
+Dialogs and placement previews suspend gameplay; losing window focus stops updates. Returning after a stall does not
 fast-forward the simulation.
 
 ## Interface
@@ -192,6 +262,8 @@ Section titles use black backgrounds and the same double-white borders as the ma
 The City table has no redundant column-heading row and shows only age groups/hearths, season,
 grain, mood, supplies, service strength and the top complaint. Healthy readings are green and
 warnings use gold or red. Population and treasury remain in the top header.
+Mood shows its descriptive label without a numeric score. Services reads gray **None** until
+at least one service building is placed; existing services show full or half strength.
 Hover over any R/C/I Demand letter, bar or row for its demand, built/zoned/road-served cells,
 plots without road access and pending removals. Those same details are always available in
 **F7 Report**, **F8 Growth**, and the full-rules City health report for keyboard users.
@@ -222,16 +294,33 @@ Names are stored in city saves.
 
 ### Font, sidebar, and menus
 
+- Click the treasury text (including gold and weekly amounts) to open the economy/budget menu.
+  Click population to open the city menu. These shortcuts do not interrupt dialogs or placement.
+  City information includes weekly reports, growth and health. Funding, taxes and loans
+  are in the treasury menu rather than the city menu.
+
+- The map starts without a highlighted cell; the bottom-left status reads **Press F1 for HELP**.
+  Clicking a cell, moving with the keyboard, or starting placement activates the cursor.
+  The shortcut toolbar is hidden; all keyboard shortcuts remain available.
 - **F3 FONT** opens `[-] size [+]` with **OK** and **RESET**. Default interface size is 20;
   supported sizes are 16-28, with map spacing and input scaled consistently.
 - Increasing font size grows the preferred 1440x900 window when desktop space permits, without
-  exceeding the usable screen. The sidebar fits without scrolling; dialogs may scroll and the
-  function header wraps on smaller screens.
+  exceeding the usable screen. Both sidebars fit without scrolling, including every construction
+  icon at minimum window size; dialogs may scroll.
   The minimum logical window height is 780 so the larger minimap and remaining details have room;
   actual minimum bounds remain capped to the usable desktop.
 - Drag the map/sidebar divider to resize it, or use **Esc > Resize sidebar**.
   Sidebar widths are bounded to 280-480 logical pixels; the maximum reduces to preserve map space.
   Mouse dragging slides by pixels rather than snapping to character widths.
+- Font size and Resize sidebar are simple game-menu rows that open separate adjustment dialogs.
+  The **GAME MENU** uses all-caps options without descriptions and bottom-right
+  **QUIT** (red text) and **CANCEL** buttons instead of navigation rows.
+  Their underlined **Q** and **C** shortcuts activate those actions. MUSIC and SOUND
+  controls appear directly in the same menu; there is no City Management option.
+  White display-option labels have inline **-**/**RESET**/**+** controls.
+  **RESET** restores that row's default. Audio sliders sit
+  beside their mute buttons without percentage readouts.
+  **CANCEL** starts focused with a subtle highlight, including when returning from a submenu.
 - **Arrows navigate dialog controls**, without changing values. **Space/Enter** activates the
   focused button; minus/plus resize the sidebar by one logical character step.
 - Menu choices are left-aligned. Dialog width fits its longest choice/title with **five
@@ -253,7 +342,7 @@ Quiet **54 BPM Greensleeves** uses an original FM/chiptune arrangement of the tr
 public-domain melody. The opening theme is always the same. Later complete verse/refrain
 phrases modulate to related keys and vary their voicing and arpeggios, rather than replaying a fixed loop.
 
-Use **F10** or **Esc > Music: ON/OFF** to mute or resume it. Music continues during game pauses/dialogs but
+Use **F10** or **Esc > GAME MENU** to mute or resume it. Music continues during game pauses/dialogs but
 pauses when unfocused. Font and music preferences are remembered in `display.cfg`, separately from
 city saves. No external recording, audio asset, or audio package is required.
 
@@ -263,7 +352,7 @@ city saves. No external recording, audio asset, or audio package is required.
 |---|---|
 | Move cursor | Arrow keys |
 | Jump a screen | Ctrl+arrows, Home/End/PageUp/PageDown |
-| Extend selection | Shift+arrows, or Shift+click (grows the selection to whole rows and columns up to the clicked cell) |
+| Resize selection | Shift+arrows, or Shift+click (moves the endpoint from the original anchor; can shrink) |
 | Keyboard selection mode | `S`, move, `S` to finish |
 | Pan | Left-drag, middle-drag, wheel, two-finger trackpad scroll |
 | Select with mouse | Left-drag; Shift+click extends; Ctrl/Alt+left-drag starts a new box |
@@ -286,7 +375,7 @@ city saves. No external recording, audio asset, or audio package is required.
 | Quick-save / quick-load | F5 / F9 |
 | Guide (tabs: how to play, population, economy) | F6 |
 | Weekly report / growth report | F7 / F8 |
-| City menu | Esc during normal gameplay |
+| Game configuration menu | Esc during normal gameplay (display, inline sound/music controls; Q quits and C cancels) |
 | Input/loop diagnostics | F12 (keyboard-only) |
 | Quit | `Q`, Ctrl/Command+Q, or close the window |
 
@@ -347,6 +436,8 @@ starting another city, or quitting: save and continue, continue without saving, 
 A failed save prevents the guarded action.
 The quick-save path stays at the **bottom right**, on the same row as cell information, rather than
 inside confirmation dialogs. Long text is clipped to keep both sides visible; hover for the full path.
+While **GAME MENU** is open, the seed and map dimensions appear at the **bottom left**
+and the quick-save path at the **bottom right**. Closing it restores gameplay status.
 
 Godot stores files in its `TermCityGodot` user-data directory:
 
@@ -373,7 +464,7 @@ Loaded cities start paused. Save failures appear as errors; autosave retries at 
   or pinch/Ctrl/Command gestures; `+`, `=`, `-`, and `0` also work.
 - **Text is too small:** open F3 FONT. The top header uses a uniform larger font, fitted on narrow windows.
 - **Input issue:** press F12 and include the input/loop diagnostics in the bug report.
-- **No sound:** check **Esc > Music**, OS output volume, and whether the window is focused.
+- **No sound:** check **Esc > GAME MENU**, OS output volume, and whether the window is focused.
 
 ## Development and license
 

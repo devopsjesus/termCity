@@ -19,7 +19,6 @@ public partial class CityPanel : Control
     private VBoxContainer _content = null!;
     private GridContainer _top = null!;
     private readonly List<Label> _headings = [];
-    private readonly List<Label> _demandLetters = [];
     private readonly List<Button> _zoomButtons = [];
     private readonly List<VBoxContainer> _groups = [];
     private bool _fitting;
@@ -28,7 +27,8 @@ public partial class CityPanel : Control
     private int _fittedCells = -1;
     private static readonly Color HeadingColor = new("#70b7ff");
     private const int TableFontSize = 13;
-    private const int CityFontSize = 16;
+    private const int CityFontSize = 18;
+    private const int DemandSize = 18;
 
     public override void _Ready()
     {
@@ -41,22 +41,39 @@ public partial class CityPanel : Control
         _top.AddThemeConstantOverride("v_separation", 4);
         _content.AddChild(_top);
         var overview = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        overview.AddChild(Heading("MINIMAP"));
         Minimap = new CityMinimap { Session = Session };
         Minimap.SetHeight(120);
-        overview.AddChild(Minimap);
         var zoomControls = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
         var zoomOut = new Button { Text = "[-]", FocusMode = FocusModeEnum.None };
         zoomOut.Pressed += () => { if (!Blocked) ZoomBy(-1); };
         _zoom = new Label { Name = "ZoomIndicator", HorizontalAlignment = HorizontalAlignment.Center,
             SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        _zoom.AddThemeFontSizeOverride("font_size", 20);
         var zoomIn = new Button { Text = "[+]", FocusMode = FocusModeEnum.None };
         zoomIn.Pressed += () => { if (!Blocked) ZoomBy(1); };
         zoomControls.AddChild(zoomOut);
         zoomControls.AddChild(_zoom);
         zoomControls.AddChild(zoomIn);
         _zoomButtons.AddRange([zoomOut, zoomIn]);
-        overview.AddChild(zoomControls);
+        foreach (var button in _zoomButtons)
+        {
+            button.Alignment = HorizontalAlignment.Center;
+            button.AddThemeFontSizeOverride("font_size", 22);
+            foreach (string state in new[] { "normal", "hover", "pressed", "hover_pressed", "disabled", "focus" })
+            {
+                var style = (StyleBox)button.GetThemeStylebox(state).Duplicate();
+                style.SetContentMarginAll(2);
+                button.AddThemeStyleboxOverride(state, style);
+            }
+        }
+        var zoomFrame = new PanelContainer { Name = "MinimapZoomFrame" };
+        var zoomStyle = new StyleBoxFlat { BgColor = Colors.Black, BorderColor = Colors.White };
+        zoomStyle.SetBorderWidthAll(1);
+        zoomStyle.SetContentMarginAll(1);
+        zoomFrame.AddThemeStyleboxOverride("panel", zoomStyle);
+        zoomFrame.AddChild(zoomControls);
+        overview.AddChild(zoomFrame);
+        overview.AddChild(Minimap);
         _top.AddChild(overview);
         var demand = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         demand.AddChild(Heading("DEMAND"));
@@ -67,10 +84,13 @@ public partial class CityPanel : Control
             {
                 Name = $"Demand{Zones.Get(zone).Letter}", Text = Zones.Get(zone).Letter.ToString(),
                 MouseFilter = MouseFilterEnum.Stop,
+                VerticalAlignment = VerticalAlignment.Center,
             };
+            letter.AddThemeFontSizeOverride("font_size", DemandSize);
             row.AddChild(letter);
             var bar = new ProgressBar { MaxValue = 1, ShowPercentage = false,
-                SizeFlagsHorizontal = SizeFlags.ExpandFill, CustomMinimumSize = new Vector2(0, 18),
+                SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsVertical = SizeFlags.ShrinkCenter,
+                CustomMinimumSize = new Vector2(0, DemandSize),
                 MouseFilter = MouseFilterEnum.Stop };
             var style = new StyleBoxFlat();
             var color = Zones.Get(zone).Foreground;
@@ -81,7 +101,6 @@ public partial class CityPanel : Control
             demand.AddChild(row);
             _demand[zone] = bar;
             _demandHover[zone] = [row, letter, bar];
-            _demandLetters.Add(letter);
         }
         _top.AddChild(demand);
         _cityTable = CreateTable("CityTable", 2);
@@ -99,7 +118,7 @@ public partial class CityPanel : Control
     private PanelContainer Heading(string text)
     {
         var label = new Label { Name = text[0] + text[1..].ToLowerInvariant() + "Heading", Text = text };
-        label.AddThemeFontSizeOverride("font_size", 18);
+        label.AddThemeFontSizeOverride("font_size", 22);
         label.AddThemeColorOverride("font_color", HeadingColor);
         var cell = Main.Frame(label);
         var style = cell.GetThemeStylebox("panel");
@@ -109,29 +128,31 @@ public partial class CityPanel : Control
         return cell;
     }
 
-    private static GridContainer CreateTable(string name, int columns)
+    internal static GridContainer CreateTable(string name, int columns)
     {
         var table = new GridContainer { Name = name, Columns = columns, SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        table.AddThemeConstantOverride("h_separation", 1);
-        table.AddThemeConstantOverride("v_separation", 1);
+        table.AddThemeConstantOverride("h_separation", 0);
+        table.AddThemeConstantOverride("v_separation", 0);
         return table;
     }
 
-    private static PanelContainer CellStyle(bool alternate)
+    internal static PanelContainer CellStyle(int index, int columns)
     {
         var panel = new PanelContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         var style = new StyleBoxFlat
         {
-            BgColor = new Color(alternate ? "#0c1c29" : "#08121b"),
-            BorderColor = new Color("#2c4965"),
+            BgColor = index / columns % 2 != 0 ? new Color("#101010") : Colors.Black,
+            BorderColor = Colors.White,
             ContentMarginLeft = 4, ContentMarginRight = 4, ContentMarginTop = 2, ContentMarginBottom = 2,
         };
         style.SetBorderWidthAll(1);
+        style.BorderWidthLeft = index % columns == 0 ? 1 : 0;
+        style.BorderWidthTop = index < columns ? 1 : 0;
         panel.AddThemeStyleboxOverride("panel", style);
         return panel;
     }
 
-    private static void RefreshTable(GridContainer table, IReadOnlyList<SidebarCell[]> rows, List<Label> cells)
+    private void RefreshTable(GridContainer table, IReadOnlyList<SidebarCell[]> rows, List<Label> cells)
     {
         int count = (rows.Count * 2 + table.Columns - 1) / table.Columns * table.Columns;
         if (cells.Count != count)
@@ -143,7 +164,7 @@ public partial class CityPanel : Control
             }
             cells.Clear();
             for (int index = 0; index < count; index++)
-                cells.Add(AddCell(index % 2, alternate: index / table.Columns % 2 != 0));
+                cells.Add(AddCell(index));
         }
         for (int row = 0; row < rows.Count; row++)
             for (int column = 0; column < 2; column++)
@@ -153,10 +174,30 @@ public partial class CityPanel : Control
                 label.Text = value.Text;
                 label.TooltipText = value.Text;
                 label.AddThemeColorOverride("font_color", ToColor(value.Color));
+                string metric = rows[row][0].Text;
+                if (column == 1 && metric is "Fuel" or "Water" or "Grain")
+                {
+                    var gauge = label.GetChildren().OfType<ResourceGauge>().SingleOrDefault();
+                    if (gauge is null)
+                    {
+                        gauge = new ResourceGauge { Name = metric + "Gauge" };
+                        gauge.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+                        label.AddChild(gauge);
+                    }
+                    var supply = metric == "Fuel" ? Session.Game.Services.Power : Session.Game.Services.Water;
+                    gauge.SetLevel(metric == "Grain" ? SidebarReport.GrainLevel(Session.Game) : SidebarReport.SupplyLevel(supply));
+                    label.TooltipText = metric == "Grain"
+                        ? $"Grain: {value.Text}\nReserve target: {SidebarReport.GrainReserveTargetWeeks} weeks ({SidebarReport.GrainLevel(Session.Game):P0})\nHunger: {Session.Game.Hunger:P0} unmet food need"
+                        : $"{metric}: {supply.Supply:N0} supplied / {supply.Demand:N0} needed ({SidebarReport.SupplyLevel(supply):P0})";
+                    label.Text = "";
+                    label.GetParent<Control>().TooltipText = label.TooltipText;
+                    FitGauge(label);
+                }
             }
 
-        Label AddCell(int column, bool alternate)
+        Label AddCell(int index)
         {
+            int column = index % 2;
             var label = new Label
             {
                 ClipText = true, TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
@@ -165,11 +206,31 @@ public partial class CityPanel : Control
                 SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Stop,
             };
             label.AddThemeFontSizeOverride("font_size", CityFontSize);
-            var cell = CellStyle(alternate);
+            label.Resized += () => FitGauge(label);
+            var cell = CellStyle(index, table.Columns);
             cell.AddChild(label);
             table.AddChild(cell);
+            void OpenReport(Control control, InputEvent input)
+            {
+                if (input is not InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true } ||
+                    Blocked || index / 2 >= rows.Count) return;
+                Session.ShowReport(SidebarReport.ReportTabFor(cells[index - index % 2].Text));
+                control.AcceptEvent();
+            }
+            label.MouseDefaultCursorShape = cell.MouseDefaultCursorShape = CursorShape.PointingHand;
+            cell.MouseFilter = MouseFilterEnum.Stop;
+            label.GuiInput += input => OpenReport(label, input);
+            cell.GuiInput += input => OpenReport(cell, input);
             return label;
         }
+    }
+
+    private static void FitGauge(Label label)
+    {
+        var gauge = label.GetChildren().OfType<ResourceGauge>().SingleOrDefault();
+        if (gauge is null) return;
+        gauge.OffsetRight = label.Text.Length == 0 ? 0 : -label.GetThemeFont("font").GetStringSize(label.Text,
+            fontSize: label.GetThemeFontSize("font_size")).X - 6;
     }
 
     private static Color ToColor(Rgb color) => new(color.R / 255f, color.G / 255f, color.B / 255f);
@@ -207,12 +268,12 @@ public partial class CityPanel : Control
             float fixedHeight = 0;
             for (int fontSize = TableFontSize; fontSize >= 8; fontSize--)
             {
-                foreach (var label in _cityCells) SetFont(label, fontSize + CityFontSize - TableFontSize);
-                foreach (var label in _headings) SetFont(label, TableFontSize + 5);
-                foreach (var label in _demandLetters) SetFont(label, fontSize + 1);
-                SetFont(_zoom, fontSize + 1);
-                foreach (var button in _zoomButtons) SetFont(button, fontSize + 1);
-                foreach (var bar in _demand.Values) bar.CustomMinimumSize = new Vector2(0, fontSize + 3);
+                foreach (var label in _cityCells)
+                {
+                    SetFont(label, fontSize + CityFontSize - TableFontSize);
+                    FitGauge(label);
+                }
+                foreach (var label in _headings) SetFont(label, 22);
                 foreach (var group in _groups) group.AddThemeConstantOverride("separation", Math.Max(2, fontSize / 3));
                 fixedHeight = _content.GetCombinedMinimumSize().Y - Minimap.CustomMinimumSize.Y;
                 if (fixedHeight + mapHeight <= Size.Y) break;

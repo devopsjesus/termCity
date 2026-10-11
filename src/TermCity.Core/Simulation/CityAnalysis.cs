@@ -64,7 +64,7 @@ public sealed record CityIndicators
     {
         >= 80 => "Delighted",
         >= 65 => "Content",
-        >= 50 => "Getting by",
+        >= 50 => "Fiiine",
         >= 35 => "Unhappy",
         _ => "Miserable",
     };
@@ -281,7 +281,7 @@ public static class CityAnalysis
         Charge("No water", services.IsWatered(map, i) ? 0 : 25);
         Charge("Smoke", 0.32 * smog * profile.SmogSensitivity);
         Charge("Lawlessness", 0.28 * crime);
-        Charge("Fire watch", 12 * Need(ServiceKind.Fire, population) * (1 - fire / 100));
+        Charge("Fire Watch", 12 * Need(ServiceKind.Fire, population) * (1 - fire / 100));
         Charge("Physic", 14 * Need(ServiceKind.Health, population) * (1 - health / 100));
         Charge("Learning", 9 * Need(ServiceKind.Education, population) * (1 - education / 100));
         Charge("Commons", 8 * Need(ServiceKind.Recreation, population) * (1 - recreation / 100));

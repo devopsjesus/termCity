@@ -16,6 +16,7 @@ public sealed partial class GameSession
 
     public void ShowAreaMenu()
     {
+        HasCursor = true;
         var area = ActiveArea;
         ShowPrompt("Area menu", $"{area.Width}x{area.Height} selected ({area.Area} cells)",
         [
@@ -74,7 +75,7 @@ public sealed partial class GameSession
                 (!unlocked ? $"; LOCKED {CityProgression.RequiredPopulation(building):N0} souls" : string.Empty);
             return new SessionChoice(building.Name, () =>
             {
-                if (CityProgression.IsUnlocked(Game, building)) ClosePrompt();
+                if (BuildingPurchaseError(building) is null) ClosePrompt();
                 PreviewBuilding(building);
             }, [unlocked ? quote.Cells.ToString() : "-", unlocked ? Fmt.Money(quote.Cost) : Fmt.Money(building.Cost),
                 Fmt.Money(Game.Config.FullRules ? (int)Math.Round(building.WeeklyUpkeep * Game.Budget.Funding(building.Service)) : 0), needs],

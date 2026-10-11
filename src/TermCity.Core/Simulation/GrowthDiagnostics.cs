@@ -63,7 +63,7 @@ public static class GrowthDiagnostics
             return Result(GrowthStatus.MissingBuilding, "No growth building registered for this zone.", eligible, game);
         }
 
-        int homes = game.Stats.Residential.Occupied;
+        int homes = Demand.SupportingHomes(game.Stats, game.Config);
         if (zone != ZoneType.Residential && homes < game.Config.MinResidentialCells)
         {
             return Result(GrowthStatus.NeedsHomes, $"Needs {game.Config.MinResidentialCells} occupied homes; you have {homes}.", eligible, game);

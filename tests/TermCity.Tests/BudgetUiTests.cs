@@ -15,11 +15,11 @@ public class BudgetUiTests
     {
         var session = Session();
         session.ShowBudgetMenu();
-        var fire = session.Prompt!.Choices.First(c => c.Label.StartsWith("Fire watch"));
+        var fire = session.Prompt!.Choices.First(c => c.Label.StartsWith("Fire Watch"));
         fire.Select();
         Assert.Equal(0.75, session.Game.Budget.Funding(TermCity.Core.Buildings.ServiceKind.Fire), 3);
         Assert.NotNull(session.Prompt);
-        Assert.Contains(session.Prompt!.Choices, c => c.Label.StartsWith("Fire watch") && c.Cells![0] == 0.75.ToString("P0"));
+        Assert.Contains(session.Prompt!.Choices, c => c.Label.StartsWith("Fire Watch") && c.Cells![0] == 0.75.ToString("P0"));
     }
 
     [Fact]

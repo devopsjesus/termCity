@@ -190,7 +190,12 @@ public sealed class RoadVectorLayer
                         continue;
                     }
 
-                    if (d < nearest[at])
+                    double colourReach = bedHalf + blend + 1;
+                    bool sharedBed = d <= colourReach && nearest[at] <= colourReach;
+                    int previousRank = near[owner[at]].Type.Rank;
+                    // Include the blended fillet and antialiased edge, not just the unblended roadbed.
+                    if (sharedBed && path.Type.Rank > previousRank ||
+                        d < nearest[at] && (!sharedBed || path.Type.Rank >= previousRank))
                     {
                         nearest[at] = d;
                         owner[at] = (ushort)p;

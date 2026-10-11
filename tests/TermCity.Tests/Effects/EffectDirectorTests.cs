@@ -127,6 +127,23 @@ public class EffectDirectorTests
     }
 
     [Fact]
+    public void LargePlayerZoningActionsAnimateInsteadOfBeingMistakenForLoads()
+    {
+        var (game, system, director) = Setup();
+        var session = new GameSession(game);
+        session.SetViewport(game.Map.Width, game.Map.Height);
+        director.Attach(session);
+        session.BeginDrag(new Pos(40, 30));
+        session.UpdateDrag(new Pos(79, 69));
+        session.EndSelection();
+        Assert.True(session.Zone(ZoneType.Commercial).Success);
+        director.Update(0.1);
+        Assert.Single(system.Effects.OfType<ZoneRippleEffect>());
+        Assert.Equal(0, director.Resyncs);
+        Assert.True(system.HasVisuals);
+    }
+
+    [Fact]
     public void NewBuildingsGrowInZonesAndScaffoldWhenPlaced()
     {
         var (game, system, director) = Setup();

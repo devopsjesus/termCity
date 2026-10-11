@@ -168,6 +168,7 @@ public class FullRulesTests
     public void FundingScalesCostAndStrength()
     {
         var game = Town();
+        game.HighestMilestone = 100;
         Assert.True(game.PlaceBuilding(Civic(game, "Fire Watch"), new CellRect(70, 19, 1, 1)).Success);
         int full = game.Finance.ServiceUpkeep;
         int cover = game.Services.Coverage(ServiceKind.Fire, game.Map.Index(66, 18));

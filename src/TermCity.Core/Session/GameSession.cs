@@ -2,6 +2,7 @@ using System.Globalization;
 using TermCity.Core.Buildings;
 using TermCity.Core.Roads;
 using TermCity.Core.Persistence;
+using TermCity.Core.Rendering;
 using TermCity.Core.Simulation;
 using TermCity.Core.Util;
 using TermCity.Core.World;
@@ -28,7 +29,7 @@ public sealed partial class GameSession
     public const int MaxZoom = 1;
 
     private bool _anchorFromShift;
-    private CellRect? _extendBase;
+    private Pos? _selectionOrigin;
 
     public GameSession(CityGame game, string? savePath = null, bool showGuide = false)
     {
@@ -55,6 +56,9 @@ public sealed partial class GameSession
 
     public Pos Cursor { get; private set; }
 
+    /// <summary>The cursor stays hidden until the player targets a cell or starts a placement.</summary>
+    public bool HasCursor { get; private set; }
+
     /// <summary>The highlighted area, if any. Actions apply to this, or to the cursor cell when there is none.</summary>
     public CellRect? Selection { get; private set; }
 
@@ -69,7 +73,7 @@ public sealed partial class GameSession
 
     public int ViewHeight { get; private set; }
 
-    public string Message { get; private set; } = "Welcome to TermCity! Press F1 for help.";
+    public string Message { get; private set; } = string.Empty;
 
     public MessageKind MessageKind { get; private set; } = MessageKind.Info;
 
@@ -277,9 +281,11 @@ public sealed partial class GameSession
     /// <summary>Moves the highlight cursor to a cell without selecting anything and without scrolling.</summary>
     public void PlaceCursor(Pos p)
     {
+        HasCursor = true;
         Cursor = Clamp(p);
         Anchor = null;
         Selection = null;
+        _selectionOrigin = null;
         SelectionChanged?.Invoke();
     }
 
@@ -347,6 +353,7 @@ public sealed partial class GameSession
 
     private void MoveCursorCells(int dx, int dy, bool extend)
     {
+        HasCursor = true;
         if (RoadToolActive)
         {
             Cursor = Clamp(Cursor.Offset(dx, dy));
@@ -364,6 +371,7 @@ public sealed partial class GameSession
         if (extend && Anchor is null)
         {
             Anchor = Cursor;
+            _selectionOrigin = Cursor;
             _anchorFromShift = true;
         }
         else if (!extend && Anchor is not null && _anchorFromShift)
@@ -376,6 +384,7 @@ public sealed partial class GameSession
         {
             Selection = null;
         }
+        if (Selection is null && Anchor is null) _selectionOrigin = null;
 
         Cursor = Clamp(Cursor.Offset(dx, dy));
         if (Anchor is { } anchor)
@@ -393,18 +402,21 @@ public sealed partial class GameSession
     /// <summary>Single click: selects exactly one cell.</summary>
     public void SelectCell(Pos p)
     {
+        HasCursor = true;
         Cursor = Clamp(p);
         Anchor = null;
         Selection = BlockAt(Cursor);
+        _selectionOrigin = Cursor;
         FollowCursor();
     }
 
     /// <summary>
-    /// Starts a drag selection. With <paramref name="extend"/> (Shift-click) the existing selection, or the cursor's cell
-    /// when there is none, is kept and grown to cover everything between it and the pointer.
+    /// Starts a drag selection. Shift-click replaces the endpoint relative to the original anchor,
+    /// allowing the selected rectangle to shrink or extend in a different direction.
     /// </summary>
     public void BeginDrag(Pos p, bool extend = false)
     {
+        HasCursor = true;
         if (RoadToolActive)
         {
             Cursor = Clamp(p);
@@ -413,15 +425,14 @@ public sealed partial class GameSession
             return;
         }
 
-        _extendBase = extend ? ActiveArea : null;
+        var origin = extend ? _selectionOrigin ?? Cursor : Clamp(p);
         Cursor = Clamp(p);
-        Anchor = Cursor;
+        Anchor = origin;
+        _selectionOrigin = origin;
         _anchorFromShift = false;
-        Selection = Extended(BlockAt(Cursor));
+        Selection = MakeSelection(origin, Cursor);
         SelectionChanged?.Invoke();
     }
-
-    private CellRect Extended(CellRect area) => _extendBase is { } baseArea ? baseArea.Union(area) : area;
 
     public void UpdateDrag(Pos p)
     {
@@ -438,7 +449,7 @@ public sealed partial class GameSession
         }
 
         Cursor = Clamp(p);
-        Selection = Extended(MakeSelection(anchor, Cursor));
+        Selection = MakeSelection(anchor, Cursor);
         SelectionChanged?.Invoke();
     }
 
@@ -446,16 +457,17 @@ public sealed partial class GameSession
     public void EndSelection()
     {
         Anchor = null;
-        _extendBase = null;
         SelectionChanged?.Invoke();
     }
 
     /// <summary>S: starts keyboard selection at the cursor, or finishes it if already started.</summary>
     public void ToggleSelectionMode()
     {
+        HasCursor = true;
         if (Anchor is null)
         {
             Anchor = Cursor;
+            _selectionOrigin = Cursor;
             _anchorFromShift = false;
             Selection = BlockAt(Cursor);
             SetMessage("Selecting: move with the arrow keys, S to finish, Enter for the menu.");
@@ -474,6 +486,7 @@ public sealed partial class GameSession
         ClearPreview();
         Anchor = null;
         Selection = null;
+        _selectionOrigin = null;
         SelectionChanged?.Invoke();
     }
 
@@ -494,9 +507,17 @@ public sealed partial class GameSession
 
     // ---- Actions ----------------------------------------------------------------------------------------------
 
-    public ActionResult Zone(ZoneType zone) => Execute(() => Game.Designate(ActiveArea, zone));
+    public ActionResult Zone(ZoneType zone)
+    {
+        HasCursor = true;
+        return Execute(() => Game.Designate(ActiveArea, zone));
+    }
 
-    public ActionResult Dezone() => Execute(() => Game.Dezone(ActiveArea));
+    public ActionResult Dezone()
+    {
+        HasCursor = true;
+        return Execute(() => Game.Dezone(ActiveArea));
+    }
 
     public ActionResult BuildRoad(RoadType? type = null) => Execute(() => Game.BuildRoad(ActiveArea, type));
 
@@ -509,12 +530,11 @@ public sealed partial class GameSession
     private ActionResult Execute(Func<ActionResult> action, string? warning = null)
     {
         string snapshot = SaveGameStore.Serialize(Game);
-        double at = Game.ElapsedDays;
         var result = action();
         if (result.Success)
         {
-            _undoSnapshot = snapshot;
-            _undoAt = at;
+            if (_undoHistory.Count == UndoLimit) _undoHistory.RemoveAt(0);
+            _undoHistory.Add(snapshot);
         }
 
         return Complete(result, warning);
@@ -526,6 +546,7 @@ public sealed partial class GameSession
         {
             Anchor = null;
             Selection = null;
+            _selectionOrigin = null;
             Placed?.Invoke();
         }
 
@@ -533,14 +554,16 @@ public sealed partial class GameSession
         {
             result = result with { Message = result.Message + " Warning: " + warning };
         }
-        SetMessage(result.Message, !result.Success ? MessageKind.Error :
-            warning is not null ? MessageKind.Warning : MessageKind.Success);
+        if (Prompt?.Title != MilestoneReport.Title || !result.Success)
+            SetMessage(result.Message, !result.Success ? MessageKind.Error :
+                warning is not null ? MessageKind.Warning : MessageKind.Success);
         return result;
     }
 
     public void TogglePause()
     {
-        Game.Paused = !Game.Paused;
+        Game.Paused = !ClockSuspended;
+        _resumeWhileInteracting = !Game.Paused;
         SetMessage(Game.Paused ? "Paused." : "Resumed.");
         Game.NotifyStateChanged();
     }
@@ -559,7 +582,7 @@ public sealed partial class GameSession
     {
         try
         {
-            SaveGameStore.Save(Game, SavePath);
+            SaveGameStore.Save(Game, SavePath, new SavedView(CameraX, CameraY, ZoomLevel));
             _savedRevision = _revision;
             _savedAt = Game.ElapsedDays;
             SetMessage($"Game saved to {SavePath}", MessageKind.Success);
@@ -578,8 +601,16 @@ public sealed partial class GameSession
     {
         try
         {
-            var loaded = SaveGameStore.Load(path, Game.Map.Content);
+            var loaded = SaveGameStore.Load(path, out var view, Game.Map.Content);
             ReplaceGame(loaded);
+            if (view is not null)
+            {
+                ZoomLevel = view.ZoomLevel;
+                CameraX = view.CameraX;
+                CameraY = view.CameraY;
+                ClampCamera();
+                CameraChanged?.Invoke();
+            }
             Game.Paused = true;
             _savedRevision = _revision;
             _savedAt = Game.ElapsedDays;
@@ -593,27 +624,32 @@ public sealed partial class GameSession
         }
     }
 
+    public bool StartAtCurrentWeek { get; init; }
+
     public void NewGame(GameConfig config)
     {
-        ReplaceGame(CityGame.New(config));
+        ReplaceGame(CityGame.New(config, startingDate: StartAtCurrentWeek ? DateTime.Now : null));
         Game.Paused = true;
         GuideVisible = Game.Config.Scenario == CityScenario.Random;
     }
 
-    private void ReplaceGame(CityGame game)
+    private void ReplaceGame(CityGame game, bool clearUndo = true)
     {
         ClearPreview();
         Prompt = null;
         _promptHistory.Clear();
-        _undoSnapshot = null;
+        if (clearUndo) _undoHistory.Clear();
         Game.Changed -= OnGameChanged;
         Game = game;
+        _resumeWhileInteracting = false;
         Game.Changed += OnGameChanged;
         InitializeFeedback();
         GuideVisible = game.Config.Scenario == CityScenario.Random && !game.GuideDismissed;
         _autosaveElapsed = 0;
         Anchor = null;
         Selection = null;
+        _selectionOrigin = null;
+        HasCursor = false;
         Cursor = new Pos(Math.Min(Cursor.X, game.Map.Width - 1), Math.Min(Cursor.Y, game.Map.Height - 1));
         ClampCamera();
         FollowCursor();

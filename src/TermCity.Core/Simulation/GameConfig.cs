@@ -144,11 +144,11 @@ public sealed record GameConfig
     public int DaysPerWeek { get; init; } = 7;
 
     // Real seconds per game week (1.2, 0.6 or 0.2 seconds per day).
-    public double SlowSecondsPerWeek { get; init; } = 8.4;
+    public double SlowSecondsPerWeek { get; init; } = 16.8;
 
-    public double MediumSecondsPerWeek { get; init; } = 4.2;
+    public double MediumSecondsPerWeek { get; init; } = 8.4;
 
-    public double FastSecondsPerWeek { get; init; } = 1.4;
+    public double FastSecondsPerWeek { get; init; } = 2.8;
 
     public double SecondsPerWeek(GameSpeed speed) => speed switch
     {

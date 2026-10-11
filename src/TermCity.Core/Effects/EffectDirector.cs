@@ -29,6 +29,7 @@ public sealed class EffectDirector : IDisposable
     private const int MaxPendingEvents = 200;
 
     private readonly EffectSystem _system;
+    private bool _placementPending;
     private readonly List<CityEvent> _events = [];
     private readonly MapSnapshot _snapshot = new();
     private GameSession? _session;
@@ -57,6 +58,7 @@ public sealed class EffectDirector : IDisposable
     /// <summary>Watches a game directly. The view defaults to the whole map unless <paramref name="view"/> is given.</summary>
     public void Attach(CityGame game, CellRect? view = null)
     {
+        if (_session is not null) _session.Placed -= OnPlacement;
         _session = null;
         _fixedView = view;
         Bind(game);
@@ -65,7 +67,9 @@ public sealed class EffectDirector : IDisposable
     /// <summary>Watches a session's current game (following new games and loads) and its visible area and zoom.</summary>
     public void Attach(GameSession session)
     {
+        if (_session is not null) _session.Placed -= OnPlacement;
         _session = session ?? throw new ArgumentNullException(nameof(session));
+        _session.Placed += OnPlacement;
         _fixedView = null;
         Bind(session.Game);
     }
@@ -73,6 +77,7 @@ public sealed class EffectDirector : IDisposable
     public void Detach()
     {
         Unbind();
+        if (_session is not null) _session.Placed -= OnPlacement;
         _session = null;
     }
 
@@ -81,7 +86,7 @@ public sealed class EffectDirector : IDisposable
         if (!_disposed)
         {
             _disposed = true;
-            Unbind();
+            Detach();
         }
     }
 
@@ -104,6 +109,7 @@ public sealed class EffectDirector : IDisposable
 
         SyncAmbient(close);
         _system.Update(dt);
+        _placementPending = false;
     }
 
     private void Bind(CityGame? game)
@@ -113,6 +119,7 @@ public sealed class EffectDirector : IDisposable
         _events.Clear();
         _system.Clear();
         _ambient = null;
+        _placementPending = false;
         if (game is null)
         {
             return;
@@ -140,7 +147,10 @@ public sealed class EffectDirector : IDisposable
         {
             _events.RemoveAt(0);
         }
+
     }
+
+    private void OnPlacement() => _placementPending = true;
 
     private void Resync()
     {
@@ -294,7 +304,7 @@ public sealed class EffectDirector : IDisposable
                     continue;
                 }
 
-                if (++changed > MassChangeLimit)
+                if (++changed > MassChangeLimit && !_placementPending)
                 {
                     Resyncs++;
                     return;
@@ -458,7 +468,9 @@ public sealed class EffectDirector : IDisposable
             return;
         }
 
-        var cells = zoned.Take(MaxGroupCells).Select(p => new TintedCell(p, Zones.Get(map.ZoneAt(p.X, p.Y)).Foreground)).ToList();
+        var sampled = zoned.Count <= MaxGroupCells ? zoned :
+            Enumerable.Range(0, MaxGroupCells).Select(index => zoned[index * zoned.Count / MaxGroupCells]).ToList();
+        var cells = sampled.Select(p => new TintedCell(p, Zones.Get(map.ZoneAt(p.X, p.Y)).Foreground)).ToList();
         var origin = _session?.ActiveArea is { } area && zoned.All(area.Contains)
             ? (area.X + area.Width / 2.0, area.Y + area.Height / 2.0)
             : ClusterCentre(zoned);

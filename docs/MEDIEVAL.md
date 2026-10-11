@@ -25,7 +25,8 @@ Content registries and saves use only the current medieval names; historical mod
 |---|---|---|
 | Power plant | Charcoal Burners, Woodlot | Fuel for hearths and forges; burners smoke, woodlots are clean but small |
 | Water works | Aqueduct, Town Well | Aqueducts need a shore |
-| Fire station | Fire Watch | Bucket brigade; fires are rarer and burn less |
+| Fire station | Fire Watch | Bucket brigade; fires are rarer and burn less within an 18-cell radius |
+
 | Police | Watch House, Sheriff's Hall, Gaol | Deter crime; a sheriff also turns raiders away |
 | Hospital, clinic | Apothecary, Hospice, Infirmary | Physic cuts mortality and blunts plague |
 | School, university | Chantry School, Monastery | Letters raise tithes; a monastery also hosts pilgrims |
@@ -34,6 +35,9 @@ Content registries and saves use only the current medieval names; historical mod
 | (new) Faith | Chapel, Parish Church, Cathedral | Solace, a gentler temper, pilgrims at feasts |
 | (new) Trade | Market Cross, Guildhall | Tolls, cheaper and wider grain imports, richer feasts |
 | (new) Granary | Granary | A reserve against a bad harvest or a long winter |
+
+Market Cross provides full trade coverage within an 18-cell radius, fading to zero
+at 22.5 cells. Its cost is 6,000g and upkeep is 60g per week.
 
 Power, water and granaries are city-wide supplies paid in full; the rest are area services funded from the budget.
 

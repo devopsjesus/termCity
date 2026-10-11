@@ -19,7 +19,7 @@ public partial class TerminalMap : Control
     private readonly RoadVectorLayer _roads = new();
     private readonly Dictionary<(int X, int Y, int Scale, int Stride), ImageTexture?> _roadChunks = [];
     private readonly List<GlyphDraw> _mains = [];
-    private readonly Dictionary<(int Radius, int Width, int Height, int Stride), IReadOnlySet<Pos>> _areaOutlines = [];
+    private ImageTexture? _areaFade;
     public int AreasDrawn { get; private set; }
 
     /// <summary>Optional visual effects. Null or inactive means the map draws exactly as it always did.</summary>
@@ -210,8 +210,9 @@ public partial class TerminalMap : Control
     {
         var origin = Session.ScreenToMap(0, 0);
         var view = new CellRect(origin.X, origin.Y, Grid.Columns * Session.Stride, Grid.Rows * Session.Stride);
-        IEnumerable<EffectArea> areas = AreaOfEffect.InView(Session.Game, view, Session.ActiveArea);
-        if (Session.Preview is { Building: { } type } preview)
+        IEnumerable<EffectArea> areas = Session.HasCursor && !Session.BuildingToolActive
+            ? AreaOfEffect.InView(Session.Game, view, Session.ActiveArea) : [];
+        if (Session.BuildingPlacementError is null && Session.Preview is { Building: { } type } preview)
             areas = areas.Concat(Session.Game.PlanBuildings(type, preview.Area)
                 .SelectMany(area => AreaOfEffect.ForBuilding(type, new(area.X, area.Y))));
         AreasDrawn = 0;
@@ -222,24 +223,28 @@ public partial class TerminalMap : Control
                 (group.Key.Y - origin.Y + 0.5f) * cellHeight / Session.Stride);
             foreach (var area in group)
             {
-                var key = (area.Radius, cellWidth, cellHeight, Session.Stride);
-                if (!_areaOutlines.TryGetValue(key, out var outline))
+                if (_areaFade is null)
                 {
-                    outline = AreaOfEffect.Outline(area.Radius, cellWidth, cellHeight, Session.Stride, pixel);
-                    _areaOutlines.Add(key, outline);
+                    const int size = 128;
+                    using var image = Image.CreateEmpty(size, size, false, Image.Format.Rgba8);
+                    for (int y = 0; y < size; y++)
+                        for (int x = 0; x < size; x++)
+                        {
+                            double dx = (x + 0.5 - size / 2d) / (size / 2d);
+                            double dy = (y + 0.5 - size / 2d) / (size / 2d);
+                            image.SetPixel(x, y, new Color(1, 1, 1,
+                                AreaOfEffect.FadeAlpha(Math.Sqrt(dx * dx + dy * dy) * AreaOfEffect.FadeExtent)));
+                        }
+                    _areaFade = ImageTexture.CreateFromImage(image);
                 }
-                foreach (var point in outline)
-                {
-                    var position = center + new Vector2(point.X, point.Y);
-                    if (new Rect2(Vector2.Zero, Size).HasPoint(position))
-                        DrawRect(new Rect2(position, new Vector2(pixel, pixel)), new Color(1, 1, 1, AreaOfEffect.RingAlpha));
-                }
+                float radius = area.Radius * cellWidth / (float)Session.Stride * (float)AreaOfEffect.FadeExtent;
+                DrawTextureRect(_areaFade, new Rect2(center - Vector2.One * radius, Vector2.One * radius * 2), false);
                 AreasDrawn++;
             }
             string glyphs = string.Join(" ", group.SelectMany(area => area.Glyphs));
             float width = CellFont.GetStringSize(glyphs, fontSize: fontSize).X;
             var label = center + new Vector2(-width / 2,
-                group.Max(area => area.Radius) * cellHeight / (float)Session.Stride + pixel + CellFont.GetAscent(fontSize));
+                group.Max(area => area.Radius) * cellWidth / (float)Session.Stride + pixel + CellFont.GetAscent(fontSize));
             DrawString(CellFont, label, glyphs, fontSize: fontSize,
                 modulate: new Color(1, 1, 1, AreaOfEffect.IconAlpha));
         }

@@ -27,6 +27,7 @@ public class ServiceFootprintTests
     public void SingleClickOccupiesWholeFootprintButCountsAndChargesOneBuilding()
     {
         var game = TestCity.Flat(rules: CityRules.Full);
+        game.HighestMilestone = 100;
         var type = game.Map.Content.Buildings.Get("Sheriff's Hall");
         int money = game.Money;
         Assert.Equal(new Quote(2, type.Cost, 0), game.QuoteBuilding(type, new(10, 19, 1, 1)));
@@ -69,6 +70,7 @@ public class ServiceFootprintTests
     public void SelectedAreasTileNonOverlappingCompleteBuildings()
     {
         var game = TestCity.Flat();
+        game.HighestMilestone = 100;
         var type = game.Map.Content.Buildings.Get("Sheriff's Hall");
         Assert.Equal(new Quote(4, type.Cost * 2, 1), game.QuoteBuilding(type, new(10, 19, 5, 1)));
         Assert.True(game.PlaceBuilding(type, new(10, 19, 5, 1)).Success);
@@ -80,6 +82,7 @@ public class ServiceFootprintTests
     public void HillCostsApplyAcrossTheWholeFootprint()
     {
         var game = TestCity.Flat();
+        game.HighestMilestone = 100;
         var type = game.Map.Content.Buildings.Get("Sheriff's Hall");
         game.Map.SetTerrain(11, 19, game.Map.Content.Terrains.Get("Hill"));
         Assert.Equal((int)(type.Cost * 1.25), game.QuoteBuilding(type, new(10, 19, 1, 1)).Cost);
@@ -105,6 +108,7 @@ public class ServiceFootprintTests
     public void PreviewDemolitionPersistenceAndUndoKeepOneWholeBuilding()
     {
         var session = new GameSession(TestCity.Flat());
+        session.Game.HighestMilestone = 100;
         session.Game.Paused = true;
         session.PlaceCursor(new(10, 19));
         var type = session.Game.Map.Content.Buildings.Get("Sheriff's Hall");
@@ -131,6 +135,7 @@ public class ServiceFootprintTests
     public void MissingAndMalformedFootprintsAreRejected()
     {
         var game = TestCity.Flat();
+        game.HighestMilestone = 100;
         var type = game.Map.Content.Buildings.Get("Sheriff's Hall");
         Assert.True(game.PlaceBuilding(type, new CellRect(10, 19, 1, 1)).Success);
         var json = JsonNode.Parse(SaveGameStore.Serialize(game))!;

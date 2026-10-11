@@ -44,6 +44,10 @@ public sealed record CityStats(
 /// <summary>How much residents want more of each zone type, from 0 (none) to 1 (strong).</summary>
 public readonly record struct Demand(double Residential, double Commercial, double Industrial)
 {
+    public static int SupportingHomes(CityStats stats, GameConfig config) => config.FullRules
+        ? Math.Max(stats.Households + stats.Residential.AwaitingRemoval, stats.Population / 5)
+        : stats.Residential.Occupied;
+
     public double For(ZoneType zone) => zone switch
     {
         ZoneType.Residential => Residential,
@@ -55,11 +59,13 @@ public readonly record struct Demand(double Residential, double Commercial, doub
     public static Demand Compute(CityStats stats, GameConfig config)
     {
         int zonedR = stats.Residential.Zoned;
-        int filledR = stats.Residential.Occupied;
+        int filledR = SupportingHomes(stats, config);
 
-        // Housing is needed to support the commercial and industrial areas that have been designated.
-        int neededForCommercial = stats.Commercial.Zoned == 0 ? 0 : config.ResidentialPerCommercial * (stats.Commercial.Zoned - 1) + 1;
-        int neededForIndustrial = stats.Industrial.Zoned == 0 ? 0 : config.ResidentialPerIndustrial * (stats.Industrial.Zoned - 1) + 1;
+        // Empty business plots are future supply, not existing employers needing more homes.
+        int neededForCommercial = stats.Commercial.Occupied == 0 ? 0 :
+            config.ResidentialPerCommercial * (stats.Commercial.Occupied - 1) + 1;
+        int neededForIndustrial = stats.Industrial.Occupied == 0 ? 0 :
+            config.ResidentialPerIndustrial * (stats.Industrial.Occupied - 1) + 1;
         int neededR = Math.Max(config.MinResidentialCells, Math.Max(neededForCommercial, neededForIndustrial));
 
         double residential = Math.Clamp((neededR - zonedR) / (double)neededR, 0, 1);
