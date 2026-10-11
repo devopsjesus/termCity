@@ -12,7 +12,7 @@ public static class CityReport
         ServiceKind.None => "Roads",
         ServiceKind.Power => "Fuel",
         ServiceKind.Water => "Water",
-        ServiceKind.Fire => "Fire watch",
+        ServiceKind.Fire => "Fire Watch",
         ServiceKind.Police => "Sheriff",
         ServiceKind.Health => "Physic",
         ServiceKind.Education => "Learning",

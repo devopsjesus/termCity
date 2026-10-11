@@ -8,6 +8,14 @@ public sealed record EffectArea(Pos Center, int Radius, IReadOnlyList<string> Gl
 
 public static class AreaOfEffect
 {
+    public const float OverlayAlpha = 0.32f;
+    public const double FadeExtent = AreaFalloff.Extent;
+
+    public static float FadeAlpha(double normalizedDistance)
+    {
+        return (float)(OverlayAlpha * AreaFalloff.Strength(normalizedDistance));
+    }
+
     public const float RingAlpha = 0.38f, IconAlpha = 1f;
 
     public static IReadOnlyList<EffectArea> ForBuilding(BuildingType type, Pos center)
@@ -46,13 +54,13 @@ public static class AreaOfEffect
         }
     }
 
-    /// <summary>Pixelated ellipse matching a circular radius in map-cell space, including non-square terminal cells.</summary>
+    /// <summary>Pixelated screen-space circle sized by the map's horizontal cell scale.</summary>
     public static IReadOnlySet<Pos> Outline(int radius, int cellWidth, int cellHeight, int stride, int pixel)
     {
         if (radius <= 0 || cellWidth <= 0 || cellHeight <= 0 || stride <= 0 || pixel <= 0)
             throw new ArgumentOutOfRangeException(nameof(radius));
         double rx = radius * cellWidth / (double)(stride * pixel);
-        double ry = radius * cellHeight / (double)(stride * pixel);
+        double ry = rx;
         int steps = Math.Max(16, (int)Math.Ceiling(Math.Tau * Math.Max(rx, ry) * 2));
         var points = new HashSet<Pos>();
         for (int i = 0; i < steps; i++)

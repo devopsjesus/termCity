@@ -5,9 +5,38 @@ using TermCity.Core.World;
 
 namespace TermCity.Core.Rendering;
 
+public sealed record BuildingCondition(string Text, Rgb Color);
+
 /// <summary>Produces the human readable description of a cell for the inspector panel.</summary>
 public static class CellInspector
 {
+    public static BuildingCondition? Status(CityGame game, Pos pos)
+    {
+        var map = game.Map;
+        if (!map.InBounds(pos) || map.BuildingAt(pos.X, pos.Y) is not { } building) return null;
+        var error = Rgb.Hex(0xff7777);
+        var warning = Rgb.Hex(0xffe066);
+        int index = map.Index(pos.X, pos.Y);
+        if (!map.BuildingIsServed(index, game.Network.IsServed))
+            return new("Disconnected: no connected-road access", error);
+        if (game.Config.FullRules)
+        {
+            bool fuel = !game.Services.IsPowered(map, index), water = !game.Services.IsWatered(map, index);
+            if (building.Zone != ZoneType.None && (fuel || water))
+                return new(fuel && water ? "No fuel or water" : fuel ? "No fuel" : "No water", error);
+            if (building.Service != ServiceKind.None && !building.Service.IsUtility())
+            {
+                double funding = game.Budget.Funding(building.Service);
+                if (funding <= 0) return new("Inactive: no funding", error);
+                if (game.Insolvent) return new("Reduced service: unpaid upkeep", warning);
+                if (funding < 1) return new($"Reduced funding: {funding:P0}", warning);
+            }
+        }
+        if (map.ZoneRemovalAt(pos.X, pos.Y) is { } removal)
+            return new($"Unzoned: removal in {Math.Max(0, removal.RemoveAtDay - game.ElapsedDays):0.0} game days; restore {Zones.Get(removal.Zone).Name} to keep it", warning);
+        return new("Active", Rgb.Hex(0x88ee99));
+    }
+
     /// <summary>One-line description of a cell for the status line.</summary>
     public static string Summary(CityGame game, Pos pos) => string.Join(" · ", Describe(game, pos));
 
@@ -40,6 +69,7 @@ public static class CellInspector
             if (map.BuildingAt(pos.X, pos.Y) is { } building)
             {
                 lines.Add(building.Name);
+                if (Status(game, pos) is { } status) lines.Add(status.Text);
                 var h = map.HouseholdAt(pos.X, pos.Y);
                 if (!h.IsEmpty)
                 {
@@ -63,16 +93,14 @@ public static class CellInspector
             lines.Add(standalone.Name);
             var footprint = map.BuildingFootprintAt(pos.X, pos.Y);
             if (footprint.Area > 1) lines.Add($"{footprint.Width}x{footprint.Height} cells");
-            if (game.Config.FullRules && standalone.Service != ServiceKind.None)
-            {
-                lines.Add(map.BuildingIsServed(map.Index(pos.X, pos.Y), game.Network.IsServed)
-                    ? "Active (connected-road access)"
-                    : "INACTIVE: no connected-road access; upkeep still charged");
-            }
+            if (Status(game, pos) is { } status) lines.Add(status.Text);
             if (map.ZoneRemovalAt(pos.X, pos.Y) is { } removal)
             {
-                double days = Math.Max(0, removal.RemoveAtDay - game.ElapsedDays);
-                lines.Add($"Unzoned: removal in {days:0.0} game days; restore {Zones.Get(removal.Zone).Name} to keep it");
+                if (Status(game, pos)?.Text.StartsWith("Unzoned:", StringComparison.Ordinal) != true)
+                {
+                    double days = Math.Max(0, removal.RemoveAtDay - game.ElapsedDays);
+                    lines.Add($"Unzoned: removal in {days:0.0} game days; restore {Zones.Get(removal.Zone).Name} to keep it");
+                }
                 var h = map.HouseholdAt(pos.X, pos.Y);
                 if (!h.IsEmpty)
                 {
@@ -92,9 +120,6 @@ public static class CellInspector
         }
 
         int i = game.Map.Index(pos.X, pos.Y);
-        var services = game.Services;
-        if (!services.IsPowered(game.Map, i)) lines.Add("No fuel");
-        if (!services.IsWatered(game.Map, i)) lines.Add("No water");
         if (zone == ZoneType.Residential && !game.Map.HouseholdAt(pos.X, pos.Y).IsEmpty)
         {
             lines.Add($"Contentment {CityAnalysis.CellHappiness(game, i):0}");

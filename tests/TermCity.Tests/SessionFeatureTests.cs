@@ -11,6 +11,31 @@ namespace TermCity.Tests;
 
 public class SessionFeatureTests
 {
+    [Fact]
+    public void CompletedWeeksDoNotReplaceBottomBarFeedbackWithRecurringSummaries()
+    {
+        var session = Session();
+        session.SetMessage("");
+        session.Game.AdvanceWeek();
+        session.Game.AdvanceWeek();
+        Assert.Equal("", session.Message);
+        Assert.NotNull(session.Game.LastReport);
+        session.ShowReport();
+        Assert.Contains(session.Prompt!.Tabs!, tab => tab.Title == "Population" &&
+            tab.Text.Contains("LAST COMPLETED WEEK", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DisabledQuitConfirmationQuitsImmediatelyWithoutOpeningPrompt()
+    {
+        var session = new GameSession(TestCity.Flat()) { ConfirmQuit = false };
+        bool quit = false;
+        session.QuitRequested += () => quit = true;
+        session.RequestQuit();
+        Assert.True(quit);
+        Assert.Null(session.Prompt);
+    }
+
     private static GameSession Session() => new(TestCity.Flat(),
         Path.Combine(Path.GetTempPath(), "termcity-session-" + Guid.NewGuid().ToString("N") + ".json"));
 
@@ -53,6 +78,7 @@ public class SessionFeatureTests
         Assert.True(session.ConfirmPreview().Success);
         Assert.Equal(48_500, session.Game.Money);
         Assert.Null(session.Preview);
+        session.Game.Paused = true;
         session.RequestUndo();
         Assert.True(session.Game.Paused);
         Assert.Contains("entire city", session.Prompt!.Text);
@@ -127,6 +153,7 @@ public class SessionFeatureTests
         Assert.True(session.ConfirmPreview().Success);
         Assert.Equal(49_000, game.Money);
         Assert.Same(building, game.Map.BuildingAt(10, 18));
+        session.Game.Paused = true;
         session.RequestUndo();
         session.SelectPrompt(0);
         session.Game.Paused = false;
@@ -175,7 +202,7 @@ public class SessionFeatureTests
         Assert.Contains("Warning:", placed.Message);
         Assert.Equal(MessageKind.Warning, session.MessageKind);
         Assert.Equal(0, game.Services.ActiveCounts[(int)type.Service]);
-        Assert.Contains("INACTIVE", CellInspector.Summary(game, new Pos(30, 5)));
+        Assert.Contains("Disconnected", CellInspector.Summary(game, new Pos(30, 5)));
 
         var road = game.BuildRoad(new CellRect(30, 7, 1, 14));
         Assert.True(road.Success, road.Message);
@@ -298,6 +325,7 @@ public class SessionFeatureTests
         session.PreviewDemolish();
         Assert.Equal(4, session.Preview!.Quote.Cells);
         Assert.True(session.ConfirmPreview().Success);
+        session.Game.Paused = true;
         session.RequestUndo();
         session.SelectPrompt(0);
         session.Game.Paused = false;
@@ -305,13 +333,13 @@ public class SessionFeatureTests
     }
 
     [Fact]
-    public void UndoAllowsExactlySevenDaysWhileRunningAndOlderActionsWhilePaused()
+    public void UndoRequiresPauseAndRetainsOlderActionsUntilPaused()
     {
         var session = Session();
         session.PlaceCursor(new Pos(10, 18));
         Assert.True(session.BuildRoad().Success);
         for (int i = 0; i < 7; i++) session.Game.AdvanceDay();
-        Assert.True(session.CanUndo);
+        Assert.False(session.CanUndo);
         session.Game.Update(0.1);
         Assert.False(session.CanUndo);
         session.RequestUndo();
@@ -334,6 +362,7 @@ public class SessionFeatureTests
         var session = Session();
         session.PlaceCursor(new Pos(10, 18));
         session.BuildRoad();
+        session.Game.Paused = true;
         session.RequestUndo();
         session.SelectPrompt(1);
         Assert.True(session.Game.Paused);
@@ -348,6 +377,7 @@ public class SessionFeatureTests
         session.PlaceCursor(new Pos(10, 18));
         session.BuildRoad();
         Assert.False(session.BuildRoad().Success);
+        session.Game.Paused = true;
         session.RequestUndo();
         session.SelectPrompt(0);
         Assert.Equal(50_000, session.Game.Money);
@@ -367,6 +397,7 @@ public class SessionFeatureTests
         session.PlaceCursor(new Pos(50, 18));
         session.BuildRoad();
         session.Game.AdvanceWeek();
+        session.Game.Paused = true;
         session.RequestUndo();
         session.SelectPrompt(0);
         session.Game.Paused = false;
@@ -601,7 +632,7 @@ public class SessionFeatureTests
         FillHomes(session.Game, 20, people: 5);
         Assert.Equal(100, session.Game.HighestMilestone);
         Assert.Contains("City Grew! Hamlet: 100", session.Message);
-        Assert.Equal("City Grew!", session.Prompt!.Title);
+        Assert.Equal("Your City Grew!", session.Prompt!.Title);
         session.QuickSave();
         Assert.True(session.LoadFrom(session.SavePath));
         session.SetMessage("");
@@ -611,7 +642,12 @@ public class SessionFeatureTests
         Assert.Equal(500, session.Game.HighestMilestone);
         Assert.Equal(1_000, session.NextMilestone);
         session.ShowReport();
-        Assert.Contains("Highest milestone: 500", session.Prompt!.Text);
+        Assert.Contains("Current size: Village", session.Prompt!.Text);
+        Assert.Contains("Next size: Market Town: 1,000 people", session.Prompt.Text);
+        Assert.DoesNotContain("[Locked]", session.Prompt.Text);
+        session.ShowGuide();
+        string milestones = session.Prompt!.Tabs!.Single(tab => tab.Title == "Milestones").Text;
+        Assert.Contains("[Reached] Village: 500 souls", milestones);
     }
 
     [Theory]
@@ -654,7 +690,8 @@ public class SessionFeatureTests
         session.Game.Designate(new CellRect(10, 21, 20, 1), ZoneType.Residential);
         session.Game.AdvanceWeek();
         session.ShowReport();
-        Assert.Contains($"New homes {session.Game.LastReport!.NewHouseholds}", session.Prompt!.Text);
+        session.SelectTab(session.Prompt!.Tabs!.ToList().FindIndex(tab => tab.Title == "Population"));
+        Assert.Contains($"New homes: {session.Game.LastReport!.NewHouseholds}", session.Prompt!.Text);
         Assert.Contains(Fmt.Money(session.Game.LastReport.Income), session.Prompt.Text);
     }
 

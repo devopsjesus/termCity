@@ -38,7 +38,7 @@ public static class MapOverlays
     {
         MapOverlay.Off => "Overlay off",
         MapOverlay.Power => "Overlay: fuel",
-        MapOverlay.Fire => "Overlay: fire watch",
+        MapOverlay.Fire => "Overlay: Fire Watch",
         MapOverlay.Police => "Overlay: sheriff's reach",
         MapOverlay.Health => "Overlay: physic",
         MapOverlay.Education => "Overlay: learning",

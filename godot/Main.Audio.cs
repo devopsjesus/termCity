@@ -15,8 +15,6 @@ public partial class Main
 
     public double SoundVolume { get; private set; } = DefaultSoundVolume;
 
-    private const string AudioDialogTitle = "Audio controls";
-
     private AudioStreamPlayer _music = null!;
 
     private AudioStreamGenerator? _musicTrack;
@@ -173,32 +171,70 @@ public partial class Main
         RefreshMenuState(ToggleSound, SoundEnabled ? "ON" : "OFF");
     }
 
-    private void ShowAudioDialog() => Session.ShowPrompt(AudioDialogTitle,
-        "Music and placement sounds have independent volume and mute controls.",
-        [new("Close", Session.CancelPrompt)]);
-
     private void AddAudioControls(Container content, bool music)
     {
         var channel = new VBoxContainer();
+        channel.AddThemeConstantOverride("separation", 3);
         var row = new HBoxContainer();
-        row.AddChild(new Label { Text = music ? "Music" : "Sound", SizeFlagsHorizontal = SizeFlags.ExpandFill });
+        var label = new Label { Text = music ? "MUSIC" : "SOUND",
+            VerticalAlignment = VerticalAlignment.Center };
+        var labelCell = ConstructionTableCell(label);
+        labelCell.Name = music ? "MusicLabelCell" : "SoundLabelCell";
+        labelCell.SizeFlagsHorizontal = SizeFlags.Fill;
+        row.AddChild(labelCell);
         var slider = new HSlider
         {
             Name = music ? "MusicVolume" : "SoundVolume",
             MinValue = 0, MaxValue = 100, Step = 1,
             Value = music ? MusicVolume : SoundVolume,
             FocusMode = FocusModeEnum.All,
-            CustomMinimumSize = new Vector2(200, 0), SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            CustomMinimumSize = new Vector2(200, 32), SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            TextureFilter = TextureFilterEnum.Nearest,
         };
-        var value = new Label { Text = $"{slider.Value:0}%", CustomMinimumSize = new Vector2(56, 0) };
-        string muteText = (music ? MusicEnabled : SoundEnabled) ? "Mute" : "Unmute";
-        var mute = new MnemonicButton { Name = music ? "MusicMute" : "SoundMute",
-            Text = muteText, UnderlineIndex = muteText.IndexOf(music ? 'm' : 'u', StringComparison.OrdinalIgnoreCase),
+        foreach (string state in new[] { "slider", "grabber_area", "grabber_area_highlight" })
+        {
+            var track = new StyleBoxFlat
+            {
+                BgColor = new Color(state == "slider" ? "#101010" :
+                    state == "grabber_area_highlight" ? "#243847" : "#18232c"),
+                BorderColor = Colors.White,
+                ContentMarginTop = 4, ContentMarginBottom = 4,
+            };
+            track.SetBorderWidthAll(1);
+            slider.AddThemeStyleboxOverride(state, track);
+        }
+        foreach (string state in new[] { "grabber", "grabber_highlight", "grabber_disabled" })
+        {
+            using var image = Image.CreateEmpty(12, 20, false, Image.Format.Rgba8);
+            image.Fill(state == "grabber_disabled" ? new Color("#777777") :
+                state == "grabber_highlight" ? new Color("#ffe066") : Colors.White);
+            slider.AddThemeIconOverride(state, ImageTexture.CreateFromImage(image));
+        }
+        slider.AddThemeConstantOverride("grabber_offset", 0);
+        var mute = new Button { Name = music ? "MusicMute" : "SoundMute",
+            CustomMinimumSize = new Vector2(36, 32),
             TooltipText = music ? "Mute/unmute music (M)" : "Mute/unmute sound (U)" };
+        var speaker = new Control { MouseFilter = MouseFilterEnum.Ignore };
+        speaker.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        speaker.Draw += () =>
+        {
+            var origin = (speaker.Size / 2).Floor();
+            speaker.DrawRect(new Rect2(origin + new Vector2(-10, -4), new Vector2(6, 8)), Colors.White);
+            speaker.DrawRect(new Rect2(origin + new Vector2(-4, -6), new Vector2(2, 12)), Colors.White);
+            speaker.DrawRect(new Rect2(origin + new Vector2(-2, -8), new Vector2(2, 16)), Colors.White);
+            speaker.DrawRect(new Rect2(origin + new Vector2(0, -10), new Vector2(4, 20)), Colors.White);
+            if (music ? MusicEnabled : SoundEnabled)
+            {
+                speaker.DrawRect(new Rect2(origin + new Vector2(6, -4), new Vector2(2, 8)), Colors.White);
+                speaker.DrawRect(new Rect2(origin + new Vector2(10, -8), new Vector2(2, 2)), Colors.White);
+                speaker.DrawRect(new Rect2(origin + new Vector2(12, -6), new Vector2(2, 12)), Colors.White);
+                speaker.DrawRect(new Rect2(origin + new Vector2(10, 6), new Vector2(2, 2)), Colors.White);
+            }
+        };
+        mute.AddChild(speaker);
         slider.ValueChanged += volume =>
         {
             if (music) MusicVolume = volume; else SoundVolume = volume;
-            value.Text = $"{volume:0}%";
             (music ? _music : _clickPlayer).VolumeDb = VolumeDb(volume, music ? -24 : -12);
             if (music) _music.StreamPaused = !MusicEnabled || MusicVolume == 0 || !_focused;
             else if (volume == 0) _clickPlayer.Stop();
@@ -216,16 +252,22 @@ public partial class Main
                 SoundEnabled = !SoundEnabled;
                 if (!SoundEnabled) _clickPlayer.Stop();
             }
-            mute.Text = (music ? MusicEnabled : SoundEnabled) ? "Mute" : "Unmute";
-            mute.UnderlineIndex = mute.Text.IndexOf(music ? 'm' : 'u', StringComparison.OrdinalIgnoreCase);
+            speaker.QueueRedraw();
             SavePreferences();
         };
-        row.AddChild(value);
+        var sliderPadding = new MarginContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        sliderPadding.AddThemeConstantOverride("margin_left", 12);
+        sliderPadding.AddThemeConstantOverride("margin_right", 12);
+        sliderPadding.AddChild(slider);
+        row.AddChild(sliderPadding);
         row.AddChild(mute);
-        _dialogButtons.Add(mute);
+        _dialogControls.Add(slider);
+        _dialogControls.Add(mute);
         channel.AddChild(row);
-        channel.AddChild(slider);
-        content.AddChild(channel);
+        var frame = ConstructionTableCell(channel);
+        frame.Name = music ? "MusicControls" : "SoundControls";
+        frame.GetThemeStylebox("panel").SetContentMarginAll(4);
+        content.AddChild(frame);
     }
 
     private void StopMusic()

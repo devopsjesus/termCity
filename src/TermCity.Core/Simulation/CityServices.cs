@@ -94,6 +94,7 @@ public sealed class CityServices
         }
 
         var pollution = new byte[count];
+        var cleaners = new List<(int X, int Y, int Amount)>();
         var buildings = new int[ServiceKinds.Count];
         var active = new int[ServiceKinds.Count];
         int powerSupply = 0, waterSupply = 0, upkeep = 0, seatRank = 0, granary = 0;
@@ -126,17 +127,18 @@ public sealed class CityServices
             }
             else if (type.Radius > 0)
             {
-                Splat(coverage[(int)kind], map, x, y, type.Radius, type.Strength * funding(kind), fade: 0.6);
+                Splat(coverage[(int)kind], map, x, y, type.Radius, type.Strength * funding(kind));
             }
 
             seatRank = Math.Max(seatRank, type.SeatRank);
             if (type.Pollution != 0)
             {
-                EmitPollution(pollution, map, x, y, type.Pollution);
+                if (type.Pollution < 0) cleaners.Add((x, y, type.Pollution));
+                else EmitPollution(pollution, map, x, y, type.Pollution);
             }
         }
 
-        // Smoke from industry. Parks (recreation) later scrub some of it away at the point of use.
+        // Apply all sources before cleanup so map insertion order does not change air quality.
         int powerDemand = 0, waterDemand = 0;
         foreach (int index in map.ZoneCells(ZoneType.Industrial))
         {
@@ -148,6 +150,8 @@ public sealed class CityServices
             var type = map.Content.Buildings[map.BuildingLayer[index]];
             EmitPollution(pollution, map, index % map.Width, index / map.Width, type.Pollution);
         }
+        foreach (var cleaner in cleaners)
+            EmitPollution(pollution, map, cleaner.X, cleaner.Y, cleaner.Amount);
 
         foreach (var zone in Zones.Placeable)
         {
@@ -169,9 +173,8 @@ public sealed class CityServices
         return new CityServices(coverage, pollution, config.FullRules, power, water, buildings, active, upkeep, seatRank, granary);
     }
 
-    // Strength falls linearly from the full value at the building to (1 - fade) of it at the edge of the radius,
-    // and overlapping buildings combine as independent chances so two stations are better than one but not twice as good.
-    private static void Splat(byte[] field, GameMap map, int cx, int cy, int radius, double strength, double fade)
+    // Overlaps combine as independent chances, preserving diminishing returns.
+    private static void Splat(byte[] field, GameMap map, int cx, int cy, int radius, double strength)
     {
         int s = (int)Math.Round(strength);
         if (s <= 0)
@@ -179,8 +182,9 @@ public sealed class CityServices
             return;
         }
 
-        int r2 = radius * radius;
-        for (int dy = -radius; dy <= radius; dy++)
+        int extent = (int)Math.Ceiling(radius * AreaFalloff.Extent);
+        int verticalExtent = (int)Math.Ceiling(extent / AreaFalloff.CellAspect);
+        for (int dy = -verticalExtent; dy <= verticalExtent; dy++)
         {
             int y = cy + dy;
             if (y < 0 || y >= map.Height)
@@ -188,16 +192,15 @@ public sealed class CityServices
                 continue;
             }
 
-            for (int dx = -radius; dx <= radius; dx++)
+            for (int dx = -extent; dx <= extent; dx++)
             {
                 int x = cx + dx;
-                int d2 = dx * dx + dy * dy;
-                if (x < 0 || x >= map.Width || d2 > r2)
+                if (x < 0 || x >= map.Width)
                 {
                     continue;
                 }
 
-                double falloff = 1 - fade * Math.Sqrt(d2) / radius;
+                double falloff = AreaFalloff.Strength(AreaFalloff.Distance(dx, dy) / radius);
                 int add = (int)Math.Round(s * falloff);
                 int i = y * map.Width + x;
                 int old = field[i];
@@ -214,10 +217,11 @@ public sealed class CityServices
         }
 
         int radius = PollutionRadius(amount);
-        int r2 = radius * radius;
+        int extent = (int)Math.Ceiling(radius * AreaFalloff.Extent);
+        int verticalExtent = (int)Math.Ceiling(extent / AreaFalloff.CellAspect);
         int strength = Math.Abs(amount) * 9 + 14;
         bool clean = amount < 0;
-        for (int dy = -radius; dy <= radius; dy++)
+        for (int dy = -verticalExtent; dy <= verticalExtent; dy++)
         {
             int y = cy + dy;
             if (y < 0 || y >= map.Height)
@@ -225,16 +229,15 @@ public sealed class CityServices
                 continue;
             }
 
-            for (int dx = -radius; dx <= radius; dx++)
+            for (int dx = -extent; dx <= extent; dx++)
             {
                 int x = cx + dx;
-                int d2 = dx * dx + dy * dy;
-                if (x < 0 || x >= map.Width || d2 > r2)
+                if (x < 0 || x >= map.Width)
                 {
                     continue;
                 }
 
-                int add = (int)(strength * (1 - Math.Sqrt(d2) / (radius + 1)));
+                int add = (int)Math.Round(strength * AreaFalloff.Strength(AreaFalloff.Distance(dx, dy) / radius));
                 int i = y * map.Width + x;
                 if (clean)
                 {

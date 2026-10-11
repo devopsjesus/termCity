@@ -8,6 +8,25 @@ namespace TermCity.Tests;
 public class AreaOfEffectTests
 {
     [Fact]
+    public void RangeOverlayIsVisibleInsideCoverageAndFadesOnlyBeyondItsBoundary()
+    {
+        Assert.Equal(0.32f, AreaOfEffect.FadeAlpha(0));
+        Assert.Equal(0.32f, AreaOfEffect.FadeAlpha(0.5));
+        Assert.Equal(0.32f, AreaOfEffect.FadeAlpha(1));
+        float previous = AreaOfEffect.FadeAlpha(1);
+        for (int step = 1; step <= 100; step++)
+        {
+            float current = AreaOfEffect.FadeAlpha(1 + step / 100d * (AreaOfEffect.FadeExtent - 1));
+            Assert.True(current <= previous);
+            Assert.True(previous - current < 0.005f);
+            previous = current;
+        }
+        Assert.Equal(0.16f, AreaOfEffect.FadeAlpha(1.125));
+        Assert.Equal(0, AreaOfEffect.FadeAlpha(1.25));
+        Assert.Equal(0, AreaOfEffect.FadeAlpha(2));
+    }
+
+    [Fact]
     public void RingsAreMoreVisibleAndIconsAreFullyOpaque()
     {
         Assert.Equal(0.38f, AreaOfEffect.RingAlpha);
@@ -44,7 +63,7 @@ public class AreaOfEffectTests
     [InlineData(2, 1)]
     [InlineData(1, 4)]
     [InlineData(1, 16)]
-    public void PixelatedOutlineTracksExactRadiusAcrossZooms(int scale, int stride)
+    public void PixelatedOutlineIsCircularAcrossZooms(int scale, int stride)
     {
         const int radius = 16, pixel = 3;
         int width = 12 * scale, height = 22 * scale;
@@ -54,12 +73,14 @@ public class AreaOfEffectTests
             Assert.Equal(0, p.X % pixel);
             Assert.Equal(0, p.Y % pixel);
             double distance = Math.Sqrt(Math.Pow(p.X * stride / (double)width, 2) +
-                Math.Pow(p.Y * stride / (double)height, 2));
-            double tolerance = pixel * stride * Math.Sqrt(1.0 / (width * width) + 1.0 / (height * height)) / 2;
+                Math.Pow(p.Y * stride / (double)width, 2));
+            double tolerance = pixel * stride * Math.Sqrt(2.0) / width / 2;
             Assert.InRange(distance, radius - tolerance, radius + tolerance);
         });
         Assert.Contains(new Pos((int)Math.Round(radius * width / (double)(stride * pixel)) * pixel, 0), points);
-        Assert.Contains(new Pos(0, (int)Math.Round(radius * height / (double)(stride * pixel)) * pixel), points);
+        Assert.Contains(new Pos(0, (int)Math.Round(radius * width / (double)(stride * pixel)) * pixel), points);
+        Assert.Equal(points.Max(p => p.X) - points.Min(p => p.X),
+            points.Max(p => p.Y) - points.Min(p => p.Y));
     }
 
     [Fact]

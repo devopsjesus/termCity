@@ -109,7 +109,7 @@ public sealed class TerminalGrid
     {
         Resize(_width, _height, session.ZoomLevel > 0 ? 2 : 1);
         session.SetViewport(Math.Max(1, (int)(_width / PixelWidth)), Math.Max(1, (int)(_height / PixelHeight)));
-        VectorRoads = session.Overlay == MapOverlay.Off;
+        VectorRoads = true;
         var sampler = new BlockSampler(session.Game) { Overlay = session.Overlay, VectorRoads = VectorRoads };
         var hillGlyphs = session.Game.Map.Content.Terrains
             .Where(terrain => terrain.Generator is HillGenerator)
@@ -172,7 +172,7 @@ public sealed class TerminalGrid
                 Background = Rgb.Hex(preview.IsValid(session.Game, position.X, position.Y) ? 0x2a7849 : 0x8c2d37),
             };
         }
-        if (block.Contains(session.Cursor))
+        if (session.HasCursor && !session.BuildingToolActive && block.Contains(session.Cursor))
         {
             visual = visual with { Foreground = Rgb.Hex(0x000000), Background = Rgb.Hex(0xffdc5a) };
         }

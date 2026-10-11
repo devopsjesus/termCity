@@ -10,8 +10,65 @@ namespace TermCity.Tests;
 
 public class GodotPresentationTests
 {
+    [Fact]
+    public void EveryOverlayRetainsRenderedRoads()
+    {
+        var session = new GameSession(TestCity.Flat(rules: CityRules.Full));
+        var grid = new TerminalGrid();
+        grid.Resize(240, 220);
+        foreach (var overlay in Enum.GetValues<MapOverlay>())
+        {
+            session.SetOverlay(overlay);
+            grid.Fill(session);
+            Assert.True(grid.VectorRoads);
+        }
+    }
+
     private static GameSession Session() => new(TestCity.Flat(config: new GameConfig { MapWidth = 160, MapHeight = 96 }),
         Path.Combine(Path.GetTempPath(), "termcity-godot-" + Guid.NewGuid().ToString("N") + ".json"));
+
+    [Fact]
+    public void StartupHasNoHighlightEvenAfterCameraAndZoomChanges()
+    {
+        var session = Session();
+        var grid = new TerminalGrid();
+        grid.Resize(120, 66);
+        Assert.False(session.HasCursor);
+        Assert.Null(session.Selection);
+        Assert.Null(session.Anchor);
+        Assert.False(session.MessageVisible);
+        foreach (int zoom in new[] { 0, -1, 1 })
+        {
+            session.SetZoom(zoom);
+            session.CenterOn(session.Cursor);
+            grid.Fill(session);
+            for (int y = 0; y < grid.Rows; y++)
+                for (int x = 0; x < grid.Columns; x++)
+                    Assert.Null(grid.HighlightAt(session, x, y));
+        }
+        session.MoveCursor(1, 0);
+        Assert.True(session.HasCursor);
+        grid.Fill(session);
+        Assert.Contains(Enumerable.Range(0, grid.Rows * grid.Columns),
+            i => grid.HighlightAt(session, i % grid.Columns, i / grid.Columns) is not null);
+    }
+
+    [Fact]
+    public void ClickingAndStartingPlacementActivateTheCursor()
+    {
+        var clicked = Session();
+        clicked.SelectCell(clicked.Cursor);
+        Assert.True(clicked.HasCursor);
+        Assert.NotNull(clicked.Selection);
+        var road = Session();
+        road.BeginRoadLine();
+        Assert.True(road.HasCursor);
+        Assert.True(road.RoadToolActive);
+        var building = Session();
+        building.PreviewBuilding(building.Game.Map.Content.Buildings.Get("Town Well"));
+        Assert.True(building.HasCursor);
+        Assert.True(building.BuildingToolActive);
+    }
 
     [Fact]
     public void PixelMappingUsesWholeCellsAndRejectsOutsideCoordinates()

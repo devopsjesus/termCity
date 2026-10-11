@@ -13,6 +13,7 @@ public class SeasonTests
     private static CityGame Village(string? service = null, GameConfig? config = null, int weeks = 30, string? second = null)
     {
         var game = TestCity.Flat(1, config ?? new GameConfig { StartingMoney = 2_000_000, DefaultTaxRate = 0.09 }, CityRules.Full);
+        game.HighestMilestone = 100;
         foreach (int y in new[] { 18, 21 })
         {
             Assert.True(game.Designate(new CellRect(10, y, 20, 2), ZoneType.Residential).Success);

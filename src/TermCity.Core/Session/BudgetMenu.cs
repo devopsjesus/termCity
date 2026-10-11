@@ -77,10 +77,18 @@ public sealed partial class GameSession
     }
 
     public MapOverlay Overlay { get; private set; }
+    private MapOverlay _lastOverlay = MapOverlay.Power;
+
+    public void ToggleOverlay() => SetOverlay(Overlay == MapOverlay.Off ? _lastOverlay : MapOverlay.Off);
 
     public void CycleOverlay()
+        => SetOverlay(MapOverlays.Next(Overlay));
+
+    public void SetOverlay(MapOverlay overlay)
     {
-        Overlay = Game.Config.FullRules ? MapOverlays.Next(Overlay) : MapOverlay.Off;
+        if (!Enum.IsDefined(overlay)) throw new ArgumentOutOfRangeException(nameof(overlay));
+        Overlay = Game.Config.FullRules ? overlay : MapOverlay.Off;
+        if (Overlay != MapOverlay.Off) _lastOverlay = Overlay;
         SetMessage(Game.Config.FullRules ? MapOverlays.Label(Overlay) : "Overlays need the full rules.");
         Changed?.Invoke();
     }

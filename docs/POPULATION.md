@@ -23,6 +23,19 @@ Each game week, in order:
 
 ## What people feel
 
+### Demand and vacant land
+
+Residential demand uses occupied commercial/industrial buildings, not the number
+of empty plots designated for them. Marking more vacant industry or commerce
+therefore cannot manufacture a housing shortage. Vacant residential zoning also
+does not manufacture business demand. Designating land can reduce demand for that
+same zone by supplying more available plots.
+
+Full-rules business demand and growth capacity share the same housing measure:
+the larger of households (including pending residential removals) and population
+divided by five. Classic uses occupied residential cells. Existing business
+buildings pending removal still count until they are actually removed.
+
 `CityAnalysis.Assess` builds a `CityIndicators` snapshot whenever the layout, budget or week changes. Each home has a
 happiness of 70 minus charges, each in points:
 
@@ -186,5 +199,5 @@ Over two game years from the default start:
 - **City menu > City health report** lists every indicator, complaint and the latest events.
 - The sidebar shows mood, jobs, utilities, the season and grain store, standing, net income and the top complaint; the inspector shows power, water,
   happiness and land value per cell.
-- Place fuel, water, fire watches, sheriffs, apothecaries, schools, greens, castles, churches, markets and granaries from
+- Place fuel, water, Fire Watch buildings, sheriffs, apothecaries, schools, greens, castles, churches, markets and granaries from
   the area menu (**Service buildings**).

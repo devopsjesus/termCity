@@ -112,9 +112,9 @@ public sealed class CityGame
         };
     }
 
-    public static CityGame New(GameConfig config, GameContent? content = null)
+    public static CityGame New(GameConfig config, GameContent? content = null, DateTime? startingDate = null)
     {
-        config = config with { StartingYear = config.StartingYear ?? DateTime.Now.Year };
+        config = config with { StartingYear = config.StartingYear ?? DateTime.Now.Year - 800 };
         if (config.Scenario != CityScenario.Random)
             config = config with { MapWidth = MapSize.MaxWidth, MapHeight = MapSize.MaxHeight };
         content ??= new GameContent();
@@ -126,6 +126,7 @@ public sealed class CityGame
         string[] suffixes = ["haven", " Falls", " Ridge", " Creek", "brook", "wood", "view", " Harbor"];
         var game = new CityGame(config, map, GameRandom.ForStage(config.Seed, "simulation"))
         {
+            Week = startingDate is { } date ? Math.Min(config.WeeksPerYear - 1, (date.DayOfYear - 1) / 7) : 0,
             CityName = config.Scenario != CityScenario.Random ? CityScenarioMap.Name(config.Scenario)
                 : prefixes[names.Next(prefixes.Length)] + suffixes[names.Next(suffixes.Length)],
         };
@@ -231,9 +232,7 @@ public sealed class CityGame
         }
 
         // Dense towers support as many shops as the same people spread over small houses would.
-        int homes = Config.FullRules
-            ? Math.Max(Stats.Households + Stats.Residential.AwaitingRemoval, Stats.Population / 5)
-            : Stats.Residential.Occupied;
+        int homes = Demand.SupportingHomes(Stats, Config);
 
         if (homes < Config.MinResidentialCells)
         {
@@ -530,6 +529,8 @@ public sealed class CityGame
             .Where(m => m.Population > HighestMilestone && m.Population <= population).ToArray();
         if (reached.Length > 0)
         {
+            long grant = reached.Sum(milestone => (long)CityProgression.GoldBonus(this, milestone));
+            Money = checked((int)Math.Min(int.MaxValue, Money + grant));
             HighestMilestone = reached[^1].Population;
             Report(new CityEvent(Week, EventKind.Milestone, CityProgression.Announcement(this, reached), [], Bad: false));
         }

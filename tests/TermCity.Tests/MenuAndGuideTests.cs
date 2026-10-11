@@ -66,7 +66,7 @@ public class MenuAndGuideTests
         var session = Session();
         session.ShowGuide();
         var tabs = session.Prompt!.Tabs!;
-        Assert.Equal(["Start", "Zones", "Roads", "Services", "Population", "Happiness", "Economy", "Glossary"], tabs.Select(t => t.Title));
+        Assert.Equal(["Start", "Zones", "Roads", "Services", "Population", "Happiness", "Economy", "Milestones", "Glossary"], tabs.Select(t => t.Title));
         Assert.Equal(tabs[0].Text, session.Prompt.Text);
         session.CycleTab(1);
         Assert.Equal(1, session.Prompt.ActiveTab);
@@ -149,14 +149,15 @@ public class MenuAndGuideTests
             Assert.Equal(building.Description, help.Description);
             Assert.Contains(Fmt.Money(building.Cost), help.Details);
             Assert.Contains("Upkeep:", help.Details);
-            if (building.Capacity > 0) Assert.Contains($"Capacity: {building.Capacity:N0}", help.Details);
+            Assert.DoesNotContain("at current funding", help.Details);
+            Assert.DoesNotContain("Operation:", help.Details);
+            if (building.Capacity > 0) Assert.Contains($"Capacity: {ChoiceHelpContent.CapacityText(building)}", help.Details);
             if (building.Radius > 0)
             {
                 Assert.Contains($"Radius: {building.Radius} cells", help.Details);
                 Assert.Contains($"strength: {building.Strength}/100", help.Details);
             }
             if (building.RequiresWaterNearby) Assert.Contains("nearby open water", help.Details);
-            Assert.Contains("connected road access", help.Details);
             foreach (var area in TermCity.Core.Rendering.AreaOfEffect.ForBuilding(building, new(0, 0)))
             {
                 Assert.Contains(ChoiceHelpContent.Icons(area.Glyphs), help.Details);

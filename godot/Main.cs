@@ -38,12 +38,19 @@ public partial class Main : Control
                 GetWindow().ContentScaleSize = new Vector2I(1200, 720);
                 GetWindow().ContentScaleMode = Window.ContentScaleModeEnum.CanvasItems;
             }
-            var game = CityGame.New(_options.Config);
+            var game = CityGame.New(_options.Config,
+                startingDate: !_options.SmokeTest && !_options.DumpMap ? DateTime.Now : null);
             game.Paused = true;
             string savePath = ProjectSettings.GlobalizePath(
                 _options.SmokeTest ? "user://smoke/quicksave.json" : "user://quicksave.json");
             Session = new GameSession(game, savePath,
-                showGuide: !_options.Load && !_options.SmokeTest && !_options.DumpMap);
+                showGuide: !_options.Load && !_options.SmokeTest && !_options.DumpMap)
+            {
+                StartAtCurrentWeek = !_options.SmokeTest && !_options.DumpMap,
+#if DEBUG
+                ConfirmQuit = _options.SmokeTest,
+#endif
+            };
             if (_options.Load && !Session.LoadFrom(_options.LoadPath ?? savePath))
             {
                 throw new IOException(Session.Message);
@@ -63,6 +70,10 @@ public partial class Main : Control
             }
             LoadPreferences();
             ApplyFontSize();
+#if DEBUG
+            if (!_options.SmokeTest && DisplayServer.GetName() != "headless")
+                GetWindow().Mode = Window.ModeEnum.Maximized;
+#endif
             var font = LoadBundledFont();
             Map = new TerminalMap { Session = Session, CellFont = font };
             Map.VerifyGlyphs(Session.Game.Map.Content);
@@ -104,18 +115,13 @@ public partial class Main : Control
             Session.SetMessage("Music playback failed; playback stopped.", MessageKind.Error);
             StopMusic();
         }
-        if (_focused && !_editingName)
+        if (_focused && (!_editingName || !Session.Game.Paused))
         {
             Session.Update(delta);
             EdgeScroll(delta);
         }
         UpdateEffects(delta);
         Map.AdvanceAnimation(delta, _focused);
-        if (_focused && Session.Game.Paused)
-        {
-            _pauseGlowSeconds = (_pauseGlowSeconds + delta) % 4;
-            UpdatePauseGlow();
-        }
         _hudElapsed += delta;
         if (_hudElapsed >= 0.1)
         {

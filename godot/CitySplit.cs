@@ -11,7 +11,9 @@ public partial class CitySplit : HSplitContainer
     public override void _Ready()
     {
         DraggerVisibility = DraggerVisibilityEnum.Hidden;
-        MouseDefaultCursorShape = CursorShape.Hsize;
+        MouseDefaultCursorShape = CursorShape.Arrow;
+        foreach (var dragger in GetDragAreaControls())
+            dragger.MouseDefaultCursorShape = CursorShape.Hsize;
         AddThemeConstantOverride("separation", Divider);
         SplitOffsets = [-DefaultSidebar];
         Resized += UpdateBounds;

@@ -135,7 +135,7 @@ public class GuidedPlaythroughTests(ITestOutputHelper output)
 
             (string Name, ServiceKind Kind, string Reason)[] care =
             [
-                ("Fire Watch", ServiceKind.Fire, "Fire watch"),
+                ("Fire Watch", ServiceKind.Fire, "Fire Watch"),
                 ("Apothecary", ServiceKind.Health, "Physic"),
                 ("Chantry School", ServiceKind.Education, "Learning"),
                 ("Village Green", ServiceKind.Recreation, "Commons"),

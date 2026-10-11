@@ -81,11 +81,11 @@ public sealed partial class GameSession
     public const int AutosaveSlots = 3;
     public static readonly IReadOnlyList<int> Milestones = Array.AsReadOnly(CityProgression.Milestones.Select(m => m.Population).ToArray());
 
-    private string? _undoSnapshot;
-    private double _undoAt;
+    public const int UndoLimit = 10;
+    private readonly List<string> _undoHistory = [];
     private int _revision, _savedRevision = -1, _autosaveRevision = -1;
     private double _savedAt, _autosaveAt, _autosaveElapsed;
-    private int _observedHomes, _observedWeek, _observedMilestone;
+    private int _observedHomes, _observedMilestone;
     private Pos _roadAnchor;
     private RoadType? _lineRoad;
     private readonly Stack<SessionPrompt> _promptHistory = [];
@@ -104,7 +104,8 @@ public sealed partial class GameSession
     public SessionPrompt? Prompt { get; private set; }
     public bool GuideVisible { get; private set; }
     public bool HasUnsavedChanges => _revision != _savedRevision || Game.ElapsedDays != _savedAt;
-    public bool CanUndo => _undoSnapshot is not null && (Game.Paused || Game.ElapsedDays - _undoAt <= 7);
+    public int UndoCount => _undoHistory.Count;
+    public bool CanUndo => Game.Paused && UndoCount > 0;
     public event Action? QuitRequested;
 
     public int? NextMilestone
@@ -129,6 +130,10 @@ public sealed partial class GameSession
             Path.GetFileNameWithoutExtension(SavePath) + $".autosave{slot}.json");
     }
 
+    private bool _resumeWhileInteracting;
+    public bool ClockSuspended => Game.Paused ||
+        !_resumeWhileInteracting && (Prompt is not null || Preview is not null);
+
     public void Update(double elapsedSeconds)
     {
         if (elapsedSeconds < 0 || !double.IsFinite(elapsedSeconds))
@@ -136,10 +141,11 @@ public sealed partial class GameSession
             throw new ArgumentOutOfRangeException(nameof(elapsedSeconds));
         }
 
-        if (Prompt is null && Preview is null)
+        if (!ClockSuspended)
         {
             Game.Update(elapsedSeconds);
         }
+        if (Prompt is null && Preview is null) _resumeWhileInteracting = false;
 
         _autosaveElapsed += elapsedSeconds;
         if (_autosaveElapsed >= AutosaveIntervalSeconds)
@@ -157,7 +163,7 @@ public sealed partial class GameSession
         string pending = AutosavePath(1) + ".pending";
         try
         {
-            SaveGameStore.Save(Game, pending);
+            SaveGameStore.Save(Game, pending, new SavedView(CameraX, CameraY, ZoomLevel));
             for (int slot = AutosaveSlots; slot > 1; slot--)
             {
                 if (File.Exists(AutosavePath(slot - 1)))
@@ -180,21 +186,32 @@ public sealed partial class GameSession
 
     public void PreviewRoad(RoadType? road = null)
     {
+        HasCursor = true;
         _previewMenu = CaptureMenu() ?? _selectedMenu;
         road ??= Game.DefaultRoad;
         Preview = new(PlacementKind.Road, ActiveArea, Game.QuoteRoad(ActiveArea, road), road.Name, Road: road);
         Changed?.Invoke();
     }
 
-    public void PreviewBuilding(BuildingType building)
+    public string? BuildingPurchaseError(BuildingType building)
     {
         if (!CityProgression.IsUnlocked(Game, building))
+            return $"{building.Name} is locked until City Grew! at {CityProgression.RequiredPopulation(building):N0} souls.";
+        return building.Cost > Game.Money
+            ? $"Not enough gold: {building.Name} costs {Fmt.Money(building.Cost)}; you have {Fmt.Money(Game.Money)}."
+            : null;
+    }
+
+    public void PreviewBuilding(BuildingType building)
+    {
+        if (BuildingPurchaseError(building) is { } error)
         {
-            SetMessage($"{building.Name} is locked until City Grew! at {CityProgression.RequiredPopulation(building):N0} souls.", MessageKind.Error);
+            SetMessage(error, MessageKind.Error);
             return;
         }
 
         _previewMenu = CaptureMenu() ?? _selectedMenu;
+        HasCursor = true;
         Anchor = null;
         Selection = null;
         RefreshBuildingPlacement(building);
@@ -225,6 +242,7 @@ public sealed partial class GameSession
 
     public void PreviewDemolish()
     {
+        HasCursor = true;
         _previewMenu = CaptureMenu() ?? _selectedMenu;
         var targets = Game.DemolitionCells(ActiveArea.Cells());
         var area = targets.Aggregate(ActiveArea, (bounds, p) => bounds.Union(CellRect.Single(p)));
@@ -236,6 +254,7 @@ public sealed partial class GameSession
 
     public void BeginRoadLine(RoadType? road = null)
     {
+        HasCursor = true;
         _previewMenu = CaptureMenu() ?? _selectedMenu;
         RoadToolActive = true;
         _lineRoad = road ?? Game.DefaultRoad;
@@ -305,29 +324,30 @@ public sealed partial class GameSession
     {
         if (!CanUndo)
         {
-            SetMessage(_undoSnapshot is null ? "Nothing to undo." : "Undo expired: more than 7 game days have passed. Pause to allow undo.", MessageKind.Error);
+            SetMessage(UndoCount == 0 ? "Nothing to undo." : "Pause the game to undo.", MessageKind.Error);
             return;
         }
 
         Game.Paused = true;
         ClearPreview();
         ShowPrompt("Undo last action",
-            "Undo restores the entire city to immediately before the last successful action, including gold, residents and time. The game will remain paused.",
+            $"Undo restores the entire city to immediately before the last successful action, including gold, residents and time. The game will remain paused. {UndoCount} action(s) available.",
             [new("Undo", Undo), new("Cancel", CancelPrompt)]);
     }
 
     private void Undo()
     {
-        if (_undoSnapshot is not { } snapshot)
+        if (!CanUndo)
         {
-            SetMessage("Nothing to undo.", MessageKind.Error);
+            SetMessage(UndoCount == 0 ? "Nothing to undo." : "Pause the game to undo.", MessageKind.Error);
             return;
         }
 
-        var restored = SaveGameStore.Deserialize(snapshot, Game.Map.Content);
-        ReplaceGame(restored);
+        var restored = SaveGameStore.Deserialize(_undoHistory[^1], Game.Map.Content);
+        _undoHistory.RemoveAt(_undoHistory.Count - 1);
+        ReplaceGame(restored, clearUndo: false);
         Game.Paused = true;
-        SetMessage("Last action undone; city restored and paused.", MessageKind.Success);
+        SetMessage($"Last action undone; city restored and paused. {UndoCount} action(s) remaining.", MessageKind.Success);
     }
 
     public void ShowPrompt(
@@ -336,6 +356,8 @@ public sealed partial class GameSession
     {
         SetPrompt(new(title, text, choices, input, footer, columns));
     }
+
+    public void ShowPrompt(SessionPrompt prompt) => SetPrompt(prompt);
 
     /// <summary>Shows a prompt whose text is one of several pages, with a tab for each along the top.</summary>
     public void ShowTabbedPrompt(
@@ -348,6 +370,7 @@ public sealed partial class GameSession
 
     private void SetPrompt(SessionPrompt prompt)
     {
+        if (Prompt is null) _resumeWhileInteracting = false;
         if (Prompt is { } previous)
         {
             if (previous.Title == prompt.Title) prompt.SelectedIndex = previous.SelectedIndex;
@@ -426,7 +449,13 @@ public sealed partial class GameSession
         return false;
     }
 
-    public void RequestQuit() => GuardProgress("Quit", () => QuitRequested?.Invoke());
+    public bool ConfirmQuit { get; init; } = true;
+
+    public void RequestQuit()
+    {
+        if (!ConfirmQuit) QuitRequested?.Invoke();
+        else GuardProgress("Quit", () => QuitRequested?.Invoke());
+    }
 
     public void RequestNewCity(bool restart) => GuardProgress(restart ? "Restart this seed" : "New city", () =>
         NewGame(Game.Config with { Seed = restart ? Game.Config.Seed : Random.Shared.Next(), StartingYear = null }));
@@ -502,10 +531,10 @@ public sealed partial class GameSession
             new("Load", ShowLoadMenu, ["Quick-save, autosaves or a file"]),
             new("New city", () => RequestNewCity(restart: false), ["A fresh random map of the same size"]),
             new("Restart", () => RequestNewCity(restart: true), ["Replay this seed from the start"]),
-            new("Undo", RequestUndo, ["Roll back the last action"]),
-            new("Budget", ShowBudgetMenu, ["Funding, taxes and loans"]),
+            new("Undo", RequestUndo, [$"While paused: {UndoCount} of {UndoLimit} actions available"]),
             new("Health", ShowHealthReport, ["Indicators, complaints and events"]),
             new("Report", ShowReport, ["Weekly report and milestones"]),
+            new("Growth", ShowGrowthReport, ["Population, demand and road access"]),
             new("Guide", () => ShowGuide(), ["How to play, tab by tab"]),
             new("Quit", RequestQuit, ["Leave TermCity"]),
         ], columns: CityMenuColumns);
@@ -564,18 +593,25 @@ public sealed partial class GameSession
         CancelPrompt();
     }
 
-    public void ShowReport()
+    public void ShowBuildingStatus(Pos position)
     {
-        var report = Game.LastReport;
-        string text = report is null ? "No completed week yet." :
-            $"Week {report.Week}: income {Fmt.Money(report.Income)}\nNew homes {report.NewHouseholds}, stalls {report.NewCommercial}, workshops {report.NewIndustrial}";
-        text += $"\nPopulation: {Game.Stats.Population:N0}\nHighest milestone: {Game.HighestMilestone:N0}";
-        text += NextMilestone is { } next ? $"\nNext milestone: {next:N0} people" : "\nAll population milestones reached.";
-        text += "\n\n" + CityReport.ZoneSummary(Game);
-        text += "\n\n" + string.Join("\n\n", CityProgression.Milestones.Select(m =>
-            $"{(Game.HighestMilestone >= m.Population ? "[Reached]" : "[Locked]")} {m.Name}: {m.Population:N0} souls\n" +
-            CityProgression.Unlocks(Game, m)));
-        ShowPrompt("Weekly report and milestones", text, [new("Close", CancelPrompt)]);
+        if (!Game.Map.InBounds(position) || Game.Map.BuildingAt(position.X, position.Y) is null)
+        {
+            SetMessage("No building at the selected position.", MessageKind.Error);
+            return;
+        }
+        PlaceCursor(position);
+        var report = BuildingReport.Build(Game, position);
+        ShowPrompt(BuildingReport.Title, report.Text,
+            [new("Area menu", ShowAreaMenu), new("Close", CancelPrompt)]);
+    }
+
+    public void ShowReport() => ShowReport(0);
+
+    public void ShowReport(int tab)
+    {
+        var tabs = ReportContent.Build(Game).Select(page => new PromptTab(page.Title, page.Text)).ToArray();
+        ShowTabbedPrompt("Weekly Report", tabs, tab, [new("Close", CancelPrompt)]);
     }
 
     public void ShowGrowthReport()
@@ -601,8 +637,22 @@ public sealed partial class GameSession
     private void InitializeFeedback()
     {
         _observedHomes = Game.Stats.Residential.Occupied;
-        _observedWeek = Game.Week;
         _observedMilestone = Game.HighestMilestone;
+    }
+
+    public void ShowMilestone(int index)
+    {
+        index = Math.Clamp(index, 0, CityProgression.Milestones.Count - 1);
+        Game.Paused = true;
+        var tabs = Enumerable.Range(0, CityProgression.Milestones.Count)
+            .Select(i => MilestoneReport.Build(Game, i))
+            .Select(page => new PromptTab(page.Title, page.Text)).ToArray();
+        ShowTabbedPrompt(MilestoneReport.Title, tabs, index,
+        [
+            new("Previous", () => ShowMilestone(index - 1)),
+            new("Next", () => ShowMilestone(index + 1)),
+            new("Continue", CancelPrompt),
+        ]);
     }
 
     private void UpdateFeedback()
@@ -613,20 +663,14 @@ public sealed partial class GameSession
             var reached = CityProgression.Milestones.Where(m =>
                 m.Population > _observedMilestone && m.Population <= Game.HighestMilestone).ToArray();
             _observedMilestone = Game.HighestMilestone;
-            SetMessage($"City Grew! {reached[^1].Name}: {Game.HighestMilestone:N0} souls. F7: unlocks.", MessageKind.Success);
-            ShowPrompt("City Grew!", CityProgression.Announcement(Game, reached),
-                [new("Continue", CancelPrompt), new("Review milestones", ShowReport)]);
+            SetMessage($"Your City Grew! {reached[^1].Name}: {Game.HighestMilestone:N0} souls.", MessageKind.Success);
+            ShowMilestone(CityProgression.Milestones.ToList().FindIndex(m => m.Population == Game.HighestMilestone));
         }
         else if (_observedHomes < Game.Config.MinResidentialCells && homes >= Game.Config.MinResidentialCells)
         {
             SetMessage($"{Game.Config.MinResidentialCells} occupied homes: markets and workshops unlocked. Zone with C and I.", MessageKind.Success);
         }
-        else if (_observedWeek != Game.Week && Game.LastReport is { } report && !MessageVisible)
-        {
-            SetMessage($"Week {report.Week}: +{report.NewHouseholds} homes, +{report.NewCommercial} shops, +{report.NewIndustrial} factories, {Fmt.Money(report.Income)} tax. F7 report.");
-        }
 
         _observedHomes = homes;
-        _observedWeek = Game.Week;
     }
 }

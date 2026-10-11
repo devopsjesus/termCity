@@ -46,6 +46,22 @@ public class ClockTests
         Assert.Equal(7, c.DaysPerWeek);
     }
 
+    [Theory]
+    [InlineData(GameSpeed.Slow, 16.8, 2.4)]
+    [InlineData(GameSpeed.Medium, 8.4, 1.2)]
+    [InlineData(GameSpeed.Fast, 2.8, 0.4)]
+    public void DefaultClockUsesSlowerMeasuredDayDurations(GameSpeed speed, double weekSeconds, double daySeconds)
+    {
+        var game = TestCity.Flat();
+        game.Speed = speed;
+        Assert.Equal(weekSeconds, game.Config.SecondsPerWeek(speed));
+        Assert.Equal(daySeconds, game.Config.SecondsPerWeek(speed) / game.Config.DaysPerWeek, 6);
+        Run(game, daySeconds - 0.05);
+        Assert.Equal(0, game.Day);
+        Run(game, 0.1);
+        Assert.Equal(1, game.Day);
+    }
+
     [Fact]
     public void PausedGameDoesNotAdvance()
     {
@@ -95,9 +111,9 @@ public class ClockTests
     [Fact]
     public void NewCitiesStartInTheCurrentYear()
     {
-        int before = DateTime.Now.Year;
+        int before = DateTime.Now.Year - 800;
         var game = TestCity.Flat();
-        Assert.InRange(game.Year, before, DateTime.Now.Year);
+        Assert.InRange(game.Year, before, DateTime.Now.Year - 800);
         Assert.Equal(game.Year, game.Config.StartingYear);
     }
 
@@ -266,7 +282,10 @@ public class SessionTests
 
         s.BeginDrag(new Pos(7, 12), extend: true);
         s.EndSelection();
-        Assert.Equal(new CellRect(7, 8, 8, 5), s.Selection);
+        Assert.Equal(new CellRect(7, 10, 4, 3), s.Selection);
+        s.BeginDrag(new Pos(9, 10), extend: true);
+        s.EndSelection();
+        Assert.Equal(new CellRect(9, 10, 2, 1), s.Selection);
     }
 
     [Fact]
@@ -284,6 +303,14 @@ public class SessionTests
         s.BeginDrag(new Pos(30, 30));
         s.EndSelection();
         Assert.Equal(new CellRect(30, 30, 1, 1), s.Selection);
+        s.BeginDrag(new Pos(32, 32), extend: true);
+        s.EndSelection();
+        Assert.Equal(new CellRect(30, 30, 3, 3), s.Selection);
+        s.ClearSelection();
+        s.PlaceCursor(new Pos(40, 40));
+        s.BeginDrag(new Pos(41, 41), extend: true);
+        s.EndSelection();
+        Assert.Equal(new CellRect(40, 40, 2, 2), s.Selection);
     }
 
     [Fact]

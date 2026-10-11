@@ -386,6 +386,85 @@ public class RoadCurveTests
         chunk.Rgba.AsSpan((((int)Math.Floor(py * scale)) * chunk.Width + (int)Math.Floor(px * scale)) * 4, 4).ToArray();
 
     [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void RightHandCobbledBranchKeepsLeftHandHighwayPavement(int scale)
+    {
+        var (game, king) = Blank();
+        var cobbled = game.Map.Content.Roads.Get(DefaultRoads.CobbledName);
+        for (int y = 3; y <= 18; y++) game.Map.SetRoad(10, y, king);
+        for (int x = 0; x <= 10; x++) game.Map.SetRoad(x, 10, king);
+        for (int x = 11; x <= 15; x++) game.Map.SetRoad(x, 10, cobbled);
+        var layer = new RoadVectorLayer();
+        layer.Sync(game);
+        var chunk = layer.Render(0, 0, scale)!;
+        for (int x = 6; x <= 8; x++)
+            Assert.Equal(new byte[] { king.Background.R, king.Background.G, king.Background.B, 255 },
+                Pixel(chunk, CentreX(x), CentreY(10), scale));
+        Assert.Equal(new byte[] { cobbled.Background.R, cobbled.Background.G, cobbled.Background.B, 255 },
+            Pixel(chunk, CentreX(14), CentreY(10), scale));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void LeftHandBranchCannotPaintTheOppositeHighwayEdge(int scale)
+    {
+        var (game, king) = Blank();
+        var cobbled = game.Map.Content.Roads.Get(DefaultRoads.CobbledName);
+        for (int y = 0; y <= 18; y++) game.Map.SetRoad(10, y, king);
+        for (int x = 10; x <= 20; x++) game.Map.SetRoad(x, 10, king);
+        for (int x = 3; x < 10; x++) game.Map.SetRoad(x, 10, cobbled);
+        var layer = new RoadVectorLayer();
+        layer.Sync(game);
+        var chunk = layer.Render(0, 0, scale)!;
+        int checkedPixels = 0;
+        for (int x = (int)(CentreX(10) + 2) * scale; x < 15 * W * scale; x++)
+            for (int y = (int)(CentreY(10) - 12) * scale; y < (CentreY(10) + 12) * scale; y++)
+            {
+                var pixel = chunk.Rgba.AsSpan((y * chunk.Width + x) * 4, 4);
+                if (pixel[3] <= 32) continue;
+                Assert.True(pixel[0] >= pixel[2],
+                    $"Minor-road gray/blue leaked onto the opposite highway at ({x}, {y}): {pixel[0]},{pixel[1]},{pixel[2]}.");
+                checkedPixels++;
+            }
+        Assert.True(checkedPixels > 100, "Regression must cover the highway bed and both outer lines.");
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void BranchRampDoesNotRecolourTheHighwayItOverlaps(int scale)
+    {
+        var (game, king) = Blank();
+        var track = game.Map.Content.Roads.Get(DefaultRoads.TrackName);
+        for (int i = 0; i <= 8; i++)
+            for (int x = 10 + 3 * i; x <= 13 + 3 * i; x++)
+                game.Map.SetRoad(x, 10 + i, king);
+        for (int y = 5; y <= 12; y++) game.Map.SetRoad(21, y, track);
+        var layer = new RoadVectorLayer();
+        layer.Sync(game);
+        var highway = Assert.Single(layer.Paths, path => path.Type == king);
+        var branch = Assert.Single(layer.Paths, path => path.Type == track);
+        int checkedPixels = 0;
+        foreach (int i in Enumerable.Range(0, branch.Count))
+        {
+            double x = branch.Xs[i], y = branch.Ys[i];
+            double distance = Enumerable.Range(0, highway.Count)
+                .Min(j => Math.Sqrt(Math.Pow(highway.Xs[j] - x, 2) + Math.Pow(highway.Ys[j] - y, 2)));
+            if (distance > 2) continue;
+            int cx = (int)(x / (RoadVectorLayer.ChunkCells * W));
+            int cy = (int)(y / (RoadVectorLayer.ChunkCells * H));
+            var chunk = layer.Render(cx, cy, scale)!;
+            var pixel = Pixel(chunk, x - cx * RoadVectorLayer.ChunkCells * W,
+                y - cy * RoadVectorLayer.ChunkCells * H, scale);
+            Assert.Equal(new byte[] { king.Background.R, king.Background.G, king.Background.B, 255 }, pixel);
+            checkedPixels++;
+        }
+        Assert.True(checkedPixels >= 3, "Regression must sample the ramp where it overlaps the highway.");
+    }
+
+    [Theory]
     [InlineData(DefaultRoads.TrackName, 1)]
     [InlineData(DefaultRoads.TrackName, 2)]
     [InlineData(DefaultRoads.CobbledName, 1)]

@@ -33,6 +33,18 @@ public partial class Main
     public override void _Input(InputEvent input)
     {
         if (!_started) return;
+        if (!_editingName && Session.Prompt is null && _viewsBar.Visible &&
+            input is InputEventKey { Pressed: true, Keycode: Key.Escape })
+        {
+            _viewsBar.Visible = false;
+            GetViewport().SetInputAsHandled();
+            return;
+        }
+        if (input is InputEventKey pauseKey && HandlePauseKey(pauseKey))
+        {
+            GetViewport().SetInputAsHandled();
+            return;
+        }
         if (input is InputEventKey dialogKey && Session.Prompt is not null && HandleDialogKey(dialogKey))
         {
             GetViewport().SetInputAsHandled();
@@ -110,14 +122,33 @@ public partial class Main
 
     public override void _UnhandledInput(InputEvent input)
     {
+        if (_started && input is InputEventKey pauseKey && HandlePauseKey(pauseKey)) return;
         if (!_started || _editingName || input is not InputEventKey { Pressed: true } key)
         {
             return;
         }
+
         if (HandleKey(key))
         {
             GetViewport().SetInputAsHandled();
         }
+    }
+
+    private bool HandlePauseKey(InputEventKey key)
+    {
+        var code = key.Keycode == Key.None ? key.PhysicalKeycode : key.Keycode;
+        bool textEntry = _editingName || GetViewport().GuiGetFocusOwner() is LineEdit or TextEdit;
+        bool command = OS.HasFeature("macos") ? key.MetaPressed : key.CtrlPressed;
+        bool modified = key.CtrlPressed || key.MetaPressed || key.AltPressed || key.ShiftPressed;
+        bool shortcut = code == Key.P && command && !key.AltPressed && !key.ShiftPressed ||
+            !textEntry && !modified && (code == Key.Space || code == Key.P && Session.Prompt is null);
+        if (!shortcut) return false;
+        if (key.Pressed && !key.Echo)
+        {
+            Session.TogglePause();
+            if (_editingName) _pausedBeforeRename = Session.Game.Paused;
+        }
+        return true;
     }
 
     private bool HandleKey(InputEventKey key)
@@ -157,7 +188,8 @@ public partial class Main
             }
             return true;
         }
-        if ((key.CtrlPressed || key.MetaPressed) && code == Key.Z)
+        if ((OS.HasFeature("macos") ? key.MetaPressed : key.CtrlPressed) &&
+            !key.ShiftPressed && !key.AltPressed && code == Key.Z)
         {
             Session.RequestUndo();
             return true;
@@ -225,7 +257,10 @@ public partial class Main
             case Key.T: Session.BeginRoadLine(); break;
             case Key.U: Session.Dezone(); break;
             case Key.D or Key.Delete: Session.PreviewDemolish(); break;
-            case Key.O: Session.CycleOverlay(); break;
+            case Key.O:
+                if (key.ShiftPressed) Session.ToggleOverlay();
+                else Session.CycleOverlay();
+                break;
             case Key.V: CycleEffects(); break;
             case Key.S: Session.ToggleSelectionMode(); break;
             case Key.E: Session.ToggleEdgeScroll(); break;
@@ -239,7 +274,7 @@ public partial class Main
             case Key.F9: Session.RequestLoad(Session.SavePath); break;
             case Key.F10: if (!key.Echo) ToggleMusic(); break;
             case Key.F12: Session.ToggleInputDebug(); break;
-            case Key.Escape: ShowCityMenu(); break;
+            case Key.Escape: ShowGameMenu(); break;
             case Key.Q: Session.RequestQuit(); break;
             default: return false;
         }
@@ -358,7 +393,9 @@ public partial class Main
                     break;
                 case MouseButton.Right:
                     Session.PrepareContextMenuAt(position);
-                    Session.ShowAreaMenu();
+                    if (Session.Game.Map.BuildingAt(position.X, position.Y) is not null)
+                        Session.ShowBuildingStatus(position);
+                    else Session.ShowAreaMenu();
                     break;
                 case MouseButton.WheelUp:
                 case MouseButton.WheelDown:

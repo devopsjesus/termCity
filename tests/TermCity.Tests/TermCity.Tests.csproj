@@ -29,6 +29,10 @@
     <Compile Include="..\..\godot\GreensleevesTrack.cs" Link="Godot\GreensleevesTrack.cs" />
     <Compile Include="..\..\godot\PlacementClick.cs" Link="Godot\PlacementClick.cs" />
     <Compile Include="..\..\godot\SidebarReport.cs" Link="Godot\SidebarReport.cs" />
+    <Compile Include="..\..\godot\PeasantNeeds.cs" Link="Godot\PeasantNeeds.cs" />
+    <Compile Include="..\..\godot\ReportTables.cs" Link="Godot\ReportTables.cs" />
+    <Compile Include="..\..\godot\PauseAnimation.cs" Link="Godot\PauseAnimation.cs" />
+    <Compile Include="..\..\godot\PauseRig.cs" Link="Godot\PauseRig.cs" />
   </ItemGroup>
 
 </Project>

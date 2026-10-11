@@ -40,7 +40,7 @@ public class ProgressionTests
         Assert.Null(session.Preview);
         Assert.Equal(MessageKind.Error, session.MessageKind);
         SetPopulation(game, 500);
-        Assert.Contains("Stone Keep", session.Prompt!.Text);
+        Assert.Contains("STONE KEEP", session.Prompt!.Text);
         SetPopulation(game, 0);
         game = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
         Assert.Equal(500, game.HighestMilestone);
@@ -56,11 +56,11 @@ public class ProgressionTests
         SetPopulation(game, 500);
         Assert.False(session.GuideVisible);
         Assert.True(game.GuideDismissed);
-        Assert.Equal("City Grew!", session.Prompt!.Title);
-        Assert.Contains("Hamlet", session.Prompt.Text);
-        Assert.Contains("Village", session.Prompt.Text);
-        Assert.Contains("Tavern", session.Prompt.Text);
-        Assert.Contains("Stone Keep", session.Prompt.Text);
+        Assert.Equal("Your City Grew!", session.Prompt!.Title);
+        Assert.Equal("Village", session.Prompt.Tabs![session.Prompt.ActiveTab].Title);
+        Assert.Contains("VILLAGE GREEN", session.Prompt.Text);
+        Assert.DoesNotContain("Tavern", session.Prompt.Text);
+        Assert.Contains("STONE KEEP", session.Prompt.Text);
         double days = game.ElapsedDays;
         session.Update(0.5);
         Assert.Equal(days, game.ElapsedDays);

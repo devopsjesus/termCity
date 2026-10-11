@@ -3,12 +3,30 @@ using TermCity.Core.Rendering;
 using TermCity.Core.Roads;
 using TermCity.Core.Simulation;
 using TermCity.Core.Util;
+using TermCity.Core.World;
 
 namespace TermCity.Core.Session;
 
 public static class ChoiceHelpContent
 {
     public static string Icons(IEnumerable<string> glyphs) => string.Join(" ", glyphs.Distinct());
+
+    public static string CapacityText(BuildingType building)
+    {
+        string units = building.Service switch
+        {
+            ServiceKind.Power => "fuel units",
+            ServiceKind.Water => "water units",
+            ServiceKind.Granary => "grain measures",
+            _ => building.Zone switch
+            {
+                ZoneType.Residential => "residents",
+                ZoneType.Commercial or ZoneType.Industrial => "jobs",
+                _ => "units",
+            },
+        };
+        return $"{building.Capacity:N0} {units}";
+    }
 
     public static ChoiceHelp Building(CityGame game, BuildingType building)
     {
@@ -17,18 +35,21 @@ public static class ChoiceHelpContent
             $"Does: {CityReport.ServiceName(building.Service)}",
             $"Footprint: {building.Width} x {building.Height} cells",
             $"Cost: {Fmt.Money(building.Cost)} per building (terrain may increase it)",
-            $"Upkeep: {Fmt.Money(game.Config.FullRules ? (int)Math.Round(building.WeeklyUpkeep * game.Budget.Funding(building.Service)) : 0)}/week at current funding",
+            $"Upkeep: {Fmt.Money(game.Config.FullRules ? (int)Math.Round(building.WeeklyUpkeep * game.Budget.Funding(building.Service)) : 0)}/week",
         };
-        if (building.Capacity > 0) details.Add($"Capacity: {building.Capacity:N0} units");
+        if (building.Capacity > 0) details.Add($"Capacity: {CapacityText(building)}");
         if (building.Radius > 0)
-            details.Add($"Radius: {building.Radius} cells; strength: {building.Strength}/100 at centre, fading to edge");
+            details.Add($"Radius: {building.Radius} cells; strength: {building.Strength}/100 through radius, fading to zero at {building.Radius * AreaFalloff.Extent:0.##} cells");
         if (building.SeatRank > 0) details.Add($"Seat of power: rank {building.SeatRank}");
         if (building.Pilgrims > 0) details.Add($"Pilgrims: {building.Pilgrims} per feast");
         details.Add("Placement: buildable, unzoned ground with a clear whole-cell footprint and enough gold");
-        details.Add("Operation: connected road access");
         if (building.MinPopulation > 0)
-            details.Add($"Unlock: City Grew! at {CityProgression.RequiredPopulation(building):N0} souls" +
-                (CityProgression.IsUnlocked(game, building) ? " (unlocked)" : " (locked)"));
+        {
+            int required = CityProgression.RequiredPopulation(building);
+            string milestone = CityProgression.Milestones.FirstOrDefault(m => m.Population == required)?.Name ?? $"{required:N0}";
+            int remaining = CityProgression.IsUnlocked(game, building) ? 0 : Math.Max(0, required - game.Stats.Population);
+            details.Add($"Unlock: {milestone} ({remaining:N0} souls to go)");
+        }
         if (game.Config.FullRules && (building.PowerUse > 0 || building.WaterUse > 0))
             details.Add($"Supply use: {building.PowerUse} fuel, {building.WaterUse} water per week");
         if (building.RequiresWaterNearby) details.Add("Requires nearby open water");

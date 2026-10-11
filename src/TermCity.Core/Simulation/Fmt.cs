@@ -14,4 +14,8 @@ public static class Fmt
     /// <summary>The one place gold is formatted: an amount such as <c>15,000g</c> regardless of the machine's culture.</summary>
     public static string Money(int amount) =>
         (amount < 0 ? "-" : string.Empty) + Math.Abs((long)amount).ToString("N0", CultureInfo.InvariantCulture) + "g";
+
+    public static string CompactMoney(int amount) => Math.Abs((long)amount) > 1_000_000
+        ? (amount / 1_000_000d).ToString("0.00", CultureInfo.InvariantCulture) + "M"
+        : Money(amount);
 }
