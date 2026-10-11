@@ -58,6 +58,7 @@ public class AreaFalloffTests
     [InlineData("Sheriff's Hall", ServiceKind.Police)]
     [InlineData("Apothecary", ServiceKind.Health)]
     [InlineData("Market Cross", ServiceKind.Trade)]
+    [InlineData("Guildhall", ServiceKind.Trade)]
     public void ServicesStayFullInsideRadiusAndFadeBeyond(string name, ServiceKind kind)
     {
         var game = TestCity.Flat(rules: CityRules.Full);

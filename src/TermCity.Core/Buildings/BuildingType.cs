@@ -288,7 +288,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(Civic("Market Cross", ServiceKind.Trade, "¤", 0xffd27f, cost: 6_000, upkeep: 60,
             radius: 18, strength: 80, text: "A market place and a toll: traders and shoppers raise land value and market tolls"));
         registry.Register(Civic("Guildhall", ServiceKind.Trade, "§", 0xe0a55c, cost: 28_000, upkeep: 160,
-            radius: 22, minPopulation: 800, text: "The guilds' hall: master craftsmen, fair weights and a rich trade across the town"));
+            radius: 33, minPopulation: 800, text: "The guilds' hall: master craftsmen, fair weights and a rich trade across the town"));
 
         registry.Register(Civic("Granary", ServiceKind.Granary, "▨", 0xe6c97a, cost: 10_000, upkeep: 80,
             capacity: 4_000, text: "A raised store for grain: a reserve against a bad harvest or a long winter"));
