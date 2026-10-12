@@ -8,6 +8,12 @@ public sealed record EffectArea(Pos Center, int Radius, IReadOnlyList<string> Gl
 
 public static class AreaOfEffect
 {
+    public static (float X, float Y) GroundOffset(int radius, float angle)
+    {
+        if (radius <= 0 || !float.IsFinite(angle)) throw new ArgumentOutOfRangeException(nameof(radius));
+        return (radius * MathF.Cos(angle), radius * MathF.Sin(angle));
+    }
+
     public const float OverlayAlpha = 0.32f;
     public const double FadeExtent = AreaFalloff.Extent;
 
@@ -39,6 +45,7 @@ public static class AreaOfEffect
         var map = game.Map;
         foreach (int index in map.ServiceCells.Concat(map.ZoneCells(World.ZoneType.Industrial)))
         {
+            if (!map.IsBuildingAnchor(index)) continue;
             var p = map.PosOf(index);
             if (map.BuildingAt(p.X, p.Y) is not { } type) continue;
             var footprint = map.BuildingFootprintAt(p.X, p.Y);

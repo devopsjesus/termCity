@@ -7,19 +7,21 @@ namespace TermCity.Tests;
 public class StarterServiceUnlockTests
 {
     [Fact]
-    public void FireWatchCoverageReachesEighteenCellsWithoutChangingOtherCosts()
+    public void FireWatchTimelyRangeExpandsToTwentySevenWithoutChangingCosts()
     {
         var game = TestCity.Flat(rules: CityRules.Full);
-        game.HighestMilestone = 100;
+        game.HighestMilestone = 250;
         var building = game.Map.Content.Buildings.Get("Fire Watch");
-        Assert.Equal(18, building.Radius);
+        Assert.Equal(27, building.Radius);
         Assert.Equal(9_000, building.Cost);
         Assert.Equal(160, building.WeeklyUpkeep);
         Assert.True(game.PlaceBuilding(building, new(80, 18, 1, 1)).Success);
+        game.Map.BuildingEstablishedDays.Clear();
+        game.Touch();
         Assert.True(game.Services.Coverage(ServiceKind.Fire, game.Map.Index(97, 18)) > 0);
         Assert.True(game.Services.Coverage(ServiceKind.Fire, game.Map.Index(99, 18)) > 0);
-        Assert.Equal(0, game.Services.Coverage(ServiceKind.Fire, game.Map.Index(103, 18)));
-        Assert.Equal(18, Assert.Single(TermCity.Core.Rendering.AreaOfEffect.ForBuilding(building, new(80, 18))).Radius);
+        Assert.True(game.Services.Coverage(ServiceKind.Fire, game.Map.Index(103, 18)) > 0);
+        Assert.Equal(27, Assert.Single(TermCity.Core.Rendering.AreaOfEffect.ForBuilding(building, new(80, 18))).Radius);
     }
 
     [Theory]
@@ -28,16 +30,16 @@ public class StarterServiceUnlockTests
     [InlineData("Sheriff's Hall")]
     [InlineData("Apothecary")]
     [InlineData("Chantry School")]
-    public void StarterCareUnlocksAtFirstPermanentMilestone(string name)
+    public void StarterCareUnlocksAtGrowingHamlet(string name)
     {
         var game = TestCity.Flat();
         var building = game.Map.Content.Buildings.Get(name);
-        Assert.Equal(100, CityProgression.RequiredPopulation(building));
+        Assert.Equal(250, CityProgression.RequiredPopulation(building));
         Assert.False(CityProgression.IsUnlocked(game, building));
-        Assert.Contains("Unlock: Hamlet (100 souls to go)", ChoiceHelpContent.Building(game, building).Details);
-        game.HighestMilestone = 100;
+        Assert.Contains("Unlock: Growing Hamlet (250 souls to go)", ChoiceHelpContent.Building(game, building).Details);
+        game.HighestMilestone = 250;
         Assert.True(CityProgression.IsUnlocked(game, building));
-        Assert.Contains("Unlock: Hamlet (0 souls to go)", ChoiceHelpContent.Building(game, building).Details);
+        Assert.Contains("Unlock: Growing Hamlet (0 souls to go)", ChoiceHelpContent.Building(game, building).Details);
     }
 
     [Fact]

@@ -12,9 +12,15 @@ public sealed class RoadGeometry
     private readonly bool[] _occupied;
     private readonly byte[] _access;
     private readonly List<int> _accessCells = [];
+    private readonly IReadOnlyList<RoadPath> _paths;
+    private readonly Dictionary<int, RoadPath?> _centerRoads = [];
+    private readonly GameMap _map;
+    private RoadMeshLayout? _mesh;
 
     public RoadGeometry(GameMap map, IReadOnlyList<RoadPath> paths)
     {
+        _paths = paths;
+        _map = map;
         _width = map.Width;
         _height = map.Height;
         _occupied = new bool[_width * _height];
@@ -48,7 +54,7 @@ public sealed class RoadGeometry
                         float distance = (float)DistanceToRectangle(ax, ay, bx, by, left, top, right, bottom);
                         if (!distances.TryGetValue(index, out float previous) || distance < previous)
                             distances[index] = distance;
-                        if (path.Connected && map.TerrainAt(x, y).Buildable &&
+                        if (map.TerrainAt(x, y).Buildable &&
                             DistanceToRectangle(ax, ay, bx, by, left - toleranceX, top - toleranceY,
                                 right + toleranceX, bottom + toleranceY) <= bed + Precision)
                         {
@@ -74,6 +80,23 @@ public sealed class RoadGeometry
     public int AccessRank(int x, int y) => x >= 0 && y >= 0 && x < _width && y < _height ? _access[y * _width + x] : 0;
 
     public IEnumerable<(int Index, int Rank)> NearbyAccess => _accessCells.Select(index => (index, (int)_access[index]));
+
+    public RoadPath? RoadAtCellCenter(int x, int y)
+    {
+        if (x < 0 || y < 0 || x >= _width || y >= _height) return null;
+        int index = y * _width + x;
+        if (_centerRoads.TryGetValue(index, out var cached)) return cached;
+        _mesh ??= new RoadMeshLayout(_map, _paths);
+        var result = _mesh.RoadAt(new(x + 0.5f, y + 0.5f))?.Path;
+        _centerRoads[index] = result;
+        return result;
+    }
+
+    public bool IsBridgeAtCellCenter(int x, int y)
+    {
+        _mesh ??= new RoadMeshLayout(_map, _paths);
+        return _mesh.RoadAt(new(x + 0.5f, y + 0.5f))?.Bridge == true;
+    }
 
     private static double DistanceToRectangle(
         double ax, double ay, double bx, double by, double left, double top, double right, double bottom)

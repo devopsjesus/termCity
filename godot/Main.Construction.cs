@@ -13,7 +13,7 @@ public partial class Main
     internal const int IconPadding = 6;
     internal const int RailPadding = 4;
     private sealed record ConstructionChoice(string Name, string Icon, Color Color, ChoiceHelp Help,
-        BuildingType? Building = null, RoadType? Road = null);
+        BuildingType? Building = null, RoadType? Road = null, RoadTemplate? Template = null);
 
     private SessionPrompt? _constructionPrompt;
     private readonly List<Button> _constructionIcons = [];
@@ -87,6 +87,8 @@ public partial class Main
             AddIcon(CityReport.ServiceName(service), building.Glyphs[0], ToColor(building.Foreground),
                 () => ShowConstructionMenu(service), service);
         }
+        if (CityGame.DebugToolsAvailable)
+            AddIcon("Monuments", "♙", new Color("#d0c6a6"), () => ShowConstructionMenu(null, monuments: true), ServiceKind.Defence);
         var frame = new TerminalFrame { VisibleContentPadding = RailPadding };
         frame.AddChild(scroll);
         frame.SizeFlagsHorizontal = SizeFlags.Fill;
@@ -96,19 +98,29 @@ public partial class Main
     private static Color ToColor(TermCity.Core.Util.Rgb color) =>
         Color.Color8(color.R, color.G, color.B);
 
-    private void ShowConstructionMenu(ServiceKind? service)
+    private void ShowConstructionMenu(ServiceKind? service, bool monuments = false)
     {
         if (ConstructionMenuVisible) Session.ClosePrompt();
         var game = Session.Game;
-        _constructionChoices = service is { } kind
+        _constructionChoices = monuments
+            ? game.Map.Content.Buildings.Where(b => b.PlayerPlaceable && b.IsMonument &&
+                (!b.DebugOnly || CityGame.DebugToolsAvailable))
+                .Select(b => new ConstructionChoice(b.CatalogName,
+                    b.Glyphs[0], ToColor(b.Foreground),
+                    ChoiceHelpContent.Building(game, b), Building: b)).ToArray()
+            : service is { } kind
             ? game.Map.Content.Buildings.Where(b => b.PlayerPlaceable && b.Service == kind)
                 .OrderBy(CityProgression.RequiredPopulation).ThenBy(b => b.Cost)
                 .Select(b => new ConstructionChoice(b.Name, b.Glyphs[0], ToColor(b.Foreground),
                     ChoiceHelpContent.Building(game, b), Building: b)).ToArray()
             : game.Map.Content.Roads.Where(r => r.PlayerPlaceable).OrderBy(r => r.Rank)
                 .Select(r => new ConstructionChoice(r.Name, r.GlyphFor(15), ToColor(r.Foreground),
-                    ChoiceHelpContent.Road(game, r, line: true), Road: r)).ToArray();
-        string title = service is { } category ? CityReport.ServiceName(category) : "Roads";
+                    ChoiceHelpContent.Road(game, r, line: true), Road: r))
+                .Append(new ConstructionChoice("Traffic Circle", "O",
+                    ToColor(game.Map.Content.Roads.Get(DefaultRoads.CobbledName).Foreground),
+                    ChoiceHelpContent.RoadTemplate(game, RoadTemplate.TrafficCircle),
+                    Template: RoadTemplate.TrafficCircle)).ToArray();
+        string title = monuments ? "Monuments (Debug)" : service is { } category ? CityReport.ServiceName(category) : "Roads";
         _constructionIndex = 0;
         var choices = _constructionChoices.Select((choice, index) =>
             new SessionChoice(choice.Name, () => SelectConstruction(index))).ToArray();
@@ -147,9 +159,10 @@ public partial class Main
         var types = new VBoxContainer { Name = "ConstructionTypes" };
         types.AddThemeConstantOverride("separation", RailPadding - 1);
         const int nameFontSize = 22;
-        var names = Session.Game.Map.Content.Buildings.Where(building => building.PlayerPlaceable)
+        var names = Session.Game.Map.Content.Buildings.Where(building => building.PlayerPlaceable && !building.IsMonument)
             .Select(building => building.Name)
-            .Concat(Session.Game.Map.Content.Roads.Where(road => road.PlayerPlaceable).Select(road => road.Name));
+            .Concat(Session.Game.Map.Content.Roads.Where(road => road.PlayerPlaceable).Select(road => road.Name))
+            .Concat(_constructionChoices.Select(choice => choice.Name));
         float typeWidth = names.Max(name =>
             Theme.DefaultFont.GetStringSize(name, fontSize: nameFontSize).X) + 56;
         var capacities = Session.Game.Map.Content.Buildings
@@ -298,9 +311,12 @@ public partial class Main
                 .SelectMany(area => area.Glyphs.Select(glyph =>
                     $"{(glyph == "♧" ? "Clean air: reduces nearby pollution" :
                         glyph == "Ψ" ? "Pollution: produces nearby smoke pollution" :
-                        $"{CityReport.ServiceName(describedBuilding.Service)} coverage")}: radius {area.Radius} cells. " +
+                        $"{CityReport.ServiceName(describedBuilding.Service)} timely response")}: " +
+                    (glyph is "♧" or "Ψ" ? $"radius {area.Radius} cells. " +
                     $"Area: {area.Radius * 2 + 1} x {area.Radius * 2 + 1} cells. " +
-                    $"Fades beyond radius to {area.Radius * AreaFalloff.Extent:0.##} cells."));
+                    $"Fades beyond radius to {area.Radius * AreaFalloff.Extent:0.##} cells." :
+                    $"target {describedBuilding.ResponseTargetDays:0.00} days; " +
+                    "roads speed arrival, workload adds delay. No distance cutoff.")));
             effectDescription = string.Join("\n", effects);
         }
         foreach (var child in _constructionStats.GetChildren())
@@ -314,12 +330,14 @@ public partial class Main
             return (Name: separator >= 0 ? detail[..separator] : "Effect",
                 Value: separator >= 0 ? detail[(separator + 1)..].Trim() : detail);
         }).Where(row => row.Name is not ("Does" or "Placement" or "Area icons") &&
-            !(choice.Road is not null && row.Name == "Needs"))
+            !((choice.Road is not null || choice.Template is not null) && row.Name == "Needs"))
             .OrderBy(row => row.Name switch { "Cost" => 0, "Upkeep" => 1, "Capacity" => 2, _ => 3 })
             .Select(row =>
             {
                 string value = row.Name switch
                 {
+                    "Cost" when choice.Template is { } template => Fmt.Money(Session.Game.QuoteRoadTemplate(template, Session.Cursor).Cost) +
+                        " (current plot)",
                     "Cost" => Fmt.Money(choice.Building?.Cost ?? (int)Math.Round(
                         Session.Game.Config.RoadCostPerCell * choice.Road!.CostMultiplier)),
                     "Footprint" => row.Value.Replace(" cells", "", StringComparison.Ordinal),
@@ -332,6 +350,7 @@ public partial class Main
         var effectValues = rows.Where(row => row.Name == "Effect").Select(row => row.Value)
             .Concat(effectDescription.Length > 0 ? [effectDescription] : Array.Empty<string>()).ToArray();
         if (choice.Building is not null && effectDescription.Length == 0) effectValues = [];
+        if (choice.Template is not null) effectValues = [];
         rows = rows.Where(row => row.Name != "Effect")
             .Concat(effectValues.Length > 0
                 ? new[] { (Name: "Effect", Value: string.Join("\n\n", effectValues)) }
@@ -411,6 +430,7 @@ public partial class Main
             Session.PreviewBuilding(building);
             if (!Session.BuildingToolActive) return;
         }
+        else if (choice.Template is { } template) Session.PreviewRoadTemplate(template);
         else if (choice.Road is { } road) Session.BeginRoadLine(road);
         Session.ClosePrompt();
     }

@@ -24,11 +24,27 @@ public static class BuildingReport
         rows.Add(Row("Location", $"{footprint.X}, {footprint.Y}"));
         rows.Add(Row("Footprint", $"{footprint.Width} x {footprint.Height} cells"));
         bool connected = map.BuildingIsServed(map.Index(position.X, position.Y), game.Network.IsServed);
-        rows.Add(Row("Road access", connected ? "Connected" : "Disconnected"));
+        rows.Add(Row("Travel", connected ? "Walkable; roads speed journeys" : "Unreachable over land"));
         rows.Add(Row("Upkeep", $"{Fmt.Money(game.Config.FullRules ?
             (int)Math.Round(building.WeeklyUpkeep * game.Budget.Funding(building.Service)) : 0)}/week"));
         if (building.Capacity > 0) rows.Add(Row("Capacity", ChoiceHelpContent.CapacityText(building)));
-        if (building.Radius > 0) rows.Add(Row("Coverage", $"Radius {building.Radius} cells; fades to {building.Radius * AreaFalloff.Extent:0.##} cells"));
+        if (building.Radius > 0)
+        {
+            rows.Add(Row("Staffing", $"{building.StaffingCapacity:N0} residents at full funding"));
+            rows.Add(Row("Response target", $"{building.ResponseTargetDays:0.00} days; no distance cutoff"));
+            rows.Add(Row("Workload", $"{game.Services.Workload(building.Service):P0}; more staff/buildings shorten queues"));
+        }
+        if (building.Zone != World.ZoneType.None && game.Config.FullRules)
+            foreach (var kind in ServiceKinds.All.Where(k => k != ServiceKind.Granary))
+            {
+                int index = map.BuildingAnchor(map.Index(position.X, position.Y));
+                double days = game.Services.ResponseDays(kind, index);
+                rows.Add(Row(CityReport.ServiceName(kind),
+                    !CityProgression.IsServiceUnlocked(game, kind, game.Stats.Population)
+                        ? $"Locked until {CityProgression.ServiceUnlockPopulation(game, kind):N0} souls; not expected" :
+                    double.IsPositiveInfinity(days) ? "No reachable dispatch" :
+                    $"{days:0.00} day journey; {(game.Services.HasArrived(kind, index) ? "arriving" : "awaiting first arrival")}"));
+            }
         if (building.Service == ServiceKind.Granary && game.Config.FullRules)
         {
             rows.Add(Row("Active storage", connected ? $"{building.Capacity:N0} grain measures" : "0 grain measures"));

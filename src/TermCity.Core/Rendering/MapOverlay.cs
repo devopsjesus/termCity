@@ -61,7 +61,7 @@ public static class MapOverlays
         }
 
         var map = game.Map;
-        int i = map.Index(x, y);
+        int i = map.BuildingAnchor(map.Index(x, y));
         var services = game.Services;
         switch (overlay)
         {

@@ -72,9 +72,10 @@ public partial class CityMinimap : Control
         _picture = new Rect2((Size - pictureSize) / 2, pictureSize);
         DrawTextureRect(_texture!, _picture, false);
         var view = Session.ViewRect;
-        var start = new Vector2(view.X / (float)game.Map.Width, view.Y / (float)game.Map.Height);
-        var end = new Vector2(Math.Min(1, (view.X + view.Width) / (float)game.Map.Width),
-            Math.Min(1, (view.Y + view.Height) / (float)game.Map.Height));
+        var start = new Vector2(Math.Clamp(view.X / (float)game.Map.Width, 0, 1),
+            Math.Clamp(view.Y / (float)game.Map.Height, 0, 1));
+        var end = new Vector2(Math.Clamp((view.X + view.Width) / (float)game.Map.Width, 0, 1),
+            Math.Clamp((view.Y + view.Height) / (float)game.Map.Height, 0, 1));
         DrawRect(new Rect2(_picture.Position + start * pictureSize, (end - start) * pictureSize),
             Colors.White, false, 2);
     }
@@ -100,6 +101,10 @@ public partial class CityMinimap : Control
     }
 
     public void StopDrag() => _dragging = false;
+
+    internal Vector2 ScreenPoint(Pos position) => _picture.Position +
+        new Vector2((position.X + 0.5f) / Session.Game.Map.Width,
+            (position.Y + 0.5f) / Session.Game.Map.Height) * _picture.Size;
 
     public override void _ExitTree() => _texture?.Dispose();
 

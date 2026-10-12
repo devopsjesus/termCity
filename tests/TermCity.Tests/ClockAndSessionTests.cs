@@ -7,6 +7,13 @@ namespace TermCity.Tests;
 
 public class ClockTests
 {
+    [Theory]
+    [InlineData(GameSpeed.Slow, "1x")]
+    [InlineData(GameSpeed.Medium, "2x")]
+    [InlineData(GameSpeed.Fast, "3x")]
+    public void SpeedLabelsUseTheRequestedThreeLevels(GameSpeed speed, string expected) =>
+        Assert.Equal(expected, Fmt.SpeedLabel(speed));
+
     // Runs the clock for the given number of seconds in small steps, the way the application calls it.
     private static void Run(CityGame game, double seconds)
     {
@@ -130,8 +137,8 @@ public class ClockTests
     public void GrowthIsSpreadOverTheDaysOfTheWeekAndTaxesArriveAtTheEnd()
     {
         var game = TestCity.Flat();
-        game.Designate(new CellRect(0, 21, 60, 1), ZoneType.Residential);
-        game.Designate(new CellRect(0, 19, 60, 1), ZoneType.Residential);
+        game.Designate(new CellRect(0, 21, 160, 2), ZoneType.Residential);
+        game.Designate(new CellRect(0, 18, 160, 2), ZoneType.Residential);
         int money = game.Money;
 
         // After a few weeks the weekly cap is big enough to be spread over several days.
@@ -369,10 +376,10 @@ public class SessionTests
         Assert.True(s.QuickSave());
         s.Demolish();
         s.SelectCell(new Pos(10, 10));
-        s.Demolish();
+        s.Game.Demolish(new CellRect(10, 10, 2, 1));
         Assert.Equal(0, s.Game.Stats.Commercial.Zoned);
         Assert.True(s.QuickLoad());
-        Assert.Equal(1, s.Game.Stats.Commercial.Zoned);
+        Assert.Equal(2, s.Game.Stats.Commercial.Zoned);
         File.Delete(s.SavePath);
     }
 }

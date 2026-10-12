@@ -23,6 +23,7 @@ public class SidebarReportTests
     public void CatalogStatusUsesActualSupplyAndResidentCoverage()
     {
         var game = TestCity.Flat(rules: CityRules.Full);
+        game.HighestMilestone = 500;
         Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Woodlot"), new(80, 18, 1, 1)).Success);
         Assert.Contains("300 / 0 units", SidebarReport.ServiceStatusDetails(game, ServiceKind.Power));
         Assert.Contains("0% of residents", SidebarReport.ServiceStatusDetails(game, ServiceKind.Police));
@@ -100,7 +101,7 @@ public class SidebarReportTests
     public void FullCityRowsHighlightShortagesFamineAndInsolvency()
     {
         var game = TestCity.Flat(rules: CityRules.Full);
-        game.HighestMilestone = 100;
+        game.HighestMilestone = 500;
         game.Map.SetZone(10, 21, ZoneType.Residential);
         game.Map.SetBuilding(10, 21, game.Map.Content.Buildings.ForZone(ZoneType.Residential));
         game.Map.SetHousehold(10, 21, new Household(2, 1, 0));
@@ -139,7 +140,7 @@ public class SidebarReportTests
     public void ServicesRowStaysOmittedWhenBuildingsChange()
     {
         var game = TestCity.Flat(rules: CityRules.Full);
-        game.HighestMilestone = 100;
+        game.HighestMilestone = 250;
         var area = new CellRect(10, 19, 1, 1);
         Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Watch House"), area).Success);
         Assert.DoesNotContain(SidebarReport.CityRows(game), row => row[0].Text == "Services");
@@ -160,10 +161,10 @@ public class SidebarReportTests
         game.Touch();
         string details = CityReport.ZoneDetails(game, ZoneType.Residential);
         Assert.Contains("R Homesteads", details);
-        Assert.Contains("Built: 1 cells", details);
+        Assert.Contains("Built: 1 buildings", details);
         Assert.Contains("Zoned: 2 lots", details);
-        Assert.Contains("Road-served: 1 lots", details);
-        Assert.Contains("Without road: 1 lots", details);
+        Assert.Contains("Walkable: 2 lots", details);
+        Assert.Contains("Unreachable: 0 lots", details);
         Assert.Contains("Awaiting removal: 0 buildings", details);
         Assert.Contains($"Demand: {game.Demand.Residential:P0}", details);
 
@@ -182,7 +183,7 @@ public class SidebarReportTests
         session.ShowGrowthReport();
         foreach (var zone in Zones.Placeable)
             Assert.Contains(CityReport.ZoneDetails(game, zone), session.Prompt!.Text);
-        Assert.Contains("road-served vacancies", session.Prompt!.Text);
+        Assert.Contains("complete vacant plots", session.Prompt!.Text);
     }
 
     [Fact]

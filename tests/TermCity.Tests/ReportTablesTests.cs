@@ -85,6 +85,7 @@ public class ReportTablesTests
     public void FoodTabReportsFamineReservesAndSeasonalEffects()
     {
         var game = TestCity.Flat(rules: CityRules.Full);
+        game.HighestMilestone = 500;
         game.Hunger = 0.4;
         game.GrainWeeks = 0;
         var food = ReportContent.Build(game).Single(page => page.Title == "Food & Seasons");

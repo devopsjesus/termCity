@@ -10,6 +10,9 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
     public bool Help { get; init; }
     public bool DumpMap { get; init; }
     public bool ReducedMotion { get; init; }
+    public bool BuildingSmokeTest { get; init; }
+    public bool PerspectiveSmokeTest { get; init; }
+    public bool PerspectivePerformanceTest { get; init; }
     public int FramesPerSecond { get; init; } = 30;
 
     public const string Usage = """
@@ -23,6 +26,9 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
           --reduced-motion  Turn all visual effects off (the V key cannot turn them back on)
           -h, --help        Show this help
           --smoke-test     Run engine integration checks and exit
+          --building-smoke-test Verify building sprites at every zoom and exit
+          --perspective-smoke-test Verify tilted 3D camera, rotation and picking
+          --perspective-performance-test Check zoom, pan and selection performance
           --capture <path> Save a PNG during a graphical smoke run
         """;
 
@@ -30,6 +36,9 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
     {
         var config = new GameConfig { Seed = Random.Shared.Next() };
         bool smokeTest = false;
+        bool buildingSmokeTest = false;
+        bool perspectiveSmokeTest = false;
+        bool perspectivePerformanceTest = false;
         string? capturePath = null;
         bool load = false, help = false, dump = false, reducedMotion = false;
         string? loadPath = null;
@@ -64,6 +73,26 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
             if (argument == "--smoke-test")
             {
                 smokeTest = true;
+                continue;
+            }
+            if (argument == "--building-smoke-test")
+            {
+                smokeTest = true;
+                buildingSmokeTest = true;
+                continue;
+            }
+            if (argument == "--perspective-smoke-test")
+            {
+                smokeTest = true;
+                buildingSmokeTest = true;
+                perspectiveSmokeTest = true;
+                continue;
+            }
+            if (argument == "--perspective-performance-test")
+            {
+                smokeTest = true;
+                buildingSmokeTest = true;
+                perspectivePerformanceTest = true;
                 continue;
             }
 
@@ -114,6 +143,9 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
         return new(config, smokeTest, capturePath)
         {
             Load = load, LoadPath = loadPath, Help = help, DumpMap = dump, FramesPerSecond = fps, ReducedMotion = reducedMotion,
+            BuildingSmokeTest = buildingSmokeTest,
+            PerspectiveSmokeTest = perspectiveSmokeTest,
+            PerspectivePerformanceTest = perspectivePerformanceTest,
         };
     }
 }

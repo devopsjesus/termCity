@@ -154,7 +154,7 @@ public class MenuAndGuideTests
             if (building.Capacity > 0) Assert.Contains($"Capacity: {ChoiceHelpContent.CapacityText(building)}", help.Details);
             if (building.Radius > 0)
             {
-                Assert.Contains($"Radius: {building.Radius} cells", help.Details);
+                Assert.Contains("Response target:", help.Details);
                 Assert.Contains($"strength: {building.Strength}/100", help.Details);
             }
             if (building.RequiresWaterNearby) Assert.Contains("nearby open water", help.Details);

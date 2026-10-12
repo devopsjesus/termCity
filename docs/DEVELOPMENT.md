@@ -13,6 +13,9 @@ The Godot-local solution also remains available for editor integration.
 dotnet build TermCity.slnx
 godot --path godot -- --seed 42 --size medium
 godot --headless --path godot -- --size SF --seed 42 --dump-map
+godot --path godot -- --size small --seed 42 --building-smoke-test --capture /tmp/termcity-buildings.png
+godot --path godot -- --size small --seed 42 --perspective-smoke-test --capture /tmp/termcity-perspective.png
+godot --path godot -- --size large --seed 42 --perspective-performance-test
 dotnet build TermCity.slnx -c Release
 dotnet test TermCity.slnx -c Release --no-build
 ```
@@ -65,7 +68,7 @@ and next-step coaching. `CityGame` records peaks independently of any session or
 save/load/autosave guards and feedback. It has no Godot dependency.
 
 Accelerated default-rules gameplay regression tests cover two seeds on each random map size,
-using paid actions, no loans and a mid-play save/load. They reach the final 10,000-person milestone:
+using paid actions, no loans and a mid-play save/load. The target is the final 10,000-person milestone:
 
 ```bash
 dotnet test tests/TermCity.Tests/TermCity.Tests.csproj --filter 'Category=Playthrough' --logger 'console;verbosity=detailed'
@@ -100,13 +103,15 @@ Demand hover tooltips, weekly/growth reports and the full-rules health report.
 ## World and content
 
 `GameMap` stores flat layers indexed by `y * Width + x`: terrain/feature/road type/building IDs,
-road booleans, zones and households. Sparse road/zone index sets keep simulation work proportional
+road booleans, zones, households and path wear (0-12). Sparse road/zone index sets keep simulation work proportional
 to built cells. `SetRoad`, `SetZone` and `ClearCell` maintain them; loading rebuilds them.
 `BuildingType.Width/Height` define player-placement footprints. `PlanBuildings` tiles the
 expanded selection, rejecting blocked buildings atomically. `GameMap.BuildingFootprints` and a
 sparse cell-owner lookup associate occupied cells with one building; `ServiceCells` contains
-only its anchor. Road access through any occupied cell activates the building, but upkeep,
-supply, coverage and pilgrimage are counted once. Area effects originate at the anchor.
+only its anchor. Zoned buildings also register complete footprints: cottages, stalls and workshops
+start at 2x1 or 3x1; denser types need larger plots. Households live only at the anchor,
+and population, jobs, taxes, supply demand and pollution count each building once.
+Land is walkable without road access. Area effects originate at the anchor.
 Saves retain explicit footprints; service buildings without them are rejected on load.
 
 `GameContent` combines terrain, feature, building and road registries. Types receive compact byte
@@ -142,7 +147,15 @@ rendered at `Render(chunkX, chunkY, scale, stride)`, covering stride times the m
 Ambient sprites (cars, walkers) follow the drawn curve: `IAmbientWorld.Snap` projects their position onto `RoadGuide`'s
 segments (filtered with `FollowRate` so they glide), and speeds are the `AmbientLife` `*Speed` constants.
 `godot/TerminalMap` caches the chunks as textures and draws them between the cell backgrounds and the glyphs.
-Existing roads over water render as bridges. Unserved zones dim and disconnected roads turn red.
+Player road strokes accept water cells and render them as bridges instead of
+silently skipping the crossing. Buildings and zones still reject water.
+Selected areas that cross water use the selected start/end cells as one ordered
+road stroke, not a rectangle of scattered road strips. Preview, quote and commit
+share that stroke. A blocked water crossing fails before changing any cell or
+charging gold; it never builds disconnected approaches or an isolated deck.
+Perspective crossing previews outline the stroke cells, with blocked cells marked
+red, instead of outlining the entire enclosing rectangle.
+Local roads retain their normal colors and speed benefits.
 `BlockSampler` chooses representative visuals for coarse zoom, prioritizing buildings, zones,
 roads, water, hills, features and open ground. `CellInspector` supplies bottom-line details.
 Recurring week-summary messages are not displayed in the bottom bar; completed-week
@@ -155,14 +168,10 @@ Placement ranges appear only on valid building locations; existing-building
 ranges are suppressed during placement so occupied/blocked cells show no coverage preview.
 Selected/previewed building ranges use a cached radial texture with a uniform 32%
 opacity throughout the defined coverage area. The fade starts at that boundary
-and reaches transparency at 125% of the radius. Actual area-service coverage,
-pollution and air cleanup share that same falloff: full strength inside the
-defined radius, smoothly decreasing to zero across the outer 25% fringe.
-Funding still scales service strength, and overlapping services retain diminishing
-returns. Pollution cleanup is applied after all sources, independent of map order.
-Gameplay falloff measures distance in map-display pixels, accounting for the
-12x22 cell aspect ratio. Thus service coverage, pollution and cleanup use the same
-screen-space circular boundary and fringe as placement previews, not tall ovals.
+and reaches transparency at 125% of the radius. For services these are approximate
+timely-response guides, not coverage limits. Pollution and air cleanup alone retain
+the circular screen-space falloff, accounting for the 12x22 cell aspect ratio.
+Pollution cleanup is applied after all sources, independent of map order.
 Selected buildings show the concise `Active` status in green. Disconnection, missing
 Right-clicking any building footprint cell opens a terminal-styled Building Status
 table. It shows connection, status, upkeep, capacity and coverage, with Area menu
@@ -223,10 +232,13 @@ and `GameConfig.Scenario`; there are no historical aliases or per-city configura
 Paused updates do not advance gameplay. A game week has seven days and a year has 52 weeks.
 New games capture the local starting year; saves must contain it.
 
-Growth is planned weekly and distributed across days. Empty, served lots fill up to their daily
+Growth is planned weekly and distributed across days. Clear multi-cell zoned plots fill up to their daily
 allocation. Candidates are sorted before random selection so results remain stable after loading
 sparse indexes. Base weekly caps are 3 homes, 1 shop and 1 factory, plus 2% of existing capacity.
-Commercial/industrial growth unlocks at 10 occupied residential cells, with one supported shop per
+Single-cell session zoning expands to the registered minimum growth footprint, clamped inside
+the map. Core `Designate` retains exact selection semantics. Cell/zone diagnostics distinguish
+incomplete plots from low attraction and missing starter fuel/water dispatch.
+Commercial/industrial growth unlocks at 10 occupied residential buildings, with one supported shop per
 20 homes and one factory per 10 homes.
 
 The medieval layer lives in `TermCity.Core/Simulation`: `Seasons` (the farming year), `Harvest` (grain, famine, buying
@@ -235,25 +247,53 @@ crown's tribute) and the castle tiers in `CityServices` (`SeatRank`). Each runs 
 `CityGame.AdvanceWeek` in a fixed order and draws only from `game.Rng`, so a seed stays reproducible. See
 [POPULATION.md](POPULATION.md) and [MEDIEVAL.md](MEDIEVAL.md).
 
-Taxes arrive weekly. Occupied R/C/I cells have base weekly values 200/350/500 before the default 9% tax rate.
+Taxes arrive weekly. Occupied R/C/I buildings have base weekly values 200/350/500 before the default 9% tax rate.
 Dezoned occupied buildings retain population/tax income until their random 14-21-game-day deadline.
 Restoring their original zone cancels removal. Demolition is immediate, free and unreimbursed.
-Full-funded service upgrades compare supply capacity or summed actual strength-weighted coverage.
-Higher tiers have strictly cheaper normalized cost over 52 weeks on flat ground; road upgrades
-have corresponding value tests.
+Service tiers retain their construction/upkeep prices and strengths; response quality now depends
+on travel and staffing rather than summed radial coverage.
 
 Statistics visit sparse zones/removal queues and use stack counters. Road connectivity is cached
 separately from growth; road changes invalidate it. Utility demand and pollution refresh when
 buildings grow, disappear or change zone, before subsequent statistics and weekly settlement assessment.
-Road service spreads through buildable
-terrain from roads connected to the map boundary. Default reach is two cells.
-Nearby connected visible road beds supplement this access when within 0.75 cell widths horizontally
-and cell heights vertically of a building cell's footprint edge.
+`RoadNetwork.IsServed` means walkable land or a bridge; `AccessRank` is an optional nearby-road
+bonus, including local roads. `TravelRoutes` uses deterministic multi-source Dijkstra fields:
+open ground costs 6 units per step (scaled by terrain), compacted paths 2, roads 1/rank.
+Twenty-four units are one game day. Sources and topology cache route fields; road/terrain
+changes and path compaction invalidate them. First service arrivals compare journey time
+against a persisted building establishment day. Older services without that metadata are
+already established. The timely target is `radius * 6 / 24` days (ordinary walking distance);
+roads reach farther within that same target. Longer trips remain eligible, with quality proportional to target/travel time.
+Default area-service radii are 50% larger than before, rounded up; their response targets,
+range guides and radius-based staffing increase together without changing prices or upkeep.
+Pollution and cleanup keep their prior spatial radii.
+Nearest providers share residents by least-time routes. Area staffing capacity is
+`max(300, radius * radius * 6) * effective funding`; excess workload lengthens response
+time and reduces service quality. Fuel/water retain their city supply/demand limits and
+also require deliveries to have arrived.
+
+Each day, buildings wear one new path segment toward their closest reachable road
+and their nearest reachable neighboring building. Cached deterministic multi-source
+breadth-first fields avoid building interiors and unbridged water; building routes
+also form in roadless settlements and begin at both building perimeters.
+Repeated traffic compacts segments at wear 3; wear caps at 12. Paths are not roads,
+cost nothing, do not require edge connectivity, and survive saves and undo.
+`FootpathLayout` joins path segments to adjacent paths, roads and building edges,
+including turns and junctions, in both perspective and overhead rendering.
+Roads remain useful travel boosts, not prerequisites for settlement or redevelopment.
 
 `Changed` notifies possible UI changes; `MapVersion` advances only for map-visible changes.
 Renaming, taxes, speed, pause and guide preferences raise non-map change notifications, allowing
 dirty/autosave tracking without changing the map version or discarding road geometry and service caches.
 Failure results carry user-visible explanations.
+`CityProgression.IsServiceUnlocked` gates service needs and petitions by the cheapest
+population gate in each registered family, using current population or permanent peaks.
+Locked care has zero unmet-service happiness penalty; reports show its gate without
+asking residents to demand unavailable construction.
+Growing Hamlet (250 souls) permanently unlocks Fire Watch, Watch House, Sheriff's Hall,
+Apothecary and Chantry School, with the same shared milestone grant/report workflow.
+The 100-person Hamlet milestone now focuses on starter supplies and jobs; grain remains
+gated at the 500-person Village milestone.
 
 ## Session and zoom
 
@@ -297,7 +337,9 @@ desktop bounds. F3 opens live font controls with OK/RESET.
 
 The top header is one row with uniform base font size 24, fitted on narrow windows. TermCity/name,
 date/progress, population and funds have separate double-white frames. The time
-section has 12-pixel spacing between its fields; the speed label is omitted.
+section has 12-pixel spacing between its fields, with a rightmost speed label:
+1x (Slow), 2x (Medium), 3x (Fast). These are speed-level labels; the underlying
+configured day/week durations are unchanged.
 Funds show the gold amount and weekly balance without a TREASURY label.
 The weekly balance uses brackets without `/wk`, e.g. `50,000g [+100g]` or
 `50,000g [0g]`; only positive balances have a plus sign.
@@ -482,10 +524,10 @@ Buildings with a capacity also show it directly beneath their choice name in
 14-point text and near the top of the details table, after cost and upkeep.
 Capacity units distinguish fuel, water, grain measures, residents and jobs.
 Area-service buildings without a capacity retain their radius/strength information.
-Starter fire, sheriff, physic and learning services unlock at Hamlet (100 souls);
+Starter fire, sheriff, physic and learning services unlock at Growing Hamlet (250 souls);
 higher-tier service gates remain unchanged. Locked catalog choices show a red
 padlock to the right of the name. Unlock details show the milestone name and
-remaining population, e.g. `Hamlet (40 souls to go)`; permanent unlocks show zero.
+remaining population, e.g. `Growing Hamlet (40 souls to go)`; permanent unlocks show zero.
 Village Green requires Village (500 souls); Tavern requires Market Town (1,000 souls).
 Construction Add is disabled for both locked buildings and insufficient base-cost
 funds and refreshes while the submenu stays open, including after income, expenses
@@ -686,10 +728,15 @@ and neither axis exceeds the source map, avoiding empty sampling bands on small 
 Linear texture filtering smooths scaling. The camera outline/navigation uses the actual view rectangle.
 Overlay count/occupancy buffers are reused.
 
-`GreensleevesTrack` synthesizes 54 BPM, 22,050 Hz PCM16 with an FM lead, arpeggio and bass.
-The fixed opening lasts about 94 seconds. `GreensleevesSequence` then chooses complete verse/refrain
-phrases, related dominant/subdominant keys and bounded timbre/arpeggio variations. All voices transpose
-together within one octave; phrases fade to zero at their boundaries.
+`MusicRegistry` contains Greensleeves and five original modal themes: Willow Court, Cloister Light,
+The Evening Reeve, River Lanterns and Orchard Vigil. `MusicSong` stores immutable validated melody,
+chord, meter, tempo and voice definitions. Register new scores there; do not add another player
+or a song-specific synthesis loop. `MedievalMusicSynth` is the shared 22,050 Hz mono PCM16
+synthesizer with gentle wind, strings and soft-brass colors, alternating phrase voicing,
+sustained harmonies, soft plucked accompaniment and a restrained quarter-note running bass.
+Scores use 48-56 BPM, fade to silence at their boundaries, and fit the 8 MB-per-score budget.
+`MusicSequence` shuffles every registered song, avoiding adjacent repeats across shuffle cycles.
+Greensleeves' public rendering/phrase APIs remain compatibility wrappers around the same synthesizer.
 
 `AudioStreamGenerator` streams small reusable buffers instead of looping a fixed WAV. A single
 background producer fills its one-second ring buffer every 10 ms, independently of map rendering,
@@ -702,6 +749,18 @@ also toggle their respective channels. Preferences are saved alongside font size
 Older settings without a sound toggle inherit the old shared mute state once.
 Music pauses on focus loss, not gameplay pause/dialogs. Worker failures are reported on the main
 thread; cancellation and joining precede releasing playback resources at shutdown.
+
+Monuments are registered building types with `IsMonument`/`DebugOnly` metadata. The first is an
+original Bewildered Duck stone statue holding its helmet, occupying 8x6 cells with a raised
+sculpture and stepped plinth. It is not imported or traced character artwork. Its normal gate
+is 100,000 residents, using saved `HighestPopulation`; Debug builds expose a Monuments catalog
+and allow immediate free placement so it can be inspected without developing a city first.
+Release builds hide and reject debug-only placement. Footprints, picking, demolition and saving
+use the normal building infrastructure; monuments do not masquerade as civic services.
+Release loading explicitly rejects saves containing the debug-only prototype rather than
+silently removing it or exposing unfinished content.
+The Debug minimum window height is 800 logical pixels (Release retains 780) so the additional
+monument icon fits without pushing the status row outside the window or changing terminal padding.
 The engine smoke test checks underruns through a 1.5-second render-thread stall and repeated zoom/pan.
 No external recording or package is needed.
 
@@ -712,12 +771,314 @@ ranges, includes valid placement previews and labels multiple effects side by si
 Ring alpha is 0.38; icon alpha is 1.0.
 Utilities with citywide supply and no spatial radius do not have a fictitious range circle.
 
-`BuildingType.FootprintArt` defines ASCII pictures at two columns and two rows per map cell.
-`FootprintGlyphAt` slices each occupied cell into a two-line tile. `CellRenderer` supplies those
-tiles at normal/close zoom, and `TerminalMap.DrawCellGlyph` draws them at half font size within
-the original cell bounds, including effect scaling/tints. `MapSnapshot` preserves their footprint
-ownership so demolition ghosts retain the art. `BlockSampler` and `--dump-map` explicitly request
-the canonical single-line glyph.
+`BuildingSprite` generates original classic-city-map-inspired pixel artwork from an elevated
+oblique view: broad shaded roof planes, short walls, compact walled courtyards, planted home
+plots and paved civic/workshop yards. Medieval details include thatch, timber framing,
+market awnings, mill wheels, forge chimneys, cloisters, aqueduct channels and battlements.
+Church and castle towers are compact volumes rather than stretched front-facing columns.
+Sprite lift is a fixed eight pixels across building levels; denser plots grow wider or
+add wings instead of increasing presentation height. Sprites extend above
+their logical footprints and draw in south-edge order for depth. `TerminalMap` caches
+nearest-filtered textures per type/footprint/variation at every zoom, after roads and paths.
+Placement still uses the logical footprint; mouse picking tests the full sprite alpha
+front-to-back, including raised roofs and overhangs. Transparent pixels pass through.
+`TerminalGrid` suppresses building glyphs; overlays and selection remain available.
+`BuildingType.FootprintArt` and `MapSnapshot` retain terminal art for text/effect fallbacks;
+the minimap and `--dump-map` retain canonical glyphs.
+`TerrainSprite` supplies world-anchored pixel ground chunks and raised natural-object
+sprites. Meadow uses quiet mottled grass, hills have shaded earth ledges, and water
+has banks and a four-phase shimmer. Terrain textures cache by map terrain revision,
+chunk, stride and water phase; roads do not inherit terrain motion.
+Open and closed `RoadCurves` drafts share straightening before smoothing, so loops
+do not turn their diagonal grid staircases into ripples.
+
+`PerspectiveCity` supplies the default tilted orthographic 3D view in a native-panel-resolution
+`SubViewport` with 2x MSAA, drawn into `TerminalMap`. Pixel materials retain nearest filtering.
+TURN LEFT/RIGHT rotate in 45-degree
+steps; TILT alternates 35/50-degree elevations. OVERHEAD retains the sprite renderer.
+The initial azimuth is 325 degrees (mirrored from the former 35-degree angle), so the
+buildings' front faces project toward screen-right without flipping logical map coordinates.
+The scene reads the same map, footprints, curved roads, path wear, overlays and selection.
+Visible ground chunks reuse pixel terrain textures, while mesh walls and pitched roof
+planes can be viewed from every side. Building height is based on type/density, never
+footprint height; large plots expand roofs, courts and walls rather than stretching towers.
+Ground rays drive placement/dragging/panning; nearest mesh-volume/roof-triangle hits drive
+building selection. Valid placement shows a green-tinted full building model, excluded
+from picking until it is constructed. View mode and angle are presentation state, not simulation mutations.
+`--perspective-smoke-test` checks rotation, zoom, ground projection, building picking and
+bounded tower proportions without running the unrelated desktop input stress checks.
+Perspective rendering batches box geometry into a `MultiMesh` per material and roof faces
+into shared meshes; forests and roads do not create one scene node per component.
+Terrain mesh/texture chunks are cached independently. A buffered visible region prevents
+small pans from rebuilding geometry, while selection/placement/range indicators use a separate
+small layer. The viewport redraws on changes rather than rendering an unchanged scene continuously.
+Camera caching includes viewport cell dimensions, and changed views render for a few
+settling frames before stopping. This prevents zoom/resize updates from leaving a stale
+or blank subviewport frame; graphical captures wait for those frames before reading pixels.
+The graphical performance check covers every zoom, selection, buffered panning and cache-boundary
+loads, with a 512-node ceiling, 50ms CPU interaction budget and 60ms frame-p90 budget.
+`PerspectiveCity.NormalMagnification` is 1.8, making the normal tilted map view 80% closer.
+All zoom levels use this baseline; UI scaling and the legacy overhead grid are unchanged.
+Perspective range rings draw as antialiased screen-space circles anchored at their projected
+source and scaled by camera magnification. They do not inherit camera foreshortening or
+terminal-cell 12/22 compensation, and remain approximate timely-response guides.
+`TerrainSprite` shades meadow with world-anchored 4x8-pixel quantized patches over
+a low-frequency field, using five subdued palette steps. Open water uses matching
+4x8-pixel blue blocks with phase-based variation, not single-pixel wave lines.
+Tree canopy materials use original 16x16 textures containing 4x4-pixel leaf clusters;
+overhead tree silhouettes use coarse clustered shades as well. Water uses a weighted neighboring
+cell-density field and bilinear contour shading to round banks while keeping thin channels
+and isolated ponds. Shoreline mesh heights interpolate at shared vertices instead of exposing
+individual recessed water-cell walls; terrain layers and buildability remain unchanged.
+Medieval material cues use original 16x16 procedural pixel textures for mortar, timber,
+plaster, thatch and roof tiles. Timber framing is instanced in the same material batches,
+not separate scene objects, so additional facade detail retains the large-map performance model.
+Reference games inform broad camera, palette and atmosphere choices only. No reference-game
+sprites, textures, screenshots, models or traced artwork are bundled; these materials and
+building volumes are generated by the project's own rendering code.
+Graphical `--perspective-smoke-test --capture <path>` also writes `.river.png` and
+`.ranges.png` companion captures for the smoothed diagonal bank and circular guides.
+`.zoom05.png` and `.zoom2.png` capture the 0.5x/2x views; the smoke checks roof pixels
+after actual zoom-control transitions, not merely scene counts or picking metadata.
+Subtle voxel detail uses the same material batches: seeded broadleaf/conifer canopies,
+scaled boulder clusters, well coping, aqueduct pier bases, granary supports, roof ridge
+blocks and castle cornices/crenellations. `TerrainSprite.Elevation` keeps meadow at 0,
+hills from 0.3 to 1.35 world units; water uses a separate gently graded surface
+below meadow height, never hill terraces. Cached terrain meshes close the step faces.
+Ground picking intersects those visual elevations without changing logical terrain rules.
+Hill interiors now rise through four terraces: a readable 0.3-unit grassy base
+and three prominent 0.35-unit steps, reaching 1.35 units. The lowest exposed banks
+use dark green/earth shading rather than thin tan strips. Flat green tops retain
+the ordinary meadow palette; exposed faces use cached, earthy horizontal strata,
+not the top's grass texture. Buildings spanning levels sit on level foundations
+at their plot's highest terrace rather than disappearing into the hillside.
+A cached breadth-first
+distance from each hill region's boundary determines height; terrain edits invalidate
+the cache, and save/load derives identical terraces from the saved terrain layout.
+Coastal singleton/sliver caps collapse visually without changing logical terrain.
+Higher terrace tops ease down toward the lowest bank level near water; dry
+shoreline fragments inherit the lowest adjoining land level rather than borrowing
+the highest inland terrace. Bank walls and picking use those same surfaces.
+Perspective roads are dedicated meshes, not pixels painted onto terrain.
+The sidebar's TILT and ROTATE buttons sit above the minimap zoom controls.
+Each button has its own single white border on black; there is no overhead toggle.
+TILT cycles through 20, 35 and 50 degrees; ROTATE advances clockwise in 90-degree
+steps, wrapping after four clicks. Either button activates the 3D view when
+used from overhead. Modal prompts and active placement previews block these
+actions, matching sidebar zoom behavior.
+The `[` and `]` keys rotate 90 degrees left and right, respectively, with the
+same modal/placement guards as the sidebar controls.
+`RoadMeshLayout` converts the existing `RoadPath` centerlines to square world
+coordinates and simplifies them within 0.2 terminal pixels. Centerline heights
+are sampled at most one cell apart before smoothing, so sparse flat stretches
+cannot stretch a summit transition into a long shallow trench. Stable terrace
+samples within 0.06 units settle back onto the terrace; uniform straight
+stretches then coalesce up to six cells. Smoothed centerline heights define the shared
+road grade, including raised water crossings. Offset edges define a 0.6-cell
+carriageway and a 0.12-cell shoulder on either side; joins share their edge vertices.
+Road junctions are ordinary intersections regardless of rank. The former
+`Ramp`/`AlongHost` shaping is retired: an acute minor road is not redirected
+along a highway as an invented merge ramp. Flat shoulders keep the terrain
+material, avoiding decorative tan strips around level intersections.
+`TravelRoutes.JunctionDelayUnits` derives a bounded delay for shallow-angle
+minor-road approaches from their actual local centerline tangents, not a long
+grid-route chord around a traffic circle. It affects
+actual least-time travel, is cached until road/terrain edits, and imposes no
+extra delay on equal-rank traffic-circle connections.
+
+`RoadSurfaceMeshes` partitions each cell into nonoverlapping road, shoulder and
+terrain polygons using Godot's polygon intersection/difference tools. Road types
+have deterministic priority at crossings. All surfaces share one world-coordinate
+height query, so junctions do not stack coplanar road strips. The remaining
+terrain keeps its original terrace height, and explicit cut/fill walls connect
+the corridor boundary to it. Road ends, curves, closed loops and junctions use
+the same geometry path; the renderer checks that the partitions cover each cell
+within 0.001 square cells without holes or overlaps. Bridge corridors retain
+the ground/water below; their extra projected surface area is accounted for
+separately. Thin retained terrace polygons under 0.25 cells wide are lowered into
+supported road grade. Shoulders restore up to 0.12 units of terrain height across
+their actual width, meeting shallow cuts/fills flush rather than leaving thin
+vertical skirts. Substantial hilltops are not lowered just because their grade
+difference is small. Cut faces, terrace seams and retained picking triangles use
+the same shoulder support heights. Shoulder restoration fades out for substantial
+cuts (0.24 units and above), retaining solid earth faces instead of small bevel
+wedges at each terrace. Before triangulation, adjoining road/shoulder/terrain
+polygons share boundary vertices, including cuts from neighboring cells. Triangles
+and bank walls are split at those vertices so nonlinear grade samples cannot leave
+T-junction cracks between an incline and its supporting ground.
+Undeformed level-road cells keep the direct triangulation fast path; shared-edge
+refinement is reserved for graded terrain, bridge decks and riverbanks.
+On hills, all road shoulders and cleared terrace remnants use the earthy road
+material, even when flush with the terrace. They never sample the grass atlas;
+uncut terrain outside the road corridor retains its grass. Flat meadow
+intersections still use grass shoulders.
+Where a high terrace edge meets a road cutting, convex tips are excavated along
+a bounded eight-segment quadratic curve. Only exposed terrace/corridor joins are
+rounded, not ordinary cell seams or untouched hill corners. The curved clearance
+uses the same earth surface, cut walls and picking triangles as other remnants.
+
+Water crossings receive bridge decks, parapets/posts and piers. A short valley
+with at least a 0.35-unit drop between banks is bridged when its span is no more
+than eight world cells, rather than following a steep descent and ascent.
+Bridge shape is derived from the same centerline edges and grade query;
+logical roads, construction cost rules and saved road layers remain unchanged.
+Deck edges have solid 0.12-unit vertical fascia following the exact top mesh,
+not an infinitely thin sheet. Railings use thicker 0.13-by-0.18-unit members and
+posts spaced two world cells along each continuous span, with restrained
+unstriped wood/stone colors rather than fine bright railing textures.
+Abutment excavation checks the clipped deck corridor's vertices and edge
+midpoints, not only the logical cell center, so a sloped or curved bridge approach
+cannot retain hill grass that protrudes through one edge of the carriageway.
+
+Road and shoulder meshes use nearest-filtered original pixel materials with
+restrained stone/dirt variation and clean antialiased silhouettes. They are cached
+in 16-cell chunks alongside terrain and bank meshes. Terrain/road revisions
+invalidate the appropriate derived geometry; selection and buffered pans do not
+rebuild it. Picking retains the actual road, shoulder and terrain triangles, and
+selection outlines follow those same surfaces. Graphical smoke scans the
+road-cut corridor for exposed background pixels.
+
+The inspector uses the same `RoadMeshLayout` carriageway footprint at the
+selected cell center, cached per road-network revision. Bare selected terrain
+does not report a road just because an old logical route cell exists there;
+visible road meshes crossing other cells are identified too. Picking and the
+outline use the same retained mesh triangles. Logical placement, demolition, walking/travel costs and save
+layers are unchanged. The overhead renderer retains its curved raster road layer.
+
+The Roads catalogs include `RoadTemplate.TrafficCircle`: one atomic 5x5 cobbled
+ring, nine grassy center cells and four cardinal connection points. A fixed
+placement preview follows the cursor; clicks/Enter confirm, Escape cancels.
+The entire dry, unzoned plot is validated before spending; existing roads in
+the center must be cleared first, and higher-ranked perimeter roads are not
+downgraded. Placement is one undoable action and saves as ordinary road cells.
+
+`WaterFlowField` derives deterministic downstream directions toward broad water
+bodies/outlets. Each river step reduces distance to its outlet, preventing
+cycles; adjacent water levels change by at most 0.001 units, with total channel
+relief capped at 0.12. Lakes stay level and no waterfalls are generated by
+default. Water heights never use hill levels, and shoreline blue does not spill
+onto raised hilltops. Generated/scenario river identity is retained in an optional
+compressed save layer, so a wide river does not become a still lake simply because
+its center is several cells from the bank. River paths drain toward classified
+sea or broad non-river bodies. A cached flow atlas carries downstream directions
+and outlet-distance phase; coarse four-pixel patches carry a gentle 2–4% brightness
+change downstream at 0.4 world cells per second, with four updates per second.
+Pause, effects-off and
+reduced-motion modes freeze them without rebuilding terrain geometry.
+Render-on-demand retains two actual settling frames before disabling the viewport
+on the following tick, so a flow-clock update cannot be canceled before drawing.
+Terrain/road/bank triangle buffers upload their vertex attributes in batches
+rather than issuing native calls for every vertex.
+
+Tests tied solely to retired painted roads, ASCII map elements, highway merge
+ramps and glyph-terrain animation have explicit skip reasons. Dedicated mesh,
+partition coverage, geometry, selection, traffic-circle, bridge and flow tests
+remain active; gameplay, saves and terminal UI tests are not disabled.
+`ShorelineLayout` partitions coastal cells at the visible 0.38 water-density
+contour using shared half-cell samples and matching edge crossings. Land tops
+retain their level terrace height up to that contour; a vertical earthy face
+drops straight to the gently flowing water. Land and water polygons are disjoint,
+so hills do not slope or clip into the channel. Water-to-water boundaries never
+produce earth walls. Ground mesh surface markers keep water blue and land green
+where contour geometry and the cached raster atlas differ at shoreline pixels.
+Perspective atlases disable baked shoreline sand/blending: grass and water stay
+pure, with the contour mesh defining their boundary instead of a pixel stair-step
+tan fringe. Freshwater banks use a dark earthy transition limited to the
+0.28–0.34 density band, rather than broad tan vertex-color gradients.
+Only classified sea/ocean coasts have sandy beaches: selected 12-cell coastal
+regions extend sand up to 3.5 cells inland, with a 0.25-cell inland transition.
+The narrow water-edge slope is separate from the level sandy area. Rivers and
+lakes never receive beaches. Sea identity is recorded by the water generator's
+body IDs and coastal scenario definitions, persisted as an optional compressed
+save layer; older saves without it remain valid and do not guess sea identity.
+An 18×18 padded, cell-centered shoreline atlas supplies smooth density and coast
+distance sampling independently of mesh tessellation, keeping material boundaries
+short without triangular color wedges.
+Raised hills retain cliffs; beaches do not change buildability or river flow.
+Beach vertices carry an explicit land/sand marker even below ground
+zero so they cannot be misclassified as water. Coastal building foundations
+extend to the actual rendered surface while preserving their level plot height.
+Beach eligibility samples cell edges and corners as well as centers, keeping
+the inland slope continuous where the density field ends. Both sides retain
+shared half-cell edge vertices, avoiding T-junction gaps along slanted banks.
+Regression checks compare actual triangle heights on adjoining cell edges,
+not just the beach's interior pixels. Natural feature
+generation and rendering both require the complete feature footprint to remain
+on the land side of the visible contour; existing saved shoreline trees are
+suppressed rather than drawn standing in water.
+Coastal regions coalesce their internal sample edges before triangulation.
+Uncut ground skips road polygon work; convex road intersections use bounded
+half-plane clipping, with Godot polygon clipping retained for concave pieces.
+Material-state caching avoids redundant native color updates for identical
+vertices. The full projected cell-coverage and performance limits remain active.
+Land cliff intersections are split
+at the road/corridor boundaries and use one region classification for both ends,
+preventing black triangular gaps where cuts meet terrace faces.
+Road shoulders next to water use the land-side support height, not a
+threshold-sensitive land/water corner classification. Shore walls share all
+surface-edge splits and reach the actual shoulder height for both cut and fill,
+closing the road/shore join rather than leaving unsupported thin surface strips.
+Narrow rounded hill cuts retain their connecting wall even when fixed-width
+side probes both miss the cleared strip. The remaining-terrain edge's midpoint
+identifies that cut boundary directly. Diagonal hill-road smoke checks include
+near-endpoint wall samples, not just the middle of broad terrace faces.
+Wide-water shoreline masks use a five-cell binomial filter rather than a strongly
+center-weighted three-cell filter, suppressing repeated scalloped riverbanks.
+Sparse three-cell neighborhoods retain narrow-stream/isolated-pond visibility.
+New river generation stamps the continuous centerline with slowly varying widths,
+not rounded-cell centers and abrupt two-size stamps. Existing saves retain their
+logical water layout while benefiting from the wider visual shoreline smoothing.
+Meanders use a quintic endpoint envelope with continuous first and second
+derivatives, rather than a piecewise-linear taper that introduces opposing bank
+points where it meets the main channel. Broad bends use a lower-frequency course
+field; endpoint locations and river-connection validation remain unchanged.
+Flat meadow chunks without roads use two triangles instead of per-cell tessellation.
+Shared shoreline corner values are sampled once per chunk. Unshaded terrain/cliff
+meshes omit unused normal generation. Perspective performance smoke exercises actual
+minimap clicks to uncached destinations and measures through the rendered frame,
+with a 250 ms click-to-render budget. Land and open-water blocks use packed span
+fills; shoreline density samples are lazily cached and invalidated by terrain edits.
+Perspective hill tops omit legacy tan edge strokes: separate layered cliff geometry
+already depicts changes in height. A fixed northwest light softly brightens raised
+grass tops, casts broad green contact shadows on lower neighboring terraces, and
+gives opposing cliff faces different brightness. This shading is baked into cached
+textures/vertex colors, preserving render-on-demand and avoiding shadow-map overhead.
+Grass and water retain richer green and blue/teal five-step palettes; hill shadows
+scale those colors rather than mixing in gray, preserving saturation and coarse patches.
+Selection and placement outlines retain a two-pixel nominal thickness across zoom
+levels and resize events. Their footprint follows the active selection/zoom block,
+and their edges follow the rendered ground triangles (including road ramps and
+cuttings) instead of floating at a fixed or maximum original cell elevation.
+Original rocks have six deterministic silhouettes
+(boulder, slab, standing stone, split pair, scatter and layered outcrop), six subdued
+stone palettes, and additional scale/rotation variation in perspective. Natural
+features use the same whole-cell curved-road-bed clearance as buildings in both views,
+preventing trees/rocks from occupying the visible curve outside logical road cells.
+Riverbank corner heights are shared by every adjoining ground tile. Cliff walls
+join those actual top/bottom corner heights, rather than nominal cell elevations,
+so stepped hills meeting smoothed banks cannot leave dark holes in the terrain.
+Perspective mode enables `GameSession.CameraEdgePadding`, allowing half a viewport beyond
+each boundary so map edges can reach the view center. Overhead retains its original clamp.
+Saved views explicitly record this mode to validate negative camera positions; older saves
+retain their original behavior. The minimap clips its camera rectangle to actual map bounds.
+Perspective drags anchor to a continuous, level ground plane rather than a picked terrain
+cell. The renderer retains the fractional camera remainder between input events, avoiding
+rotated stair-step motion during slow drags. Trackpad panning uses the same screen-space
+translation. Terrain-aware picking and grid-aligned overhead panning remain unchanged.
+The indicator batch is flushed independently of whether selected services have range rings.
+`BuildingDetailLayout` supplies centered facade bays and symmetric detail spacing.
+Glazing stays between the timber posts; story rows avoid floor bands and the central door.
+Tower bodies are 0.6 units wide with 0.66-unit caps and eight spaced square perimeter merlons;
+curtain-wall blocks stop before the tower corners. Small merlons/caps use plain stone colors
+to avoid high-frequency mortar aliasing at normal zoom. Palisaded mottes do not use crowded
+stone-style corner towers, and the small gaol uses a separated two-tower gate frontage.
+Watch House, Apothecary, Chapel and Tavern now place as 2x1 buildings. Saves accept their
+prior explicit 1x1 footprints without expanding into neighboring cells; all other civic
+footprint validation remains strict. Prices, capacities, unlocks and service targets are unchanged.
+
+Grain management and Market Cross/Granary placement begin at the permanent Village
+milestone (500). `CityGame.GrainRequired` gates imports and hunger effects; locked
+grain appears as an unlock label instead of a warning gauge in the sidebar and reports.
 
 The raw bundled DejaVu Sans Mono bytes load directly, without depending on an import cache.
 Startup verifies registered map glyph coverage. Export presets include the font and
@@ -741,7 +1102,7 @@ the full absolute path in a tooltip. Save guards do not duplicate the path in pr
 
 Saves include configuration/scenario, name, cash/calendar, RNG state, speed/pause/taxes, growth plan,
 last report, the current week's birth/death/migration/event tally, milestones, guide dismissal,
-pending dezone removals, building footprints and all map layers.
+pending dezone removals, building footprints, path wear, service establishment days and all map layers.
 Terrain/features/buildings/road types use name palettes. Layers are deflate-compressed and
 base64-encoded. Encoding resolves palette indexes once per registered type, not once per cell.
 Terrain uses every byte ID, including 255; the empty-cell marker is only used by optional layers.

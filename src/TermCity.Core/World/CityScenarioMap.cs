@@ -55,6 +55,11 @@ public static class CityScenarioMap
                 bool elevated = !wet && IsHill(config.Scenario, u, v);
                 bool park = !wet && IsPark(config.Scenario, u, v);
                 map.SetTerrain(x, y, wet ? water : elevated ? hill : grass);
+                if (wet && (config.Scenario == CityScenario.LosAngeles && !Contains(LosAngelesCoast, u, v) ||
+                    config.Scenario == CityScenario.SanDiego)) map.SetSeaWater(x, y, true);
+                if (wet && !map.IsSea(x, y) && (config.Scenario is CityScenario.LosAngeles or CityScenario.StLouis ||
+                    config.Scenario == CityScenario.Chicago && u <= 71 + 4 * Math.Sin(v * 0.045)))
+                    map.SetRiverWater(x, y, true);
                 if (park && CellHash.Pick(x, y, 4) != 0) map.SetFeature(x, y, tree);
             }
         }
@@ -88,12 +93,24 @@ public static class CityScenarioMap
                 ?? throw new InvalidOperationException($"City scenarios require a growth building for {zone}.");
         var rng = GameRandom.ForStage(config.Seed,
             config.Scenario == CityScenario.SanFrancisco ? "sf-occupants" : "scenario-occupants");
+        var network = RoadNetwork.Compute(map, config.RoadServiceReach);
         for (int y = 0; y < map.Height; y++)
             for (int x = 0; x < map.Width; x++)
             {
                 var zone = map.ZoneAt(x, y);
-                if (zone == ZoneType.None || CellHash.Pick(x, y, 10) >= 8) continue;
-                map.SetBuilding(x, y, buildings[(int)zone]);
+                if (zone == ZoneType.None || map.BuildingAt(x, y) is not null || CellHash.Pick(x, y, 10) >= 8) continue;
+                var type = buildings[(int)zone]!;
+                var area = new CellRect(x, y, type.Width + CellHash.Pick(x, y, 2), type.Height);
+                bool Clear(CellRect plot) => plot.Cells().All(p => map.InBounds(p) &&
+                    map.ZoneAt(p.X, p.Y) == zone && map.BuildingAt(p.X, p.Y) is null &&
+                    map.TerrainAt(p.X, p.Y).Buildable && !map.HasRoad(p.X, p.Y) &&
+                    !network.RoadOverlapsCell(map.Index(p.X, p.Y)));
+                if (!Clear(area))
+                {
+                    area = new(x, y, type.Width, type.Height);
+                    if (!Clear(area)) continue;
+                }
+                map.SetBuildingFootprint(type, area);
                 if (zone == ZoneType.Residential) map.SetHousehold(x, y, Household.Random(rng));
             }
     }

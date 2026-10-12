@@ -29,6 +29,7 @@ public partial class Main
     private bool _panning;
 
     private Pos _panAnchor;
+    private Vector3 _perspectivePanAnchor;
 
     public override void _Input(InputEvent input)
     {
@@ -103,8 +104,13 @@ public partial class Main
                 var focus = GetViewport().GuiGetFocusOwner();
                 bool confirmationFocused = focus is Button &&
                     (_modal.IsAncestorOf(focus) || _linePreview.IsAncestorOf(focus));
-                if (confirmationFocused && previewKey.Keycode is Key.Enter or Key.KpEnter ||
-                    !Session.RoadToolActive && !Session.BuildingToolActive &&
+                if (confirmationFocused && previewKey.Keycode is Key.Enter or Key.KpEnter)
+                {
+                    focus!.EmitSignal(Button.SignalName.Pressed);
+                    GetViewport().SetInputAsHandled();
+                    return;
+                }
+                if (!Session.RoadToolActive && !Session.FixedPlacementToolActive &&
                     previewKey.Keycode is Key.Tab or Key.Left or Key.Right or Key.Up or Key.Down)
                 {
                     return;
@@ -164,7 +170,7 @@ public partial class Main
         }
         if (Session.Preview is not null)
         {
-            if (Session.BuildingToolActive && code is Key.Left or Key.Right or Key.Up or Key.Down)
+            if (Session.FixedPlacementToolActive && code is Key.Left or Key.Right or Key.Up or Key.Down)
             {
                 int buildingDx = code == Key.Left ? -1 : code == Key.Right ? 1 : 0;
                 int buildingDy = code == Key.Up ? -1 : code == Key.Down ? 1 : 0;
@@ -246,6 +252,8 @@ public partial class Main
         }
         switch (code)
         {
+            case Key.Bracketleft: Map.RotateMap(-90); break;
+            case Key.Bracketright: Map.RotateMap(90); break;
             case Key.P or Key.Space: Session.TogglePause(); break;
             case Key.Key1: Session.SetSpeed(GameSpeed.Slow); break;
             case Key.Key2: Session.SetSpeed(GameSpeed.Medium); break;
@@ -305,7 +313,7 @@ public partial class Main
     {
         Map.RefreshCells();
         if (_editingName || Session.Prompt is not null ||
-            (Session.Preview is not null && !Session.RoadToolActive && !Session.BuildingToolActive))
+            (Session.Preview is not null && !Session.RoadToolActive && !Session.FixedPlacementToolActive))
         {
             StopPointerGesture();
             return;
@@ -341,13 +349,22 @@ public partial class Main
             {
                 _trackpadZoom = 0;
                 bool horizontal = pan.ShiftPressed || pan.AltPressed;
-                _trackpadX += (pan.Delta.X + (horizontal ? pan.Delta.Y : 0)) * ScrollStep;
-                _trackpadY += (horizontal ? 0 : pan.Delta.Y) * ScrollStep;
-                int columns = (int)Math.Truncate(_trackpadX);
-                int rows = (int)Math.Truncate(_trackpadY);
-                _trackpadX -= columns;
-                _trackpadY -= rows;
-                Session.ScrollCamera(columns * Session.Stride, rows * Session.Stride);
+                if (Map.PerspectiveEnabled)
+                {
+                    Map.ScrollPerspective(new Vector2(
+                        pan.Delta.X + (horizontal ? pan.Delta.Y : 0), horizontal ? 0 : pan.Delta.Y) *
+                        new Vector2(Map.Grid.PixelWidth, Map.Grid.PixelHeight) * ScrollStep);
+                }
+                else
+                {
+                    _trackpadX += (pan.Delta.X + (horizontal ? pan.Delta.Y : 0)) * ScrollStep;
+                    _trackpadY += (horizontal ? 0 : pan.Delta.Y) * ScrollStep;
+                    int columns = (int)Math.Truncate(_trackpadX);
+                    int rows = (int)Math.Truncate(_trackpadY);
+                    _trackpadX -= columns;
+                    _trackpadY -= rows;
+                    Session.ScrollCamera(columns * Session.Stride, rows * Session.Stride);
+                }
             }
             _lastInput = $"Trackpad {pan.Delta} {cell}";
             Map.AcceptEvent();
@@ -366,7 +383,13 @@ public partial class Main
             {
                 return;
             }
-            var position = Session.ScreenToMap(cell.X, cell.Y);
+            Map.TryMapPosition(button.Position, out var gridPosition);
+            var position = gridPosition;
+            if (!Session.FixedPlacementToolActive && !Session.RoadToolActive &&
+                button.ButtonIndex is MouseButton.Left or MouseButton.Right &&
+                !button.ShiftPressed && !button.CtrlPressed && !button.AltPressed && !button.MetaPressed &&
+                Map.TryPickBuilding(button.Position, out var buildingAnchor))
+                position = buildingAnchor;
             if (!Session.Game.Map.InBounds(position) &&
                 button.ButtonIndex is MouseButton.Left or MouseButton.Middle or MouseButton.Right)
             {
@@ -375,9 +398,9 @@ public partial class Main
             switch (button.ButtonIndex)
             {
                 case MouseButton.Left:
-                    if (Session.BuildingToolActive)
+                    if (Session.FixedPlacementToolActive)
                     {
-                        Session.MoveBuildingPlacement(position);
+                        Session.MoveFixedPlacement(position);
                         Session.ConfirmPreview();
                         break;
                     }
@@ -385,11 +408,17 @@ public partial class Main
                     _selecting = Session.RoadToolActive || button.ShiftPressed || button.CtrlPressed || button.AltPressed || button.MetaPressed;
                     _panning = !_selecting;
                     if (_selecting) Session.BeginDrag(position, extend: button.ShiftPressed && !button.CtrlPressed && !button.AltPressed && !button.MetaPressed);
-                    else { Session.SelectCell(position); _panAnchor = position; }
+                    else
+                    {
+                        Session.SelectCell(position);
+                        _panAnchor = gridPosition;
+                        if (Map.PerspectiveEnabled) _perspectivePanAnchor = Map.BeginPerspectivePan(button.Position);
+                    }
                     break;
                 case MouseButton.Middle:
                     _panning = true;
                     _panAnchor = position;
+                    if (Map.PerspectiveEnabled) _perspectivePanAnchor = Map.BeginPerspectivePan(button.Position);
                     break;
                 case MouseButton.Right:
                     Session.PrepareContextMenuAt(position);
@@ -421,17 +450,18 @@ public partial class Main
             _pointer = motion.Position;
             _hover = new Rect2(Vector2.Zero, Map.Size).HasPoint(motion.Position);
             var cell = PointerCell(motion.Position);
-            if (Session.BuildingToolActive)
+            if (Session.FixedPlacementToolActive)
             {
-                Session.MoveBuildingPlacement(Session.ScreenToMap(cell.X, cell.Y));
+                if (Map.TryMapPosition(motion.Position, out var world)) Session.MoveFixedPlacement(world);
             }
             else if (_selecting)
             {
-                Session.UpdateDrag(Session.ScreenToMap(cell.X, cell.Y));
+                if (Map.TryMapPosition(motion.Position, out var world)) Session.UpdateDrag(world);
             }
             else if (_panning)
             {
-                Session.PanCamera(_panAnchor, cell.X, cell.Y);
+                if (Map.PerspectiveEnabled) Map.PanPerspective(_perspectivePanAnchor, motion.Position);
+                else Session.PanCamera(_panAnchor, cell.X, cell.Y);
             }
             Map.AcceptEvent();
         }
@@ -474,6 +504,6 @@ public partial class Main
         var (dx, dy) = _scroller.Step(cell.X, cell.Y, Map.Grid.Columns, Map.Grid.Rows, Math.Min(delta, 0.25));
         if (dx == 0 && dy == 0) return;
         Session.ScrollChars(dx, dy);
-        if (_selecting) Session.UpdateDrag(Session.ScreenToMap(cell.X, cell.Y));
+        if (_selecting && Map.TryMapPosition(_pointer, out var world)) Session.UpdateDrag(world);
     }
 }

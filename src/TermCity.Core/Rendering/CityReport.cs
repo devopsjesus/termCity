@@ -61,8 +61,8 @@ public static class CityReport
         var info = Zones.Get(zone);
         var count = game.Stats.For(zone);
         return $"{info.Letter} {info.Name}\nDemand: {game.Demand.For(zone):P0}\n" +
-            $"Built: {count.Filled:N0} cells\nZoned: {count.Zoned:N0} lots\n" +
-            $"Road-served: {count.Served:N0} lots\nWithout road: {count.Zoned - count.Served:N0} lots\n" +
+            $"Built: {count.Filled:N0} buildings\nZoned: {count.Zoned:N0} lots\n" +
+            $"Walkable: {count.Served:N0} lots\nUnreachable: {count.Zoned - count.Served:N0} lots\n" +
             $"Awaiting removal: {count.AwaitingRemoval:N0} buildings";
     }
 

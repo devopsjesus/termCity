@@ -302,12 +302,25 @@ public sealed partial class GameSession
 
     private void ClampCamera()
     {
-        CameraX = Math.Clamp(CameraX, 0, Math.Max(0, Game.Map.Width - VisibleCellsX));
-        CameraY = Math.Clamp(CameraY, 0, Math.Max(0, Game.Map.Height - VisibleCellsY));
+        int paddingX = CameraEdgePadding ? VisibleCellsX / 2 : 0;
+        int paddingY = CameraEdgePadding ? VisibleCellsY / 2 : 0;
+        CameraX = Math.Clamp(CameraX, -paddingX, Math.Max(-paddingX, Game.Map.Width - VisibleCellsX + paddingX));
+        CameraY = Math.Clamp(CameraY, -paddingY, Math.Max(-paddingY, Game.Map.Height - VisibleCellsY + paddingY));
 
         // Zoomed out, blocks line up with multiples of the stride so they do not shift as the camera moves.
         CameraX -= CameraX % Stride;
         CameraY -= CameraY % Stride;
+    }
+
+    /// <summary>Allows map edges to reach the viewport center instead of stopping at its perimeter.</summary>
+    public bool CameraEdgePadding { get; private set; }
+
+    public void SetCameraEdgePadding(bool enabled)
+    {
+        if (CameraEdgePadding == enabled) return;
+        CameraEdgePadding = enabled;
+        ClampCamera();
+        CameraChanged?.Invoke();
     }
 
     private void FollowCursor()
@@ -362,9 +375,9 @@ public sealed partial class GameSession
             return;
         }
 
-        if (BuildingToolActive)
+        if (FixedPlacementToolActive)
         {
-            MoveBuildingPlacement(Cursor.Offset(dx, dy));
+            MoveFixedPlacement(Cursor.Offset(dx, dy));
             return;
         }
 
@@ -510,7 +523,19 @@ public sealed partial class GameSession
     public ActionResult Zone(ZoneType zone)
     {
         HasCursor = true;
-        return Execute(() => Game.Designate(ActiveArea, zone));
+        var area = ActiveArea;
+        if (zone != ZoneType.None && area.Area == 1 && Game.Map.Content.Buildings.ForZone(zone) is { } type)
+            area = new(Math.Min(area.X, Game.Map.Width - type.Width),
+                Math.Min(area.Y, Game.Map.Height - type.Height), type.Width, type.Height);
+        return Execute(() =>
+        {
+            var result = Game.Designate(area, zone);
+            if (!result.Success || zone == ZoneType.None) return result;
+            var diagnostic = GrowthDiagnostics.ForZone(Game, zone);
+            return diagnostic.Status == GrowthStatus.NeedsSpace
+                ? result with { Message = result.Message + " " + diagnostic.Message }
+                : result;
+        });
     }
 
     public ActionResult Dezone()
@@ -519,7 +544,8 @@ public sealed partial class GameSession
         return Execute(() => Game.Dezone(ActiveArea));
     }
 
-    public ActionResult BuildRoad(RoadType? type = null) => Execute(() => Game.BuildRoad(ActiveArea, type));
+    public ActionResult BuildRoad(RoadType? type = null) => Execute(() =>
+        SelectedWaterCrossing() is { } stroke ? Game.BuildRoad(stroke, type) : Game.BuildRoad(ActiveArea, type));
 
     public ActionResult Demolish() => Execute(() => Game.Demolish(ActiveArea));
 
@@ -582,7 +608,8 @@ public sealed partial class GameSession
     {
         try
         {
-            SaveGameStore.Save(Game, SavePath, new SavedView(CameraX, CameraY, ZoomLevel));
+            SaveGameStore.Save(Game, SavePath, new SavedView(CameraX, CameraY, ZoomLevel)
+                { CameraEdgePadding = CameraEdgePadding });
             _savedRevision = _revision;
             _savedAt = Game.ElapsedDays;
             SetMessage($"Game saved to {SavePath}", MessageKind.Success);
@@ -605,6 +632,7 @@ public sealed partial class GameSession
             ReplaceGame(loaded);
             if (view is not null)
             {
+                CameraEdgePadding = view.CameraEdgePadding;
                 ZoomLevel = view.ZoomLevel;
                 CameraX = view.CameraX;
                 CameraY = view.CameraY;

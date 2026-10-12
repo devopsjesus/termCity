@@ -11,7 +11,7 @@ public partial class Main
     public CityMinimap Minimap => _panel.Minimap;
 
     public const int DefaultFontSize = 20, MinFontSize = 16, MaxFontSize = 28;
-    public const int MinimumWindowHeight = 780;
+    public static int MinimumWindowHeight => CityGame.DebugToolsAvailable ? 800 : 780;
 
     public int FontSize { get; private set; } = DefaultFontSize;
 
@@ -37,6 +37,7 @@ public partial class Main
     private CalendarIcon _calendarIcon = null!;
 
     private Label _hudWeek = null!;
+    private Label _hudSpeed = null!;
 
     private Label _hudPopulation = null!;
     private Label _hudReports = null!;
@@ -298,6 +299,10 @@ public partial class Main
         _hudWeek.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         calendar.AddChild(_hudCalendar);
         calendar.AddChild(_hudWeek);
+        _hudSpeed = new Label { Name = "TimeSpeed", HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center };
+        _hudSpeed.AddThemeColorOverride("font_color", new Color("#70d7ff"));
+        calendar.AddChild(_hudSpeed);
         var names = new HBoxContainer { Name = "CityNameHeader", Alignment = BoxContainer.AlignmentMode.End };
         _brand = new Label { Name = "AppTitle", Text = "TermCity", VerticalAlignment = VerticalAlignment.Center };
         _brand.AddThemeColorOverride("font_color", new Color("#70b7ff"));
@@ -359,7 +364,7 @@ public partial class Main
         financeFrame.AddChild(_hudStats);
         hud.AddChild(financeFrame);
         layout.AddChild(hud);
-        _headerLabels = [_brand, _hud, _hudCalendar, _hudWeek, _hudPopulation, _hudViews, _hudReports, _hudGuide, _hudStats];
+        _headerLabels = [_brand, _hud, _hudCalendar, _hudWeek, _hudSpeed, _hudPopulation, _hudViews, _hudReports, _hudGuide, _hudStats];
         foreach (var label in _headerLabels)
         {
             label.VerticalAlignment = VerticalAlignment.Center;
@@ -388,6 +393,7 @@ public partial class Main
         _linePreview.AddChild(lineButtons);
         city.AddChild(_linePreview);
         _panel = new CityPanel { Session = Session, ZoomBy = delta => Map.ZoomBy(delta),
+            TiltMap = Map.TiltMap, RotateMap = Map.RotateMap,
             SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsVertical = SizeFlags.ExpandFill };
         var sidebar = new TerminalFrame { VisibleContentPadding = RailPadding };
         sidebar.AddChild(_panel);
@@ -533,6 +539,8 @@ public partial class Main
         bool clockPaused = Session.ClockSuspended;
         _hudWeek.Text = clockPaused ? "[PAUSED]" : Fmt.WeekBar(game.Day, game.Config.DaysPerWeek);
         _hudWeek.AddThemeColorOverride("font_color", new Color(clockPaused ? "#ffe066" : "#70d7ff"));
+        _hudSpeed.Text = Fmt.SpeedLabel(game.Speed);
+        _hudSpeed.TooltipText = $"{game.Speed} speed ({_hudSpeed.Text}); 1/2/3 change speed";
         _hudPopulation.Text = $"POP {game.Stats.Population:N0}";
         _hudStats.Text = Fmt.CompactMoney(game.Money) +
             (game.Config.FullRules ? $" [{(game.Finance.Net > 0 ? "+" : "")}{Fmt.CompactMoney(game.Finance.Net)}]" : "") +
@@ -556,11 +564,11 @@ public partial class Main
             MessageKind.Warning => new Color("#ffe066"),
             _ => Colors.White,
         } : buildingStatus is { } status ? ToColor(status.Color) : Colors.White;
-        string? placementError = Session.BuildingPlacementError;
-        _placementStatus.Text = placementError ?? Session.BuildingPlacementWarning ?? "";
+        string? placementError = Session.FixedPlacementError;
+        _placementStatus.Text = placementError ?? Session.FixedPlacementWarning ?? "";
         _placementStatus.Modulate = placementError is not null ? new Color("#ff7777") : new Color("#ffe066");
         _placementStatus.TooltipText = _placementStatus.Text;
-        _placementStatus.Visible = Session.BuildingToolActive && _placementStatus.Text.Length > 0;
+        _placementStatus.Visible = Session.FixedPlacementToolActive && _placementStatus.Text.Length > 0;
         _savePathLabel.Visible = gameMenu || Session.Prompt?.IsSaveDialog == true;
         if (!ReferenceEquals(_peasantGame, game))
         {
@@ -570,12 +578,12 @@ public partial class Main
         }
         if (_peasantStartWeek is null || game.Week < _peasantStartWeek) _peasantStartWeek = game.Week;
         int complaintIndex = game.Week - _peasantStartWeek.Value;
-        var need = game.Config.FullRules ? PeasantNeeds.Describe(game.Indicators, _peasantVariation, complaintIndex) : null;
+        var need = game.Config.FullRules ? PeasantNeeds.Describe(game, _peasantVariation, complaintIndex) : null;
         if (need?.Reason != _peasantReason)
         {
             _peasantReason = need?.Reason;
             _peasantVariation = Random.Shared.Next(4);
-            need = game.Config.FullRules ? PeasantNeeds.Describe(game.Indicators, _peasantVariation, complaintIndex) : null;
+            need = game.Config.FullRules ? PeasantNeeds.Describe(game, _peasantVariation, complaintIndex) : null;
         }
         if (need is null) _peasantStartWeek = null;
         if (!ConstructionMenuVisible || _constructionChoices.Length == 0 ||
@@ -613,9 +621,13 @@ public partial class Main
             _coverageGame = game;
             _coverageService = building.Service;
             _coverageUpdatedAt = game.ElapsedDays;
-            var status = SidebarReport.ServiceStatus(game, building.Service);
+            var status = building.IsMonument
+                ? new SidebarCell(CityGame.DebugToolsAvailable ? "Debug monument: ready for placement" : "Debug-only monument",
+                    SidebarReport.PeopleColor)
+                : SidebarReport.ServiceStatus(game, building.Service);
             if (_peasantStatus.Text != status.Text) _peasantStatus.Text = status.Text;
-            _peasantStatus.TooltipText = SidebarReport.ServiceStatusDetails(game, building.Service);
+            _peasantStatus.TooltipText = building.IsMonument ? "Monument prototype: normal gate 100,000 souls; Debug launch bypasses it." :
+                SidebarReport.ServiceStatusDetails(game, building.Service);
             var color = ToColor(status.Color);
             if (_peasantStatus.Modulate != color) _peasantStatus.Modulate = color;
         }
@@ -638,6 +650,7 @@ public partial class Main
                 Session.Game.Config.WeeksPerYear)),
             (_hudWeek, Session.Game.Config.DaysPerWeek + 2 >= "[PAUSED]".Length
                 ? Fmt.WeekBar(0, Session.Game.Config.DaysPerWeek) : "[PAUSED]"),
+            (_hudSpeed, "3x"),
             (_hudPopulation, "POP 9,999,999"),
             (_hudViews, "VIEWS"),
             (_hudGuide, "GUIDE"),

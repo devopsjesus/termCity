@@ -1,5 +1,8 @@
 using TermCity.Core.Simulation;
 using TermCity.Core.Util;
+using TermCity.Core.Buildings;
+using TermCity.Core.Rendering;
+using TermCity.Core.World;
 
 namespace TermCity.GodotApp;
 
@@ -7,6 +10,50 @@ public sealed record PeasantNeed(string Reason, string Text, Rgb Color, string H
 
 public static class PeasantNeeds
 {
+    public static PeasantNeed? Describe(CityGame game, int variation, int complaintIndex = 0)
+    {
+        int population = game.Stats.Population;
+        var indicators = game.Indicators with
+        {
+            Complaints = game.Indicators.Complaints.Where(c => (c.Reason != "Hunger" || game.GrainRequired) &&
+                CityProgression.IsServiceUnlocked(game, ServiceForComplaint(c.Reason), population)).ToArray(),
+        };
+        var message = Describe(indicators, variation, complaintIndex);
+        if (message is null) return null;
+        ServiceKind kind = ServiceForComplaint(message.Reason);
+        if (message.Reason == "Slow journeys")
+            return message with
+            {
+                Text = "Sire, journeys on foot are taking too long.",
+                Hint = "Buildings gradually wear paths to nearby roads. Add roads to speed walking and deliveries.",
+            };
+        if (kind == ServiceKind.None) return message;
+        string name = CityReport.ServiceName(kind).ToLowerInvariant();
+        double load = game.Services.Workload(kind);
+        bool waiting = game.Map.ZoneCells(ZoneType.Residential).Any(i => game.Map.IsBuildingAnchor(i) &&
+            game.Map.HouseholdAt(i % game.Map.Width, i / game.Map.Width).Total > 0 && !game.Services.HasArrived(kind, i));
+        string text = game.Services.BuildingCounts[(int)kind] == 0 ? $"Sire, {name} is now available but has not been dispatched." :
+            load >= 1 ? $"Sire, {name} is at capacity; arrivals are delayed." :
+            load >= 0.85 ? $"Sire, {name} is nearing its limit; queues are growing." :
+            waiting ? $"Sire, the people are still waiting for {name} to arrive." :
+            $"Sire, {name} is taking too long to reach the people.";
+        return message with
+        {
+            Text = text,
+            Hint = $"Check {name} travel times and workload in Building Status and Services. " +
+                "Roads speed travel; nearer buildings and funding increase timely service and capacity.",
+        };
+    }
+
+    private static ServiceKind ServiceForComplaint(string reason) => reason switch
+    {
+        "No fuel" => ServiceKind.Power, "No water" => ServiceKind.Water,
+        "Fire Watch" => ServiceKind.Fire, "Lawlessness" => ServiceKind.Police,
+        "Physic" => ServiceKind.Health, "Learning" => ServiceKind.Education,
+        "Commons" => ServiceKind.Recreation, "Unguarded" => ServiceKind.Defence,
+        "Solace" => ServiceKind.Faith, _ => ServiceKind.None,
+    };
+
     public static PeasantNeed? Describe(CityIndicators indicators, int variation, int complaintIndex = 0)
     {
         var complaints = indicators.Complaints.OrderByDescending(c => c.Points).ToArray();
@@ -35,21 +82,21 @@ public static class PeasantNeeds
             indicators.Happiness < 35;
         string hint = complaint.Reason switch
         {
-            "No fuel" => "Build a road-connected Woodlot or Charcoal Burners. Check Fuel supply against demand.",
-            "No water" => "Build a road-connected Town Well or a shore-side Aqueduct. Check Water supply against demand.",
+            "No fuel" => "Build a nearby Woodlot or Charcoal Burners. Check Fuel deliveries and capacity.",
+            "No water" => "Build a nearby Town Well or a shore-side Aqueduct. Check Water deliveries and capacity.",
             "Smoke" => "Move smoky industry and Charcoal Burners away from homes; Village Greens reduce nearby pollution.",
             "Lawlessness" => "Place a Watch House, Sheriff's Hall or Gaol near affected homes and check service funding.",
-            "Fire Watch" => "Place a road-connected Fire Watch near homes and maintain its funding.",
+            "Fire Watch" => "Shorten Fire Watch journeys with roads and maintain its staffing and funding.",
             "Physic" => "Place an Apothecary, Hospice or Infirmary near homes and maintain its funding.",
             "Learning" => "Place a Chantry School or Monastery near homes and maintain its funding.",
             "Commons" => "Place a Village Green or Tavern near homes when its milestone unlocks.",
-            "Unguarded" => "Build a road-connected Motte and Bailey, Stone Keep or Castle near homes.",
+            "Unguarded" => "Build a nearby Motte and Bailey, Stone Keep or Castle and shorten patrol journeys.",
             "Solace" => "Place a Chapel, Parish Church or Cathedral near homes.",
             "Hunger" => "Keep gold for automatic grain imports, add Market Cross coverage, and use connected Granaries to store harvest surplus. See Food & Seasons.",
             "Cart traffic" => "Upgrade busy roads and improve routes between homes and workplaces. Check Growth and Services reports.",
-            "Idleness" => "Provide road-served commercial and industrial workplaces with fuel and water; inspect Growth for blockers.",
+            "Idleness" => "Provide commercial and industrial workplaces with timely fuel and water deliveries; inspect Growth.",
             "Tithes" => "Reduce residential taxes in the economy menu, while keeping enough income for upkeep.",
-            "Road access" => "Connect residential plots to an edge-connected road within road-service reach.",
+            "Road access" or "Slow journeys" => "Add roads as walking speed boosts; paths gradually form from buildings.",
             _ => "Open the Services report to inspect complaints, coverage and funding.",
         };
         return new(complaint.Reason, text, Rgb.Hex(dire ? 0xff7777 : 0xffe066), hint);

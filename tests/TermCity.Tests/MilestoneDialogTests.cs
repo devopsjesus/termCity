@@ -12,7 +12,7 @@ public class MilestoneDialogTests
     {
         var game = TestCity.Flat();
         var session = new GameSession(game);
-        for (int x = 0; x < 20; x++)
+        for (int x = 0; x < 50; x++)
         {
             game.Map.SetZone(x, 21, ZoneType.Residential);
             game.Map.SetBuilding(x, 21, game.Map.Content.Buildings.ForZone(ZoneType.Residential));
@@ -21,8 +21,8 @@ public class MilestoneDialogTests
         game.Touch();
         Assert.True(game.Paused);
         Assert.Equal(MilestoneReport.Title, session.Prompt!.Title);
-        Assert.Equal(0, session.Prompt.ActiveTab);
-        var page = MilestoneReport.Build(game, 0);
+        Assert.Equal(1, session.Prompt.ActiveTab);
+        var page = MilestoneReport.Build(game, 1);
         foreach (string building in new[] { "FIRE WATCH", "WATCH HOUSE", "SHERIFF'S HALL", "APOTHECARY", "CHANTRY SCHOOL" })
         {
             var group = page.Groups.Single(group => group.Title == building);
@@ -30,10 +30,10 @@ public class MilestoneDialogTests
             Assert.Contains(group.Rows, row => row[0].Text == "Coverage");
         }
         session.SelectPrompt(1);
-        Assert.Equal(1, session.Prompt!.ActiveTab);
-        Assert.Equal("Village", session.Prompt.Tabs![1].Title);
+        Assert.Equal(2, session.Prompt!.ActiveTab);
+        Assert.Equal("Village", session.Prompt.Tabs![2].Title);
         session.SelectPrompt(0);
-        Assert.Equal(0, session.Prompt!.ActiveTab);
+        Assert.Equal(1, session.Prompt!.ActiveTab);
         session.SelectPrompt(2);
         Assert.Null(session.Prompt);
         Assert.True(game.Paused);

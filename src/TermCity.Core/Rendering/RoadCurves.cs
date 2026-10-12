@@ -12,7 +12,7 @@ public sealed class RoadPath(RoadType type, bool connected, bool closed, double[
 {
     public RoadType Type { get; } = type;
 
-    /// <summary>Whether the road joins the edge of the map (drawn in red when it does not).</summary>
+    /// <summary>Whether the road joins the edge of the map.</summary>
     public bool Connected { get; } = connected;
 
     public bool Closed { get; } = closed;
@@ -50,12 +50,6 @@ public static class RoadCurves
     /// staircase of cells; within this tolerance the steps are drawn as one straight line rather than a ripple.
     /// </summary>
     public const double StraightenTolerance = 24;
-
-    /// <summary>How far, in pixels, a branch curves in toward the road it joins, and how far along that road it merges.</summary>
-    public const double RampLength = 40;
-
-    /// <summary>A branch within this many degrees of square to the road it joins meets it square, like a plain T.</summary>
-    private const double SquareSine = 0.97;
 
     private const double SampleSpacing = 3;
 
@@ -304,6 +298,13 @@ public static class RoadCurves
             corners[^1] = Extend(corners, corners.Count - 1, masks[cells[^1]]);
             corners = Straighten(corners, new bool[corners.Count]);
         }
+        else
+        {
+            var ring = corners.Append(corners[0]).ToList();
+            var straightened = Straighten(ring, new bool[ring.Count]);
+            if (straightened.Count >= 4)
+                corners = straightened.Take(straightened.Count - 1).ToList();
+        }
 
         int first = cells[0];
         var draft = new DraftPath(
@@ -400,11 +401,6 @@ public static class RoadCurves
             ys = ys.Reverse().ToArray();
         }
 
-        if (at is not null)
-        {
-            (xs, ys) = Ramp(xs, ys, at);
-        }
-
         if (atStart)
         {
             xs = xs.Reverse().ToArray();
@@ -418,98 +414,6 @@ public static class RoadCurves
             // The other end of the same road may still be joined; keep the corners that match this curve.
             d.Corners[atStart ? 0 : ^1] = (at.X, at.Y);
         }
-    }
-
-    /// <summary>
-    /// Bends the last stretch of a curve ending on a road into a quadratic curve that runs into that road's direction,
-    /// merging with it some way along, unless the two already meet at nearly a right angle.
-    /// </summary>
-    private static (double[] Xs, double[] Ys) Ramp(double[] xs, double[] ys, Meeting hit)
-    {
-        int n = xs.Length;
-        if (n < 4)
-        {
-            return (xs, ys);
-        }
-
-        double length = 0;
-        for (int i = 1; i < n; i++)
-        {
-            length += Dist((xs[i], ys[i]), (xs[i - 1], ys[i - 1]));
-        }
-
-        double reach = Math.Min(RampLength, length * 0.6);
-        double walked = 0;
-        int k = n - 1;
-        while (k > 1 && walked < reach)
-        {
-            walked += Dist((xs[k], ys[k]), (xs[k - 1], ys[k - 1]));
-            k--;
-        }
-
-        int ahead = Math.Min(n - 1, k + 2), behind = Math.Max(0, k - 2);
-        double dx = xs[ahead] - xs[behind], dy = ys[ahead] - ys[behind], dl = Math.Sqrt(dx * dx + dy * dy);
-        if (dl < 1e-9)
-        {
-            return (xs, ys);
-        }
-
-        dx /= dl;
-        dy /= dl;
-        double tx = hit.Tx, ty = hit.Ty;
-        double dot = dx * tx + dy * ty;
-        if (Math.Abs(dx * ty - dy * tx) >= SquareSine || Math.Abs(dot) < 1e-3)
-        {
-            return (xs, ys);
-        }
-
-        if (dot < 0)
-        {
-            tx = -tx;
-            ty = -ty;
-        }
-
-        var start = (X: xs[k], Y: ys[k]);
-        var corner = (hit.X, hit.Y);
-        var finish = AlongHost(hit, forward: tx * (hit.HostXs[hit.Segment + 1] - hit.HostXs[hit.Segment]) + ty * (hit.HostYs[hit.Segment + 1] - hit.HostYs[hit.Segment]) > 0);
-        double arc = walked + RampLength;
-        int steps = Math.Max(4, (int)Math.Ceiling(arc / SampleSpacing));
-        var nx = new List<double>(xs.Take(k + 1));
-        var ny = new List<double>(ys.Take(k + 1));
-        for (int i = 1; i <= steps; i++)
-        {
-            double t = (double)i / steps, u = 1 - t;
-            nx.Add(u * u * start.X + 2 * u * t * corner.Item1 + t * t * finish.X);
-            ny.Add(u * u * start.Y + 2 * u * t * corner.Item2 + t * t * finish.Y);
-        }
-
-        return (nx.ToArray(), ny.ToArray());
-    }
-
-    /// <summary>The point <see cref="RampLength"/> along the road being joined, from where the ramp meets it.</summary>
-    private static (double X, double Y) AlongHost(Meeting hit, bool forward)
-    {
-        var xs = hit.HostXs;
-        var ys = hit.HostYs;
-        double left = RampLength;
-        double x = hit.X, y = hit.Y;
-        int i = forward ? hit.Segment + 1 : hit.Segment;
-        int step = forward ? 1 : -1;
-        while (i >= 0 && i < xs.Length)
-        {
-            double d = Dist((x, y), (xs[i], ys[i]));
-            if (d >= left)
-            {
-                double t = left / d;
-                return (x + (xs[i] - x) * t, y + (ys[i] - y) * t);
-            }
-
-            left -= d;
-            (x, y) = (xs[i], ys[i]);
-            i += step;
-        }
-
-        return (x, y);
     }
 
     /// <summary>The point on a polyline nearest to <paramref name="from"/>, with the unit direction of the segment it lies on.</summary>
@@ -602,7 +506,8 @@ public static class RoadCurves
     /// Replaces runs of staircase steps with straight lines (Douglas-Peucker). Junction cells are kept as vertices so
     /// that a road still passes exactly through the place another joins it.
     /// </summary>
-    internal static List<(double X, double Y)> Straighten(List<(double X, double Y)> points, IReadOnlyList<bool> pinned)
+    internal static List<(double X, double Y)> Straighten(List<(double X, double Y)> points, IReadOnlyList<bool> pinned,
+        double tolerance = StraightenTolerance)
     {
         var keep = new bool[points.Count];
         keep[0] = keep[^1] = true;
@@ -616,7 +521,7 @@ public static class RoadCurves
         {
             if (keep[i])
             {
-                Simplify(points, keep, from, i);
+                Simplify(points, keep, from, i, tolerance);
                 from = i;
             }
         }
@@ -624,7 +529,7 @@ public static class RoadCurves
         return points.Where((_, i) => keep[i]).ToList();
     }
 
-    private static void Simplify(List<(double X, double Y)> points, bool[] keep, int first, int last)
+    private static void Simplify(List<(double X, double Y)> points, bool[] keep, int first, int last, double tolerance)
     {
         if (last - first < 2)
         {
@@ -635,7 +540,7 @@ public static class RoadCurves
         var b = points[last];
         double dx = b.X - a.X, dy = b.Y - a.Y, length = Math.Sqrt(dx * dx + dy * dy);
         int worst = -1;
-        double worstDistance = StraightenTolerance;
+        double worstDistance = tolerance;
         for (int i = first + 1; i < last; i++)
         {
             double distance = length < 1e-9
@@ -651,8 +556,8 @@ public static class RoadCurves
         if (worst >= 0)
         {
             keep[worst] = true;
-            Simplify(points, keep, first, worst);
-            Simplify(points, keep, worst, last);
+            Simplify(points, keep, first, worst, tolerance);
+            Simplify(points, keep, worst, last, tolerance);
         }
     }
 

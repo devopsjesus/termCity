@@ -89,7 +89,7 @@ public class SessionFeatureTests
     }
 
     [Fact]
-    public void PreviewMarksWaterAndZonesAsBlockedAndCanBeCancelled()
+    public void PreviewAllowsWaterButBlockedCrossingsCannotPartiallyBuildAndCanBeCancelled()
     {
         var session = Session();
         var game = session.Game;
@@ -100,10 +100,16 @@ public class SessionFeatureTests
         session.EndSelection();
         session.PreviewRoad();
         var preview = session.Preview!;
-        Assert.Equal(new Quote(2, 1_000, 2), preview.Quote);
+        Assert.Equal(new Quote(3, 1_500, 1), preview.Quote);
         Assert.True(preview.IsValid(game, 10, 18));
-        Assert.False(preview.IsValid(game, 11, 18));
+        Assert.True(preview.IsValid(game, 11, 18));
         Assert.False(preview.IsValid(game, 12, 18));
+        var result = session.ConfirmPreview();
+        Assert.False(result.Success);
+        Assert.Contains("Bridge crossing blocked", result.Message);
+        Assert.False(game.Map.HasRoad(10, 18));
+        Assert.False(game.Map.HasRoad(11, 18));
+        Assert.False(game.Map.HasRoad(13, 18));
         session.CancelPreview();
         Assert.Null(session.Preview);
         Assert.Equal(50_000, game.Money);
@@ -181,7 +187,7 @@ public class SessionFeatureTests
     [InlineData("Woodlot")]
     [InlineData("Town Well")]
     [InlineData("Aqueduct")]
-    public void DisconnectedUtilitiesWarnBeforeAndAfterPlacementButRemainAllowed(string name)
+    public void RemoteUtilitiesOperateWithoutRoadWarnings(string name)
     {
         var session = new GameSession(TestCity.Flat(config: new GameConfig(), rules: CityRules.Full));
         var game = session.Game;
@@ -193,16 +199,14 @@ public class SessionFeatureTests
         session.PreviewBuilding(type);
 
         Assert.Null(session.BuildingPlacementError);
-        Assert.Contains("inactive", session.BuildingPlacementWarning);
-        Assert.Contains("edge-connected road", session.BuildingPlacementWarning);
-        Assert.Contains($"{Fmt.Money(type.WeeklyUpkeep)}/week", session.BuildingPlacementWarning);
+        Assert.Null(session.BuildingPlacementWarning);
         Assert.Equal(money, game.Money);
         var placed = session.ConfirmPreview();
         Assert.True(placed.Success, placed.Message);
-        Assert.Contains("Warning:", placed.Message);
-        Assert.Equal(MessageKind.Warning, session.MessageKind);
-        Assert.Equal(0, game.Services.ActiveCounts[(int)type.Service]);
-        Assert.Contains("Disconnected", CellInspector.Summary(game, new Pos(30, 5)));
+        Assert.DoesNotContain("Warning:", placed.Message);
+        Assert.Equal(MessageKind.Success, session.MessageKind);
+        Assert.Equal(1, game.Services.ActiveCounts[(int)type.Service]);
+        Assert.Contains("Active", CellInspector.Summary(game, new Pos(30, 5)));
 
         var road = game.BuildRoad(new CellRect(30, 7, 1, 14));
         Assert.True(road.Success, road.Message);
@@ -287,7 +291,7 @@ public class SessionFeatureTests
     {
         var session = Session();
         var game = session.Game;
-        game.Map.SetTerrain(11, 18, game.Map.Content.Terrains.Get("Water"));
+        game.Map.SetZone(11, 18, ZoneType.Residential);
         game.Map.SetRoad(12, 18, game.DefaultRoad);
         game.Touch();
         session.PlaceCursor(new Pos(10, 18));
@@ -701,7 +705,7 @@ public class SessionFeatureTests
     public void GrowthDiagnosticsUseExactUnlockAndCapacityThresholds(ZoneType zone, int homes, int next)
     {
         var game = TestCity.Flat();
-        game.Designate(new CellRect(0, 19, 2, 1), zone);
+        game.Designate(new CellRect(0, 19, 3, 1), zone);
         FillHomes(game, 9);
         Assert.Equal(GrowthStatus.NeedsHomes, GrowthDiagnostics.ForCell(game, 1, 19).Status);
         FillHomes(game, 10);
@@ -725,11 +729,11 @@ public class SessionFeatureTests
         game.Paused = true;
         game.Touch();
         string before = SaveGameStore.Serialize(game);
-        Assert.Equal(GrowthStatus.NoRoadAccess, GrowthDiagnostics.ForCell(game, 10, 18).Status);
+        Assert.Equal(GrowthStatus.Ready, GrowthDiagnostics.ForCell(game, 10, 18).Status);
         Assert.True(GrowthDiagnostics.ForCell(game, 10, 18).Paused);
         Assert.Contains("Paused", CellInspector.Summary(game, new Pos(10, 18)));
         var diagnostic = GrowthDiagnostics.ForZone(game, ZoneType.Residential);
-        Assert.Equal(0, diagnostic.EligibleVacancies);
+        Assert.Equal(2, diagnostic.EligibleVacancies);
         Assert.Equal(before, SaveGameStore.Serialize(game));
     }
 
@@ -740,14 +744,14 @@ public class SessionFeatureTests
         FillHomes(game, 10);
         game.Designate(new CellRect(10, 21, 2, 1), ZoneType.Residential);
         game.Designate(new CellRect(0, 30, 5, 1), ZoneType.Residential);
-        Assert.Equal(2, GrowthDiagnostics.ForZone(game, ZoneType.Residential).EligibleVacancies);
+        Assert.Equal(7, GrowthDiagnostics.ForZone(game, ZoneType.Residential).EligibleVacancies);
         game.Designate(new CellRect(0, 19, 2, 1), ZoneType.Commercial);
         Assert.Equal(0, game.Demand.Commercial);
         Assert.Equal(GrowthStatus.Ready, GrowthDiagnostics.ForZone(game, ZoneType.Commercial).Status);
     }
 
     [Fact]
-    public void DisconnectedRoadsDoNotMakeVacantCellsEligible()
+    public void LocalRoadsAndWalkableLandMakeVacantCellsEligible()
     {
         var game = TestCity.Flat();
         game.Map.SetRoad(0, 20, false);
@@ -755,9 +759,9 @@ public class SessionFeatureTests
         game.Touch();
         game.Designate(new CellRect(10, 21, 2, 1), ZoneType.Residential);
         var diagnostic = GrowthDiagnostics.ForZone(game, ZoneType.Residential);
-        Assert.Equal(GrowthStatus.NoRoadAccess, diagnostic.Status);
-        Assert.Equal(0, diagnostic.EligibleVacancies);
-        Assert.Contains("map edge", diagnostic.Message);
+        Assert.Equal(GrowthStatus.Ready, diagnostic.Status);
+        Assert.Equal(2, diagnostic.EligibleVacancies);
+        Assert.Contains("walking", diagnostic.Message);
     }
 
     private static void FillHomes(CityGame game, int count, byte people = 2)

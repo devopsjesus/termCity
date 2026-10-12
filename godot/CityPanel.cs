@@ -10,6 +10,8 @@ public partial class CityPanel : Control
 {
     public GameSession Session { get; set; } = null!;
     public Action<int> ZoomBy { get; set; } = null!;
+    public Action TiltMap { get; set; } = null!;
+    public Action RotateMap { get; set; } = null!;
     public CityMinimap Minimap { get; private set; } = null!;
     private readonly Dictionary<ZoneType, ProgressBar> _demand = [];
     private readonly Dictionary<ZoneType, Control[]> _demandHover = [];
@@ -43,11 +45,49 @@ public partial class CityPanel : Control
         var overview = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         Minimap = new CityMinimap { Session = Session };
         Minimap.SetHeight(120);
+        var cameraControls = new HBoxContainer
+        {
+            Name = "MinimapCameraControls",
+            Alignment = BoxContainer.AlignmentMode.Center
+        };
+        var tilt = new Button
+        {
+            Name = "MinimapTilt",
+            Text = "TILT",
+            FocusMode = FocusModeEnum.None,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            TooltipText = "Cycle map tilt: 20° / 35° / 50°"
+        };
+        var rotate = new Button
+        {
+            Name = "MinimapRotate",
+            Text = "ROTATE",
+            FocusMode = FocusModeEnum.None,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            TooltipText = "Rotate 90° clockwise; [ left / ] right"
+        };
+        tilt.Pressed += () => { if (!Blocked) TiltMap(); };
+        rotate.Pressed += () => { if (!Blocked) RotateMap(); };
+        cameraControls.AddChild(tilt);
+        cameraControls.AddChild(rotate);
+        foreach (var button in new[] { tilt, rotate })
+            foreach (string state in new[] { "normal", "hover", "pressed", "hover_pressed", "disabled", "focus" })
+            {
+                var style = new StyleBoxFlat { BgColor = Colors.Black, BorderColor = Colors.White };
+                style.SetBorderWidthAll(1);
+                style.SetContentMarginAll(4);
+                button.AddThemeStyleboxOverride(state, style);
+            }
+        overview.AddChild(cameraControls);
         var zoomControls = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
         var zoomOut = new Button { Text = "[-]", FocusMode = FocusModeEnum.None };
         zoomOut.Pressed += () => { if (!Blocked) ZoomBy(-1); };
-        _zoom = new Label { Name = "ZoomIndicator", HorizontalAlignment = HorizontalAlignment.Center,
-            SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        _zoom = new Label
+        {
+            Name = "ZoomIndicator",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill
+        };
         _zoom.AddThemeFontSizeOverride("font_size", 20);
         var zoomIn = new Button { Text = "[+]", FocusMode = FocusModeEnum.None };
         zoomIn.Pressed += () => { if (!Blocked) ZoomBy(1); };
@@ -82,16 +122,22 @@ public partial class CityPanel : Control
             var row = new HBoxContainer { Name = $"Demand{Zones.Get(zone).Letter}Row", MouseFilter = MouseFilterEnum.Stop };
             var letter = new Label
             {
-                Name = $"Demand{Zones.Get(zone).Letter}", Text = Zones.Get(zone).Letter.ToString(),
+                Name = $"Demand{Zones.Get(zone).Letter}",
+                Text = Zones.Get(zone).Letter.ToString(),
                 MouseFilter = MouseFilterEnum.Stop,
                 VerticalAlignment = VerticalAlignment.Center,
             };
             letter.AddThemeFontSizeOverride("font_size", DemandSize);
             row.AddChild(letter);
-            var bar = new ProgressBar { MaxValue = 1, ShowPercentage = false,
-                SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsVertical = SizeFlags.ShrinkCenter,
+            var bar = new ProgressBar
+            {
+                MaxValue = 1,
+                ShowPercentage = false,
+                SizeFlagsHorizontal = SizeFlags.ExpandFill,
+                SizeFlagsVertical = SizeFlags.ShrinkCenter,
                 CustomMinimumSize = new Vector2(0, DemandSize),
-                MouseFilter = MouseFilterEnum.Stop };
+                MouseFilter = MouseFilterEnum.Stop
+            };
             var style = new StyleBoxFlat();
             var color = Zones.Get(zone).Foreground;
             style.BgColor = new Color(color.R / 255f, color.G / 255f, color.B / 255f);
@@ -143,7 +189,10 @@ public partial class CityPanel : Control
         {
             BgColor = index / columns % 2 != 0 ? new Color("#101010") : Colors.Black,
             BorderColor = Colors.White,
-            ContentMarginLeft = 4, ContentMarginRight = 4, ContentMarginTop = 2, ContentMarginBottom = 2,
+            ContentMarginLeft = 4,
+            ContentMarginRight = 4,
+            ContentMarginTop = 2,
+            ContentMarginBottom = 2,
         };
         style.SetBorderWidthAll(1);
         style.BorderWidthLeft = index % columns == 0 ? 1 : 0;
@@ -175,7 +224,10 @@ public partial class CityPanel : Control
                 label.TooltipText = value.Text;
                 label.AddThemeColorOverride("font_color", ToColor(value.Color));
                 string metric = rows[row][0].Text;
-                if (column == 1 && metric is "Fuel" or "Water" or "Grain")
+                bool showGauge = column == 1 && (metric is "Fuel" or "Water" || metric == "Grain" && Session.Game.GrainRequired);
+                if (label.GetChildren().OfType<ResourceGauge>().SingleOrDefault() is { } existingGauge)
+                    existingGauge.Visible = showGauge;
+                if (showGauge)
                 {
                     var gauge = label.GetChildren().OfType<ResourceGauge>().SingleOrDefault();
                     if (gauge is null)
@@ -200,10 +252,12 @@ public partial class CityPanel : Control
             int column = index % 2;
             var label = new Label
             {
-                ClipText = true, TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
+                ClipText = true,
+                TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
                 HorizontalAlignment = column == 0 ? HorizontalAlignment.Left : HorizontalAlignment.Right,
                 CustomMinimumSize = new Vector2(column == 0 ? 90 : 145, 0),
-                SizeFlagsHorizontal = SizeFlags.ExpandFill, MouseFilter = MouseFilterEnum.Stop,
+                SizeFlagsHorizontal = SizeFlags.ExpandFill,
+                MouseFilter = MouseFilterEnum.Stop,
             };
             label.AddThemeFontSizeOverride("font_size", CityFontSize);
             label.Resized += () => FitGauge(label);

@@ -106,6 +106,8 @@ public class PersistenceTests
         game.Touch();
         Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Woodlot"), new CellRect(80, 18, 1, 1)).Success);
         Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Town Well"), new CellRect(85, 18, 1, 1)).Success);
+        game.Map.BuildingEstablishedDays.Clear();
+        game.Touch();
         game.GrowthState = new(true, 7, 0, 0, 0, 0, 0);
         var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
 

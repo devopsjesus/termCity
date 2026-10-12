@@ -17,7 +17,7 @@ public static class CellRenderer
     /// so the glyph does not show through.
     /// </param>
     public static CellVisual Render(CityGame game, int x, int y, MapOverlay overlay = MapOverlay.Off,
-        bool vectorRoads = false, bool buildingArt = true)
+        bool vectorRoads = false, bool buildingArt = true, bool buildingSprites = false)
     {
         var map = game.Map;
         var terrain = map.TerrainAt(x, y);
@@ -35,7 +35,7 @@ public static class CellRenderer
             fg = game.Network.IsServed(map, x, y) ? info.Foreground : info.Foreground.Scale(0.5);
             glyph = info.EmptyGlyph;
         }
-        else if (map.FeatureAt(x, y) is { } feature)
+        else if (map.FeatureAt(x, y) is { } feature && TerrainSprite.NaturalFeatureVisible(game, x, y))
         {
             glyph = feature.GlyphAt(x, y);
             fg = feature.Foreground;
@@ -44,12 +44,20 @@ public static class CellRenderer
         if (building is not null)
         {
             var footprint = map.BuildingFootprintAt(x, y);
-            glyph = buildingArt ? building.FootprintGlyphAt(footprint, x, y) : building.GlyphAt(x, y);
+            glyph = buildingSprites ? " " :
+                buildingArt ? building.FootprintGlyphAt(footprint, x, y) : building.GlyphAt(x, y);
             fg = building.Foreground;
-            if (zone == ZoneType.None)
+            if (zone == ZoneType.None && !buildingSprites)
             {
                 bg = BuildingBackground;
             }
+
+        }
+
+        if (building is null && map.PathWearAt(x, y) > 0 && !map.HasRoad(x, y))
+        {
+            glyph = FootpathLayout.Glyph(FootpathLayout.Connections(map, x, y));
+            fg = Rgb.Hex(map.PathWearAt(x, y) >= 3 ? 0xb19564 : 0x81735c);
         }
 
         if (vectorRoads && map.HasRoad(x, y))
@@ -61,7 +69,7 @@ public static class CellRenderer
         {
             // A road over water is a bridge: same glyphs, but drawn on the water.
             glyph = road.GlyphFor(RoadMask(map, x, y));
-            fg = game.Network.IsConnected(map, x, y) ? road.Foreground : DisconnectedRoad;
+            fg = road.Foreground;
             bg = terrain.Buildable ? road.Background : terrain.Background;
         }
 

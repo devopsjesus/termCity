@@ -13,7 +13,7 @@ public class SeasonTests
     private static CityGame Village(string? service = null, GameConfig? config = null, int weeks = 30, string? second = null)
     {
         var game = TestCity.Flat(1, config ?? new GameConfig { StartingMoney = 2_000_000, DefaultTaxRate = 0.09 }, CityRules.Full);
-        game.HighestMilestone = 100;
+        game.HighestMilestone = CityProgression.GrainUnlockPopulation;
         foreach (int y in new[] { 18, 21 })
         {
             Assert.True(game.Designate(new CellRect(10, y, 20, 2), ZoneType.Residential).Success);
@@ -84,6 +84,7 @@ public class SeasonTests
     {
         var game = Village();
         game.Week = 0;
+        game.Map.BuildingEstablishedDays.Clear();
         game.GrainWeeks = 5;
         game.HarvestQuality = 1;
         game.Money = 0;
@@ -126,6 +127,7 @@ public class SeasonTests
     {
         var game = Village();
         game.Week = 0;
+        game.Map.BuildingEstablishedDays.Clear();
         game.GrainWeeks = 0;
         game.HarvestQuality = 0.4;
         game.Money = 0;
@@ -223,8 +225,15 @@ public class SeasonTests
     public void RaidsStrikeAnUnguardedTownAndTheGarrisonTurnsThemAway()
     {
         var config = new GameConfig { StartingMoney = 2_000_000, DefaultTaxRate = 0.09, RaidChancePerWeek = 1, RaidMinPopulation = 0 };
-        var bare = Village(config: config, weeks: 12);
-        var guarded = Village("Motte and Bailey", config, weeks: 12);
+        CityGame Established(string? service)
+        {
+            var game = Village(service, config with { RaidChancePerWeek = 0 }, weeks: 12);
+            var json = System.Text.Json.Nodes.JsonNode.Parse(SaveGameStore.Serialize(game))!;
+            json["Config"]!["RaidChancePerWeek"] = 1;
+            return SaveGameStore.Deserialize(json.ToJsonString());
+        }
+        var bare = Established(null);
+        var guarded = Established("Motte and Bailey");
 
         static (int Sacked, int Repelled) Run(CityGame g)
         {

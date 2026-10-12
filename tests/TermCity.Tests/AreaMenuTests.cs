@@ -64,7 +64,8 @@ public class AreaMenuTests
         var roads = session.Game.Map.Content.Roads.Where(r => r.PlayerPlaceable).OrderBy(r => r.Rank).ToArray();
         session.ShowAreaMenu();
         session.SelectPrompt(1);
-        Assert.Equal(roads.Length * 2 + 1, session.Prompt!.Choices.Count);
+        Assert.Equal(roads.Length * 2 + 2, session.Prompt!.Choices.Count);
+        Assert.Contains(session.Prompt.Choices, choice => choice.Label == "Traffic Circle");
         for (int i = 0; i < roads.Length; i++)
         {
             session.ShowAreaMenu();
@@ -94,7 +95,7 @@ public class AreaMenuTests
         session.ShowAreaMenu();
         session.SelectPrompt(2);
         Assert.Equal("Choose a building, then click or press Enter to place it.", session.Prompt!.Text);
-        int civic = session.Game.Map.Content.Buildings.Count(b => b.PlayerPlaceable);
+        int civic = session.Game.Map.Content.Buildings.Count(b => b.PlayerPlaceable && (!b.DebugOnly || CityGame.DebugToolsAvailable));
         Assert.True(civic > 0);
         Assert.Equal(civic + 1, session.Prompt.Choices.Count);
         session.SelectPrompt(civic);

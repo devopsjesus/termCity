@@ -35,10 +35,11 @@ public sealed partial class GameSession
         var choices = Zones.Placeable.Select(zone => new SessionChoice(
             Zones.Get(zone).Name, () => { ClosePrompt(); Zone(zone); }, ["free", ZoneBlurb(zone)],
             new(Zones.Get(zone).EmptyGlyph, ZoneBlurb(zone),
-                $"Zoning is free. Invites buildings to grow within {Game.Config.RoadServiceReach} cells of a road; it does not build immediately."))).ToList();
+                "Zoning is free. A single click reserves a minimum building plot; drag broader areas for varied buildings. " +
+                "Sims arrive on foot; roads speed travel. Press P to resume. Fuel and water keep settlers content."))).ToList();
         choices.Add(new("Dezone", () => { ClosePrompt(); Dezone(); }, ["free", "Buildings leave over 2 to 3 weeks"]));
         choices.Add(new("Back", CancelPrompt, ["", "Return to the area menu"]));
-        ShowPrompt("Zone selected area", "Zoning is free. Connect roads for growth.", choices, columns: ZoneMenuColumns);
+        ShowPrompt("Zone selected area", "Zoning is free. Reserve complete plots; roads speed arrivals but are optional.", choices, columns: ZoneMenuColumns);
     }
 
     private static string ZoneBlurb(ZoneType zone) => zone switch
@@ -61,13 +62,18 @@ public sealed partial class GameSession
                 ChoiceHelpContent.Road(Game, road, true)));
         }
 
+        var template = TermCity.Core.Roads.RoadTemplate.TrafficCircle;
+        var circleQuote = Game.QuoteRoadTemplate(template, Cursor);
+        choices.Add(new(template.Name, () => { ClosePrompt(); PreviewRoadTemplate(template); },
+            ["Place 5x5 ring", circleQuote.Cells.ToString(), circleQuote.Skipped.ToString(), Fmt.Money(circleQuote.Cost)],
+            ChoiceHelpContent.RoadTemplate(Game, template)));
         choices.Add(new("Back", CancelPrompt, ["Return to the area menu", "", "", ""]));
         ShowPrompt("Roads", "Choose a road type, then fill the area or draw a straight line.", choices, columns: RoadMenuColumns);
     }
 
     private void ShowBuildingMenu()
     {
-        var choices = Game.Map.Content.Buildings.Where(b => b.PlayerPlaceable).Select(building =>
+        var choices = Game.Map.Content.Buildings.Where(b => b.PlayerPlaceable && (!b.DebugOnly || CityGame.DebugToolsAvailable)).Select(building =>
         {
             var quote = Game.QuoteBuilding(building, ActiveArea);
             bool unlocked = CityProgression.IsUnlocked(Game, building);

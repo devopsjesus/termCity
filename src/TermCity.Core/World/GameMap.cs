@@ -28,6 +28,8 @@ public sealed class GameMap
 {
     // Internal so persistence can read and write layers directly.
     internal readonly byte[] TerrainLayer;
+    internal readonly bool[] SeaLayer;
+    internal readonly bool[] RiverLayer;
     internal readonly byte[] FeatureLayer;
     internal readonly bool[] RoadLayer;
     internal readonly byte[] RoadTypeLayer;
@@ -35,6 +37,20 @@ public sealed class GameMap
     internal readonly ZoneType[] ZoneLayer;
     internal readonly byte[] BuildingLayer;
     internal readonly Household[] HouseholdLayer;
+    internal readonly byte[] PathLayer;
+    internal readonly Dictionary<int, double> BuildingEstablishedDays = [];
+    internal readonly Dictionary<string, Simulation.TravelRoutes> TravelCache = [];
+    internal Simulation.TravelRoutes? PathRoutes;
+    internal int[][]? BuildingPaths;
+    internal byte[]? HillLevels;
+    internal byte[]? CoastalHillCaps; // 0 unknown, 1 coastal, 2 collapsed, 3 inland.
+    internal byte[]? CoastalSlopeCells;
+    internal double[]? WaterDensities;
+    internal sbyte[]? CoastDistances;
+    internal double[]? JunctionDelays;
+    internal IReadOnlyList<TermCity.Core.Rendering.RoadPath>? TravelRoadPaths;
+    internal TermCity.Core.Rendering.RoadMeshLayout? JunctionRoadLayout;
+    internal TermCity.Core.Rendering.WaterFlowField? WaterFlow;
     internal readonly Dictionary<int, ZoneRemoval> ZoneRemovals = [];
 
     // Sparse indexes so work that only concerns roads or zones scales with how much has been built,
@@ -46,6 +62,10 @@ public sealed class GameMap
     private readonly Dictionary<int, int> _buildingOwners = [];
 
     public IReadOnlyDictionary<int, CellRect> BuildingFootprints => _buildingFootprints;
+
+    public int BuildingAnchor(int index) => _buildingOwners.GetValueOrDefault(index, index);
+    public bool IsBuildingAnchor(int index) => BuildingAnchor(index) == index;
+    public int PathWearAt(int x, int y) => PathLayer[Index(x, y)];
 
     public CellRect BuildingFootprintAt(int x, int y)
     {
@@ -92,6 +112,8 @@ public sealed class GameMap
 
         int count = width * height;
         TerrainLayer = new byte[count];
+        SeaLayer = new bool[count];
+        RiverLayer = new bool[count];
         FeatureLayer = new byte[count];
         RoadLayer = new bool[count];
         RoadTypeLayer = new byte[count];
@@ -99,6 +121,7 @@ public sealed class GameMap
         ZoneLayer = new ZoneType[count];
         BuildingLayer = new byte[count];
         HouseholdLayer = new Household[count];
+        PathLayer = new byte[count];
 
         Array.Fill(TerrainLayer, content.Terrains.Base.Id);
     }
@@ -108,6 +131,7 @@ public sealed class GameMap
     public int Height { get; }
 
     public GameContent Content { get; }
+    public int TerrainVersion { get; private set; }
 
     public bool InBounds(int x, int y) => x >= 0 && y >= 0 && x < Width && y < Height;
 
@@ -144,7 +168,58 @@ public sealed class GameMap
 
     public TerrainType TerrainAt(int x, int y) => Content.Terrains[TerrainLayer[Index(x, y)]];
 
-    public void SetTerrain(int x, int y, TerrainType terrain) => TerrainLayer[Index(x, y)] = terrain.Id;
+    public bool IsSea(int x, int y) => InBounds(x, y) && SeaLayer[Index(x, y)];
+    public bool IsRiver(int x, int y) => InBounds(x, y) && RiverLayer[Index(x, y)];
+
+    public void SetRiverWater(int x, int y, bool river)
+    {
+        if (river && (TerrainAt(x, y).Name != DefaultTerrains.WaterName || IsSea(x, y)))
+            throw new InvalidOperationException("River classification requires non-sea water.");
+        int index = Index(x, y);
+        if (RiverLayer[index] == river) return;
+        RiverLayer[index] = river;
+        WaterFlow = null;
+        TerrainVersion++;
+    }
+
+    public void SetSeaWater(int x, int y, bool sea)
+    {
+        if (sea && TerrainAt(x, y).Name != DefaultTerrains.WaterName)
+            throw new InvalidOperationException("Sea classification requires water terrain.");
+        int index = Index(x, y);
+        if (SeaLayer[index] == sea) return;
+        SeaLayer[index] = sea;
+        if (sea) RiverLayer[index] = false;
+        WaterFlow = null;
+        CoastDistances = null;
+        TerrainVersion++;
+    }
+
+    public void SetTerrain(int x, int y, TerrainType terrain)
+    {
+        if (TerrainLayer[Index(x, y)] == terrain.Id) return;
+        TerrainLayer[Index(x, y)] = terrain.Id;
+        SeaLayer[Index(x, y)] = false;
+        RiverLayer[Index(x, y)] = false;
+        CoastDistances = null;
+        TerrainVersion++;
+        HillLevels = null;
+        CoastalHillCaps = null;
+        CoastalSlopeCells = null;
+        WaterDensities = null;
+        WaterFlow = null;
+        InvalidateTravel();
+    }
+
+    internal void InvalidateTravel()
+    {
+        TravelCache.Clear();
+        PathRoutes = null;
+        BuildingPaths = null;
+        JunctionDelays = null;
+        TravelRoadPaths = null;
+        JunctionRoadLayout = null;
+    }
 
     public FeatureType? FeatureAt(int x, int y)
     {
@@ -166,6 +241,7 @@ public sealed class GameMap
         }
 
         RoadLayer[i] = value;
+        InvalidateTravel();
         if (value)
         {
             RoadTypeLayer[i] = Content.Roads.Default.Id;
@@ -186,6 +262,7 @@ public sealed class GameMap
         SetRoad(x, y, true);
         int i = Index(x, y);
         RoadTypeLayer[i] = type.Id;
+        InvalidateTravel();
         if (!wasRoad)
         {
             PlayerRoadLayer[i] = playerBuilt;
@@ -273,6 +350,8 @@ public sealed class GameMap
 
     public void SetBuilding(int x, int y, BuildingType? building)
     {
+        PathRoutes = null;
+        BuildingPaths = null;
         int i = Index(x, y);
         if (_buildingOwners.TryGetValue(i, out int owner))
         {
@@ -283,8 +362,11 @@ public sealed class GameMap
                 int cell = Index(p.X, p.Y);
                 _buildingOwners.Remove(cell);
                 BuildingLayer[cell] = 0;
+                HouseholdLayer[cell] = default;
+                ZoneRemovals.Remove(cell);
                 _serviceCells.Remove(cell);
             }
+            BuildingEstablishedDays.Remove(owner);
         }
         BuildingLayer[i] = building?.Id ?? 0;
         ZoneRemovals.Remove(i);
@@ -300,9 +382,9 @@ public sealed class GameMap
 
     public ZoneRemoval? ZoneRemovalAt(int x, int y) => ZoneRemovals.GetValueOrDefault(Index(x, y));
 
-    public Household HouseholdAt(int x, int y) => HouseholdLayer[Index(x, y)];
+    public Household HouseholdAt(int x, int y) => HouseholdLayer[BuildingAnchor(Index(x, y))];
 
-    public void SetHousehold(int x, int y, Household household) => HouseholdLayer[Index(x, y)] = household;
+    public void SetHousehold(int x, int y, Household household) => HouseholdLayer[BuildingAnchor(Index(x, y))] = household;
 
     /// <summary>A zoned cell is "filled" once residents (or businesses) have moved in and built something.</summary>
     public bool IsFilled(int x, int y) => ZoneAt(x, y) != ZoneType.None && BuildingLayer[Index(x, y)] != 0;
@@ -316,5 +398,7 @@ public sealed class GameMap
         SetBuilding(x, y, null);
         HouseholdLayer[i] = default;
         FeatureLayer[i] = 0;
+        PathLayer[i] = 0;
+        InvalidateTravel();
     }
 }

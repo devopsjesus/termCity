@@ -54,12 +54,12 @@ public class FullRulesTests
         Assert.True(game.Stats.Population > 0);
         Assert.Equal(0, game.Stats.WeeklyIncome);
         Power(game);
-        game.AdvanceDay();
+        TestCity.Advance(game, 2);
         Assert.True(game.Stats.WeeklyIncome > 0);
     }
 
     [Fact]
-    public void DisconnectedWaterChargesUpkeepButHomesPayTaxAsSoonAsItConnects()
+    public void RemoteWaterWorksWithoutRoadsAndDeliversAfterTravelTime()
     {
         var game = TestCity.Flat(config: new GameConfig(), rules: CityRules.Full);
         var woodlot = Civic(game, "Woodlot");
@@ -69,8 +69,8 @@ public class FullRulesTests
         Assert.True(game.Designate(new CellRect(40, 18, 20, 1), ZoneType.Residential).Success);
         TestCity.Advance(game, 10);
         Assert.True(game.Stats.Population > 0);
-        Assert.Equal(0, game.Services.Water.Supply);
-        Assert.Equal(0, game.Finance.Income);
+        Assert.Equal(well.Capacity, game.Services.Water.Supply);
+        Assert.True(game.Finance.Income > 0);
         Assert.Equal(60, game.Finance.ServiceUpkeep);
 
         Assert.True(game.BuildRoad(new CellRect(30, 7, 1, 14)).Success);
@@ -114,7 +114,8 @@ public class FullRulesTests
         Assert.Same(network, game.Network);
         Assert.Equal(before.Power.Demand + shop.PowerUse + factory.PowerUse, game.Services.Power.Demand);
         Assert.Equal(before.Water.Demand + shop.WaterUse + factory.WaterUse, game.Services.Water.Demand);
-        int industry = Assert.Single(game.Map.ZoneCells(ZoneType.Industrial), i => game.Map.BuildingLayer[i] != 0);
+        int industry = Assert.Single(game.Map.ZoneCells(ZoneType.Industrial),
+            i => game.Map.BuildingLayer[i] != 0 && game.Map.IsBuildingAnchor(i));
         Assert.True(game.Services.Pollution(industry) > before.Pollution(industry));
     }
 
@@ -160,6 +161,8 @@ public class FullRulesTests
         TestCity.Advance(game, 40);
         double before = game.Indicators.Crime;
         Assert.True(game.PlaceBuilding(Civic(game, "Sheriff's Hall"), new CellRect(70, 19, 1, 1)).Success);
+        game.Map.BuildingEstablishedDays.Clear();
+        game.Touch();
         Assert.True(game.Indicators.Crime <= before);
         Assert.True(game.Services.Coverage(ServiceKind.Police, game.Map.Index(66, 18)) > 50);
     }
@@ -168,8 +171,10 @@ public class FullRulesTests
     public void FundingScalesCostAndStrength()
     {
         var game = Town();
-        game.HighestMilestone = 100;
+        game.HighestMilestone = 250;
         Assert.True(game.PlaceBuilding(Civic(game, "Fire Watch"), new CellRect(70, 19, 1, 1)).Success);
+        game.Map.BuildingEstablishedDays.Clear();
+        game.Touch();
         int full = game.Finance.ServiceUpkeep;
         int cover = game.Services.Coverage(ServiceKind.Fire, game.Map.Index(66, 18));
         game.SetFunding(ServiceKind.Fire, 0.5);

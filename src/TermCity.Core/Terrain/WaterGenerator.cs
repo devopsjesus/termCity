@@ -186,6 +186,13 @@ public sealed class WaterGenerator : ITerrainGenerator
             }
         }
 
+        var seaIds = bodies.Where(b => b.Kind == WaterKind.Sea).Select(b => b.Id).ToHashSet();
+        for (int y = 0; y < map.Height; y++)
+            for (int x = 0; x < map.Width; x++)
+            {
+                map.SetSeaWater(x, y, seaIds.Contains(ids[map.Index(x, y)]));
+                map.SetRiverWater(x, y, ids[map.Index(x, y)] >= WaterPlan.FirstRiverId);
+            }
         return new WaterPlan(type, ids, map.Width, bodies, rivers);
     }
 
@@ -612,21 +619,22 @@ public sealed class WaterGenerator : ITerrainGenerator
 
             // The course wanders in the middle and runs straight at both ends, so it starts on the edge and meets the
             // water head on.
-            double taper = Math.Min(1.0, Math.Min(s * 8, (1 - s) * 5));
-            double sway = amplitude * taper * (noise.Fractal(s * length * 0.018, offset, 2) * 2 - 1) * 2;
+            double taper = RiverMeanderEnvelope(s);
+            double sway = amplitude * taper * (noise.Fractal(s * length * 0.012, offset, 2) * 2 - 1) * 2;
             double vx = from.X + dx * s + px * sway;
             double vy = 2.0 * from.Y + dy * s + py * sway;
             int x = (int)Math.Round(vx), y = (int)Math.Round(vy / 2.0);
             centers.Add((x, y, s));
 
             // A stamp about five columns by three rows, widening and narrowing a little along the way.
-            double ry = 1.0 + 0.5 * (noise.Noise(s * length * 0.05, offset + 50) > 0.2 ? 1 : 0);
+            double ry = 1.15 + 0.35 * noise.Noise(s * length * 0.025, offset + 50);
             double rx = 2 * ry;
-            for (int yy = (int)Math.Floor(y - ry); yy <= (int)Math.Ceiling(y + ry); yy++)
+            double centerY = vy / 2;
+            for (int yy = (int)Math.Floor(centerY - ry); yy <= (int)Math.Ceiling(centerY + ry); yy++)
             {
-                for (int xx = (int)Math.Floor(x - rx); xx <= (int)Math.Ceiling(x + rx); xx++)
+                for (int xx = (int)Math.Floor(vx - rx); xx <= (int)Math.Ceiling(vx + rx); xx++)
                 {
-                    double ex = (xx - x) / rx, ey = (yy - y) / ry;
+                    double ex = (xx - vx) / rx, ey = (yy - centerY) / ry;
                     if (ex * ex + ey * ey <= 1.05 && map.InBounds(xx, yy))
                     {
                         cells.Add((xx, yy));
@@ -636,6 +644,16 @@ public sealed class WaterGenerator : ITerrainGenerator
         }
 
         return new Segment(cells, centers);
+    }
+
+    internal static double RiverMeanderEnvelope(double progress)
+    {
+        static double Smooth(double value)
+        {
+            value = Math.Clamp(value, 0, 1);
+            return value * value * value * (value * (value * 6 - 15) + 10);
+        }
+        return Smooth(progress * 8) * Smooth((1 - progress) * 5);
     }
 
     private static bool IsRiverClear(GameMap map, short[] ids, Segment segment, int riverId, int targetId)

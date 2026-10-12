@@ -16,6 +16,25 @@ public sealed class CityServices
     private readonly bool _utilitiesRequired;
     private readonly int _powerThreshold;
     private readonly int _waterThreshold;
+    private readonly Dictionary<ServiceKind, TravelRoutes> _routes = [];
+    private readonly Dictionary<int, double> _workloads = [];
+    private readonly Dictionary<int, double> _ages = [];
+    private readonly double[] _peakWorkload = new double[ServiceKinds.Count];
+
+    public double ResponseDays(ServiceKind kind, int index) =>
+        _routes.TryGetValue(kind, out var routes) ? routes.Cost[index] / TravelRoutes.UnitsPerDay *
+            Math.Max(1, WorkloadAt(kind, index)) : double.PositiveInfinity;
+
+    public bool HasArrived(ServiceKind kind, int index) =>
+        _routes.TryGetValue(kind, out var routes) && routes.Source[index] >= 0 &&
+        _ages[routes.Source[index]] >= ResponseDays(kind, index);
+
+    public double Workload(ServiceKind kind) => _peakWorkload[(int)kind];
+
+    public double WorkloadAt(ServiceKind kind, int index) =>
+        kind.IsUtility() ? Workload(kind) :
+        _routes.TryGetValue(kind, out var routes) && routes.Source[index] >= 0
+            ? _workloads.GetValueOrDefault(routes.Source[index]) : 0;
 
     private CityServices(
         byte[][] coverage, byte[] pollution, bool utilitiesRequired, ServiceSupply power, ServiceSupply water,
@@ -46,7 +65,7 @@ public sealed class CityServices
     /// <summary>Civic buildings of each kind that exist, indexed by <see cref="ServiceKind"/>.</summary>
     public int[] BuildingCounts { get; }
 
-    /// <summary>Civic buildings of each kind that are working: they need a road connection to the outside world.</summary>
+    /// <summary>Civic buildings of each kind on walkable land; road access is optional.</summary>
     public int[] ActiveCounts { get; }
 
     public int WeeklyUpkeepAtFullFunding { get; }
@@ -65,9 +84,11 @@ public sealed class CityServices
 
     public int Pollution(int index) => _pollution[index];
 
-    public bool IsPowered(GameMap map, int index) => HasUtility(map, index, _powerThreshold, salt: 0);
+    public bool IsPowered(GameMap map, int index) =>
+        (!_utilitiesRequired || HasArrived(ServiceKind.Power, index)) && HasUtility(map, index, _powerThreshold, salt: 0);
 
-    public bool IsWatered(GameMap map, int index) => HasUtility(map, index, _waterThreshold, salt: 7);
+    public bool IsWatered(GameMap map, int index) =>
+        (!_utilitiesRequired || HasArrived(ServiceKind.Water, index)) && HasUtility(map, index, _waterThreshold, salt: 7);
 
     // Shortages are spread evenly and always hit the same cells (a stable hash), so a half-supplied city browns out
     // half of its blocks rather than flickering, and every extra unit of supply restores a few more.
@@ -84,7 +105,7 @@ public sealed class CityServices
 
     public static CityServices Compute(
         GameMap map, RoadNetwork network, GameConfig config, Func<ServiceKind, double> funding, double waterFactor = 1,
-        double powerDemandFactor = 1)
+        double powerDemandFactor = 1, double elapsedDays = double.PositiveInfinity)
     {
         int count = map.Width * map.Height;
         var coverage = new byte[ServiceKinds.Count][];
@@ -125,10 +146,6 @@ public sealed class CityServices
             {
                 granary += type.Capacity;
             }
-            else if (type.Radius > 0)
-            {
-                Splat(coverage[(int)kind], map, x, y, type.Radius, type.Strength * funding(kind));
-            }
 
             seatRank = Math.Max(seatRank, type.SeatRank);
             if (type.Pollution != 0)
@@ -142,7 +159,7 @@ public sealed class CityServices
         int powerDemand = 0, waterDemand = 0;
         foreach (int index in map.ZoneCells(ZoneType.Industrial))
         {
-            if (map.BuildingLayer[index] == 0)
+            if (map.BuildingLayer[index] == 0 || !map.IsBuildingAnchor(index))
             {
                 continue;
             }
@@ -157,7 +174,7 @@ public sealed class CityServices
         {
             foreach (int index in map.ZoneCells(zone))
             {
-                if (map.BuildingLayer[index] == 0 || !network.IsServed(index))
+                if (map.BuildingLayer[index] == 0 || !map.IsBuildingAnchor(index) || !network.IsServed(index))
                 {
                     continue;
                 }
@@ -170,43 +187,50 @@ public sealed class CityServices
 
         var power = new ServiceSupply(powerSupply, (int)Math.Round(powerDemand * powerDemandFactor));
         var water = new ServiceSupply((int)Math.Round(waterSupply * waterFactor), waterDemand);
-        return new CityServices(coverage, pollution, config.FullRules, power, water, buildings, active, upkeep, seatRank, granary);
-    }
-
-    // Overlaps combine as independent chances, preserving diminishing returns.
-    private static void Splat(byte[] field, GameMap map, int cx, int cy, int radius, double strength)
-    {
-        int s = (int)Math.Round(strength);
-        if (s <= 0)
+        var result = new CityServices(coverage, pollution, config.FullRules, power, water, buildings, active, upkeep, seatRank, granary);
+        result._peakWorkload[(int)ServiceKind.Power] = power.Demand / (double)Math.Max(1, power.Supply);
+        result._peakWorkload[(int)ServiceKind.Water] = water.Demand / (double)Math.Max(1, water.Supply);
+        foreach (var kind in ServiceKinds.All)
         {
-            return;
-        }
-
-        int extent = (int)Math.Ceiling(radius * AreaFalloff.Extent);
-        int verticalExtent = (int)Math.Ceiling(extent / AreaFalloff.CellAspect);
-        for (int dy = -verticalExtent; dy <= verticalExtent; dy++)
-        {
-            int y = cy + dy;
-            if (y < 0 || y >= map.Height)
+            if (kind == ServiceKind.Granary) continue;
+            var sources = map.ServiceCells.Where(i => map.Content.Buildings[map.BuildingLayer[i]].Service == kind &&
+                network.IsServed(i) && (kind.IsUtility() || funding(kind) > 0)).ToArray();
+            if (sources.Length == 0) continue;
+            var routes = TravelRoutes.Compute(map, sources);
+            result._routes.Add(kind, routes);
+            foreach (int source in sources)
+                result._ages[source] = map.BuildingEstablishedDays.TryGetValue(source, out double established)
+                    ? Math.Max(0, elapsedDays - established) : double.PositiveInfinity;
+            var load = new Dictionary<int, int>();
+            foreach (int home in map.ZoneCells(ZoneType.Residential))
             {
-                continue;
+                int source = routes.Source[home];
+                if (source >= 0 && map.IsBuildingAnchor(home))
+                    load[source] = load.GetValueOrDefault(source) + map.HouseholdLayer[home].Total;
             }
-
-            for (int dx = -extent; dx <= extent; dx++)
+            foreach (int source in sources)
             {
-                int x = cx + dx;
-                if (x < 0 || x >= map.Width)
-                {
-                    continue;
-                }
-
-                double falloff = AreaFalloff.Strength(AreaFalloff.Distance(dx, dy) / radius);
-                int add = (int)Math.Round(s * falloff);
-                int i = y * map.Width + x;
-                int old = field[i];
-                field[i] = (byte)(old + add - old * add / 100);
+                var type = map.Content.Buildings[map.BuildingLayer[source]];
+                double capacity = kind.IsUtility() ? Math.Max(1, type.Capacity) :
+                    type.StaffingCapacity * funding(kind);
+                result._workloads[source] = load.GetValueOrDefault(source) / capacity;
+                if (!kind.IsUtility())
+                    result._peakWorkload[(int)kind] = Math.Max(result._peakWorkload[(int)kind], result._workloads[source]);
+            }
+            if (kind.IsUtility()) continue;
+            for (int i = 0; i < count; i++)
+            {
+                int source = routes.Source[i];
+                if (source < 0 || !result.HasArrived(kind, i)) continue;
+                var type = map.Content.Buildings[map.BuildingLayer[source]];
+                double timely = Math.Min(1, type.ResponseTargetDays /
+                    Math.Max(1 / TravelRoutes.UnitsPerDay, routes.Cost[i] / TravelRoutes.UnitsPerDay));
+                double capacityFactor = 1 / Math.Max(1, result._workloads[source]);
+                coverage[(int)kind][i] = (byte)Math.Clamp(
+                    (int)Math.Round(type.Strength * funding(kind) * timely * capacityFactor), 1, 100);
             }
         }
+        return result;
     }
 
     private static void EmitPollution(byte[] field, GameMap map, int cx, int cy, int amount)

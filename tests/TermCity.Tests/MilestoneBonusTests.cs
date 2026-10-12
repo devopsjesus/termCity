@@ -51,7 +51,8 @@ public class MilestoneBonusTests
         loaded.Touch();
         Assert.Equal(game.Money, loaded.Money);
         Population(loaded, 1_000);
-        Assert.Equal(game.Money + CityProgression.GoldBonus(loaded, CityProgression.Milestones[2]), loaded.Money);
+        Assert.Equal(game.Money + CityProgression.GoldBonus(loaded,
+            CityProgression.Milestones.Single(m => m.Population == 1_000)), loaded.Money);
     }
 
     [Fact]

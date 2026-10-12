@@ -35,13 +35,13 @@ public static class GuideContent
         int homes = game.Config.MinResidentialCells;
         return Join(
             showNextStep ? "YOUR NEXT STEP\n" + CityProgression.NextStep(game) : "",
-            "A town grows when people have somewhere to live, work to do, a road to reach both and\n" +
+            "A town grows when people have somewhere to live, work to do, walkable routes and\n" +
             "the services they need. You steer it by marking land, laying roads and building.",
             Table(["STEP", "KEYS", "WHAT TO DO"],
             [
                 ["1 Road", "T", "Draw a track from the King's Road at the map edge into open land"],
-                ["2 Homes", "R", "Mark homesteads along the track: families settle only by a road"],
-                ["3 Supplies", "Enter", game.Config.FullRules ? "Services: Woodlot (8,000g) and Town Well (4,000g), beside a road" : "Classic rules do not require fuel or water"],
+                ["2 Homes", "R", "Mark broad homesteads: cottages need at least two cells; roads are optional"],
+                ["3 Supplies", "Enter", game.Config.FullRules ? "Services: Woodlot (8,000g) and Town Well (4,000g); keep deliveries short" : "Classic rules do not require fuel or water"],
                 ["4 Go", "P", $"Resume. At {homes} occupied homes zone jobs with C and I"],
                 ["5 Care", "Enter", "Spend the weekly surplus on local care; save for a Motte and Bailey"],
                 ["6 Watch", "F7  F8", "City Grew! unlocks and growth blockers; expand supplies before homes"],
@@ -51,10 +51,10 @@ public static class GuideContent
             "  Dismiss the Start-tab tip to turn off coaching, not milestones. F6 can enable it again.\n" +
             "  F6, Milestones lists every size and its unlocks. New-city-size announcements pause the clock.",
             "A SUSTAINABLE START\n" +
-            "  Keep at least 8,000g to replace a lost Woodlot, plus money for winter grain and tribute.\n" +
-            "  Fuel and water work anywhere by a connected road; local care must be close to homes.\n" +
+            "  Keep at least 8,000g to replace a lost Woodlot. Grain management starts at Village (500).\n" +
+            "  Fuel and water travel over land; roads and worn paths make deliveries quicker.\n" +
             "  Zone smoky workshops in a separate district, not between homes. Shops can stay nearby.\n" +
-            "  At 100 souls, save for the largest complaint (F6, Happiness); do not buy every service.\n" +
+            "  At 250 souls, Growing Hamlet unlocks fire, sheriff, physic and learning; fund needs first.\n" +
             "  Try 75% local-service funding in Budget: less upkeep, still about 84% of the benefit.\n" +
             "  When space runs short, extend short tracks into open land. Leave plots for care, or\n" +
             "  dezone empty lots (U) to fit it. Do not wait for every poorly served vacant home to fill.",
@@ -159,7 +159,7 @@ public static class GuideContent
     }
 
     private static string Zones(CityGame game) => Join(
-        "Zoning is free. Mark land and buildings appear by themselves where a road reaches\n" +
+        "Zoning is free. Mark broad, walkable land and multi-cell buildings appear by themselves.\n" +
         $"(within {game.Config.RoadServiceReach} cells). Zoning does not build anything on its own: it invites.",
         Table(["ZONE (KEY)", "GROWS", "WHAT IT IS FOR"],
         [
@@ -188,8 +188,8 @@ public static class GuideContent
             road.TrafficCapacity.ToString(),
         });
         return Join(
-            "Roads are how the town works. A home or shop that no road reaches stays empty, whatever\n" +
-            $"you zone. Reach means a road within {game.Config.RoadServiceReach} cells.",
+            "Sims can walk over land without roads. Open-ground travel is six times slower than a track.\n" +
+            "Repeated journeys gradually wear paths from buildings to the closest reachable road.",
             TextTable.Text(
                 [new("ROAD"), TableColumn.Right("COST/CELL"), TableColumn.Right("UPKEEP/WK"), TableColumn.Right("TRAFFIC")],
                 rows.Select(r => (IReadOnlyList<string>)r).ToArray()),
@@ -201,7 +201,7 @@ public static class GuideContent
             "  or at a crossing, and crossings keep apart, so cells that would hug a road are skipped.",
             "THE KING'S ROAD\n" +
             "  The double-lined highways run to the map edges and carry trade in from outside. Join your\n" +
-            "  tracks to one: a town cut off from the edge cannot grow. F8 shows which plots lack access.",
+            "  tracks to one for fast trade. Local roads also speed travel; edge connection is optional.",
             "TRAFFIC\n" +
             "  Each road type carries a load. When a town outgrows its roads, traffic costs happiness:\n" +
             "  upgrade busy tracks to cobbled roads or build a second route.");
@@ -225,14 +225,16 @@ public static class GuideContent
         return Join(
             "Place these from the area menu (right-click or Enter, then Service buildings). Choose one,\n" +
             "move it with the mouse or arrows, then click or press Enter.\n" +
-            "Upkeep is paid weekly; reach is measured in map cells.",
+            "Upkeep is paid weekly; reach indicates the timely-response target, not a boundary.",
             "SUPPLIES (city-wide)\n" + Table(Columns("OUTPUT"), supplies),
             "  Fuel and water are shared by the whole town. If supply falls short of what buildings need,\n" +
             "  a matching share of blocks goes cold or dry. An aqueduct must stand on a shore.\n" +
             "  Start with a Woodlot and Town Well (12,000g together, 60g/week). Larger plants can wait.",
             "SERVICES (local)\n" + Table(Columns("REACH"), civic),
-            "  Each covers the cells around it, strongest close by. Services fund at 100% by default;\n" +
-            "  the Budget menu can trade money for strength.");
+            "  Services travel wherever land or bridges permit; long trips delay their first arrival.\n" +
+            "  More residents than staff can handle add queues. Roads and extra buildings help.\n" +
+            "  Funding affects strength and staffing. Range circles are approximate timing guides.\n" +
+            "  Locked services are not expected. Grain, Market Cross and Granary unlock at 500 souls.");
     }
 
     private static string Population(CityGame game)
@@ -247,7 +249,7 @@ public static class GuideContent
             "WHAT YOU PLACE, AND WHAT IT DOES",
             Table(["PLACE", "EFFECT ON POPULATION"],
             [
-                ["Roads", $"Gate everything: homes must lie within {cfg.RoadServiceReach} cells of a road joined to the edge"],
+                ["Roads", "Speed walking and deliveries; homes and businesses can grow without them"],
                 ["Homesteads", "Are the people: more occupied homes, more arrivals, more births and room to grow"],
                 ["Marketplace", "Gives jobs and trade. Plentiful work lifts attraction; unemployment lowers it"],
                 ["Craftworks", "Gives jobs and income, but smoke lowers happiness and land value nearby"],
@@ -258,8 +260,8 @@ public static class GuideContent
                 ["Greens, tavern", "Cheer and cool tempers; needed from 900 souls"],
                 ["Chapel, church", "Solace for the faithful, and a gentler temper; wanted from 500 souls"],
                 ["Keep, castle", "Guard against raiders and draw settlers; wanted from 400 souls"],
-                ["Granary", "Keeps hunger off in a bad year; hunger drives people away"],
-                ["Market Cross", "Cheaper grain and busier trade, so richer, steadier growth"],
+                ["Granary", "Village (500): stores grain for winter; no grain concerns before Village"],
+                ["Market Cross", "Village (500): cheaper grain imports and busier trade"],
             ]),
             "WHEN IT STALLS\n" +
             "  Under happiness 32 nobody new arrives. Under 42 families leave (so do many if over 12%\n" +
@@ -288,7 +290,7 @@ public static class GuideContent
             ["Unguarded", "7", "A motte, keep or castle covering the homes"],
             ["No solace", "4", "A chapel or church in a town big enough to want one"],
             ["Taxes", "-4 to 20", "Lower the tax towards the fair rate (Budget)"],
-            ["No road access", "10", "Join the plot to a road"],
+            ["Slow journeys", "5", "Improve worn paths or add roads"],
         ]),
         "Service charges grow with how much of the town's need is unmet, so a hamlet is not punished\n" +
         "for lacking a sheriff it does not yet need. Press O to see fuel, water, services, smoke, land\n" +

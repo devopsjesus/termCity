@@ -14,6 +14,1313 @@ namespace TermCity.GodotApp;
 
 internal static class GodotSmoke
 {
+    private static async Task RenderedFrame(Main host)
+    {
+        if (host.Map.PerspectiveEnabled) host.Map.Perspective?.RequestRender();
+        host.Map.QueueRedraw();
+        await host.ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+    }
+
+    public static async Task VerifyPerspectiveRendering(Main host, string? capturePath = null)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        host.Map.SetPerspective(true);
+        var view = host.Map.Perspective!;
+        session.ClearSelection();
+        var area = map.BuildingFootprints.Values.First(a => map.BuildingAt(a.X, a.Y)!.Name == "Castle");
+        var anchor = new Pos(area.X, area.Y);
+        if (CityGame.DebugToolsAvailable)
+        {
+            var monument = map.BuildingFootprints.Values.First(a => map.BuildingAt(a.X, a.Y)!.IsMonument);
+            var monumentAnchor = new Pos(monument.X, monument.Y);
+            session.CenterOn(monumentAnchor);
+            host.Map.RefreshCells();
+            view.Sync(session, host.Map.Size);
+            var head = new Vector3(monument.X + monument.Width / 2f, 4.3f, monument.Y + monument.Height / 2f);
+            Require(view.BuildingVolumes(monumentAnchor).Any(bounds => bounds.End.Y > 4.5f),
+                "The monument must render as a colossal sculpture, not a normal service building.");
+            Require(host.Map.TryPickBuilding(view.ScreenPoint(head), out var pickedMonument) && pickedMonument == monumentAnchor,
+                "The entire monument sculpture must be pickable.");
+        }
+        session.CenterOn(anchor);
+        host.Map.RefreshCells();
+        view.Sync(session, host.Map.Size);
+        Require(view.Azimuth == 325, "The default viewing angle must face buildings toward the right.");
+        var buildingCenter = new Vector3(area.X + area.Width / 2f, 0.5f, area.Y + area.Height / 2f);
+        Require(view.ScreenPoint(buildingCenter + Vector3.Back).X > view.ScreenPoint(buildingCenter).X,
+            "Building fronts must project toward screen-right at the default angle.");
+        var zoomPointer = view.ScreenPoint(new(area.X + area.Width / 2f, 0, area.Y + area.Height / 2f));
+        foreach (int targetZoom in new[] { -1, 0, 1, 0, -1, 0 })
+        {
+            host.Map.ZoomBy(targetZoom - session.ZoomLevel, zoomPointer);
+            for (int frame = 0; frame < 3; frame++)
+                await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            var roofPointer = view.ScreenPoint(new(area.X + area.Width / 2f, 1.4f, area.Y + area.Height / 2f));
+            Require(session.ZoomLevel == targetZoom && host.Map.TryPickBuilding(roofPointer, out var zoomedBuilding) && zoomedBuilding == anchor,
+                $"Using the actual zoom control must keep buildings pickable at {session.ZoomLabel}.");
+            if (DisplayServer.GetName() != "headless")
+            {
+                await RenderedFrame(host);
+                using var image = view.Texture.GetImage();
+                bool roofVisible = false;
+                for (int dy = -2; dy <= 2; dy++)
+                    for (int dx = -2; dx <= 2; dx++)
+                    {
+                        int x = (int)roofPointer.X + dx, y = (int)roofPointer.Y + dy;
+                        if (x < 0 || y < 0 || x >= image.GetWidth() || y >= image.GetHeight()) continue;
+                        var pixel = image.GetPixel(x, y);
+                        roofVisible |= pixel.R > pixel.G * 1.03f;
+                    }
+                Require(roofVisible, $"The castle roof must be present in rendered pixels at {session.ZoomLabel}, not only picking metadata.");
+            }
+        }
+        int viewportWidth = session.ViewWidth, viewportHeight = session.ViewHeight;
+        session.SetViewport(Math.Max(1, viewportWidth - 1), viewportHeight);
+        view.Sync(session, host.Map.Size);
+        var cameraCenter = new Vector3(session.CameraX + session.ViewWidth * session.Stride / 2f,
+            0, session.CameraY + session.ViewHeight * session.Stride / 2f);
+        Require(view.ScreenPoint(cameraCenter).DistanceTo(host.Map.Size / 2) < 1,
+            "Camera projection must refresh when viewport cell dimensions change, even without a new zoom level.");
+        session.SetViewport(viewportWidth, viewportHeight);
+        foreach (int zoom in new[] { 0, 1, -1 })
+        {
+            session.SetZoom(zoom);
+            host.Map.Invalidate(true);
+            host.Map.RefreshCells();
+            session.CenterOn(anchor);
+            for (int turn = 0; turn < 4; turn++)
+            {
+                view.Rotate(90);
+                view.Sync(session, host.Map.Size);
+                var pointer = view.ScreenPoint(new(area.X + area.Width / 2f, 1.3f, area.Y + area.Height / 2f));
+                bool buildingPicked = host.Map.TryPickBuilding(pointer, out var picked);
+                Require(buildingPicked && picked == anchor,
+                    $"3D building roofs and walls must remain pickable after turn {turn}, zoom {zoom}: " +
+                    $"pointer {pointer}, hit {picked}, expected {anchor}, size {host.Map.Size}.");
+                host.Map.EmitSignal(Control.SignalName.GuiInput,
+                    new InputEventMouseButton { ButtonIndex = MouseButton.Right, Pressed = true, Position = pointer });
+                Require(session.Prompt?.Title == BuildingReport.Title,
+                    "Right-clicking a rotated building must open the same Building Status.");
+                session.ClosePrompt();
+                var groundPointer = view.ScreenPoint(new(area.X + 0.5f, 0, area.Y + 0.5f));
+                Require(host.Map.TryMapPosition(groundPointer, out var ground) && ground == anchor,
+                    "3D placement must project back to the actual map cell, independently of camera rotation.");
+                Require(view.BuildingVolumes(anchor).All(bounds => bounds.Size.Y <= 1.8f),
+                    "Large building footprints must not stretch their towers.");
+                var merlons = view.BuildingVolumes(anchor).Where(bounds =>
+                    Math.Abs(bounds.Size.X - BuildingDetailLayout.MerlonWidth) < 0.0001f &&
+                    Math.Abs(bounds.Size.Y - BuildingDetailLayout.MerlonWidth) < 0.0001f &&
+                    Math.Abs(bounds.Size.Z - BuildingDetailLayout.MerlonWidth) < 0.0001f).ToArray();
+                Require(merlons.Length == 32, "Castle towers must each have eight evenly spaced square merlons.");
+                for (int i = 0; i < merlons.Length; i++)
+                    for (int j = i + 1; j < merlons.Length; j++)
+                        Require(!merlons[i].Intersects(merlons[j]), "Tower merlons must not overlap.");
+                host.Map.Invalidate(true);
+                await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+                await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+                Require(view.BuildingsDrawn > 0, "The perspective viewport must render real building volumes.");
+            }
+        }
+        session.SetZoom(0);
+        var house = map.BuildingFootprints.Values.First(a => map.BuildingAt(a.X, a.Y)!.Name == "Burgage House");
+        var houseAnchor = new Pos(house.X, house.Y);
+        session.CenterOn(houseAnchor);
+        host.Map.RefreshCells();
+        view.Sync(session, host.Map.Size);
+        var glazing = view.BuildingVolumes(houseAnchor, 0x304b53);
+        var framing = view.BuildingVolumes(houseAnchor, 0x79634b);
+        Require(glazing.Count > 0 && framing.Count > 0, "Timber houses must retain visible windows and framing.");
+        foreach (var window in glazing)
+            foreach (var beam in framing)
+                Require(!window.Intersects(beam), "Actual window geometry must not overlap timber posts or floor bands.");
+        view.Tilt();
+        Require(view.Elevation == 50, "TILT must provide an alternate camera elevation.");
+        view.Tilt();
+        Require(view.Elevation == 20, "TILT must provide a low 20-degree camera elevation.");
+        view.Tilt();
+        Require(view.Elevation == 35, "TILT must restore the lower, wall-visible camera elevation.");
+        session.CenterOn(new(map.Width / 2, map.Height / 2));
+        view.Sync(session, host.Map.Size);
+        var well = map.Content.Buildings.Get("Town Well");
+        var previewPosition = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf)
+            .Where(p => Math.Abs(p.X - anchor.X) < 8 && Math.Abs(p.Y - anchor.Y) < 8)
+            .First(p => session.Game.CanPlaceBuilding(well, p.X, p.Y));
+        int beforePreview = view.BuildingsDrawn;
+        session.PlaceCursor(previewPosition);
+        session.PreviewBuilding(well);
+        view.Sync(session, host.Map.Size);
+        Require(view.BuildingsDrawn == beforePreview + 1,
+            "A valid 3D placement must show the complete building preview, not only a grid outline.");
+        Require(view.IndicatorObjectCount > 0,
+            "Placement models and selection outlines must flush to the visible indicator layer even without range rings.");
+        session.CancelPreview();
+        var originalTerrain = map.TerrainAt(previewPosition.X, previewPosition.Y);
+        session.CenterOn(previewPosition);
+        foreach (string terrainName in new[] { "Meadow", "Hill", "Water" })
+        {
+            map.SetTerrain(previewPosition.X, previewPosition.Y, map.Content.Terrains.Get(terrainName));
+            session.Game.Touch();
+            host.Map.RefreshCells();
+            view.Sync(session, host.Map.Size);
+            var point = new Vector3(previewPosition.X + 0.5f,
+                TerrainSprite.Elevation(map, previewPosition.X, previewPosition.Y), previewPosition.Y + 0.5f);
+            var pointer = view.ScreenPoint(point);
+            bool hit = host.Map.TryMapPosition(pointer, out var pickedTerrain);
+            Require(hit && pickedTerrain == previewPosition,
+                $"Ground picking must follow {terrainName}: expected {previewPosition}, got {pickedTerrain}, " +
+                $"pointer {pointer}, ground {view.GroundPoint(pointer)}.");
+        }
+        map.SetTerrain(previewPosition.X, previewPosition.Y, originalTerrain);
+        session.Game.Touch();
+        session.ClearSelection();
+        session.PlaceCursor(new(map.Width / 2 + 23, map.Height / 2 + 14));
+        view.Sync(session, host.Map.Size);
+        host.Map.Invalidate(true);
+        await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+        await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+        var green = map.BuildingFootprints.Values.First(a => map.BuildingAt(a.X, a.Y)!.Name == "Village Green");
+        foreach (int tilt in new[] { 0, 1, 2 })
+        {
+            if (tilt > 0) view.Tilt();
+            session.SelectCell(new(green.X, green.Y));
+            session.CenterOn(new(green.X, green.Y));
+            host.Map.Invalidate(true);
+            await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            Require(host.Map.PerspectiveRangeBounds.Count > 0 &&
+                host.Map.PerspectiveRangeBounds.All(bounds => Math.Abs(bounds.Size.X - bounds.Size.Y) < 0.001f),
+                "Service range guides must remain screen-space circles at either camera tilt.");
+        }
+        view.Tilt();
+        session.ClearSelection();
+        foreach (int zoom in new[] { -2, -1, 0, 1 })
+        {
+            session.SetZoom(zoom);
+            host.Map.RefreshCells();
+            for (int tilt = 0; tilt < 3; tilt++)
+            {
+                foreach (var edge in new[] { new Pos(0, 0), new Pos(map.Width - 1, 0),
+                    new Pos(0, map.Height - 1), new Pos(map.Width - 1, map.Height - 1) })
+                {
+                    session.CenterOn(edge);
+                    host.Map.RefreshCells();
+                    view.Sync(session, host.Map.Size);
+                    var projected = view.ScreenPoint(new(edge.X + 0.5f, 0, edge.Y + 0.5f));
+                    Require(projected.DistanceTo(host.Map.Size / 2) < host.Map.Grid.PixelHeight * 2,
+                        $"Map edge {edge} must reach the middle at zoom {zoom}, tilt {view.Elevation}.");
+                    Require(host.Map.TryMapPosition(projected, out var cell) && cell == edge,
+                        "Map-edge panning must retain correct ground picking.");
+                    var outside = view.ScreenPoint(new(edge.X == 0 ? -2 : map.Width + 2, 0,
+                        edge.Y + 0.5f));
+                    Require(!host.Map.TryMapPosition(outside, out _), "Off-map ground must not be selectable.");
+                }
+                view.Tilt();
+            }
+        }
+        session.SetZoom(0);
+        host.Map.RefreshCells();
+        session.CenterOn(new(5, 5));
+        view.Sync(session, host.Map.Size);
+        var offMapPointer = view.ScreenPoint(new(-2, 0, -2));
+        host.Map.PanPerspective(new(0, 0, 0), offMapPointer);
+        Require(session.CameraX > -session.VisibleCellsX / 2 && session.CameraY > -session.VisibleCellsY / 2,
+            "Dragging over off-map ground must still move the camera.");
+        VerifySmoothPerspectivePanning(host);
+        VerifyTerraceFoundations(host);
+        await VerifyClosedTerrainEdges(host, capturePath);
+        await VerifyRiverBeaches(host, capturePath);
+        await VerifyShoreRoadSeams(host, capturePath);
+        await VerifyHillRoadRamps(host, capturePath);
+        await VerifyDiagonalHillCuts(host, capturePath);
+        await VerifyBridgeRendering(host, capturePath);
+        await VerifyTrafficCirclePlacement(host, capturePath);
+        await VerifyWaterFlowMotion(host, capturePath);
+        session.PlaceCursor(new(map.Width / 2 + 23, map.Height / 2 + 14));
+        session.CenterOn(new(map.Width / 2, map.Height / 2));
+        host.Map.Invalidate(true);
+        GD.Print("TERMCITY_PERSPECTIVE_RENDER_OK");
+    }
+
+    private static async Task VerifyWaterFlowMotion(Main host, string? capturePath)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        var view = host.Map.Perspective!;
+        int originalZoom = session.ZoomLevel;
+        var river = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf)
+            .First(p => map.TerrainAt(p.X, p.Y).Name == "Water" && TerrainSprite.Flow(map).At(p.X, p.Y).River);
+        session.PlaceCursor(river);
+        session.SetZoom(1);
+        host.Map.Invalidate(true);
+        host.Map.RefreshCells();
+        session.CenterOn(river);
+        bool paused = session.Game.Paused, motion = view.WaterMotionEnabled;
+        session.Game.Paused = false;
+        view.WaterMotionEnabled = true;
+        view.Sync(session, host.Map.Size);
+        double before = view.WaterFlowClock;
+        view._Process(0.3);
+        Require(view.WaterFlowClock > before, "Visible rivers must advance downstream flow while the city is running.");
+        if (capturePath is not null && DisplayServer.GetName() != "headless")
+        {
+            for (int frame = 0; frame < 3; frame++)
+                await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            await RenderedFrame(host);
+            using var first = view.Texture.GetImage();
+            view._Process(1.5);
+            for (int frame = 0; frame < 2; frame++)
+                await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            await RenderedFrame(host);
+            using var second = view.Texture.GetImage();
+            if (first.SavePng(Path.ChangeExtension(capturePath, ".flow-before.png")) != Error.Ok ||
+                second.SavePng(Path.ChangeExtension(capturePath, ".flow-after.png")) != Error.Ok)
+                throw new IOException("River-flow screenshots failed.");
+            int moving = 0, blue = 0;
+            for (int y = 0; y < first.GetHeight(); y += 2)
+                for (int x = 0; x < first.GetWidth(); x += 2)
+                {
+                    var a = first.GetPixel(x, y); var b = second.GetPixel(x, y);
+                    if (a.B <= a.G * 1.05f || a.B <= a.R * 1.3f) continue;
+                    blue++;
+                    if (Math.Abs(a.B - b.B) > 1f / 255) moving++;
+                    Require(Math.Abs(a.B - b.B) < 0.05f, "River motion must remain subtle, not flash or shimmer brightly.");
+                }
+            Require(moving > 20, $"Directional river flow must visibly move coarse water patches; changed samples: {moving}, " +
+                $"water samples: {blue}, river {river}, flow {TerrainSprite.Flow(map).At(river.X, river.Y)}, clock {view.WaterFlowClock}.");
+        }
+        session.Game.Paused = true;
+        view.Sync(session, host.Map.Size);
+        before = view.WaterFlowClock;
+        view._Process(0.3);
+        Require(view.WaterFlowClock == before, "Paused cities must not advance river flow.");
+        session.Game.Paused = false;
+        view.WaterMotionEnabled = false;
+        view.Sync(session, host.Map.Size);
+        view._Process(0.3);
+        Require(view.WaterFlowClock == before, "Reduced-motion/effects-off mode must suppress water animation.");
+        session.Game.Paused = paused;
+        view.WaterMotionEnabled = motion;
+        session.SetZoom(originalZoom);
+        host.Map.Invalidate(true);
+        host.Map.RefreshCells();
+        view.Sync(session, host.Map.Size);
+        GD.Print("TERMCITY_WATER_FLOW_OK");
+    }
+
+    private static async Task VerifyBridgeRendering(Main host, string? capturePath)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        var view = host.Map.Perspective!;
+        int x = map.Width / 2 + 29, y = map.Height / 2 + 8;
+        var fixture = new CellRect(x - 6, y - 4, 13, 9);
+        var original = fixture.Cells().Select(p => (Position: p, Terrain: map.TerrainAt(p.X, p.Y),
+            Road: map.RoadTypeAt(p.X, p.Y), Sea: map.IsSea(p.X, p.Y), River: map.IsRiver(p.X, p.Y))).ToArray();
+        foreach (bool water in new[] { false, true })
+        {
+            foreach (var p in fixture.Cells())
+            {
+                map.SetRoad(p.X, p.Y, false);
+                map.SetTerrain(p.X, p.Y, map.Content.Terrains.Get(
+                    p.X < x - (water ? 2 : 1) || p.X > x + 2 ? "Hill" : water ? "Water" : "Meadow"));
+                if (!map.TerrainAt(p.X, p.Y).Buildable)
+                {
+                    map.SetSeaWater(p.X, p.Y, false);
+                    map.SetRiverWater(p.X, p.Y, true);
+                }
+            }
+            var bridgeRoad = map.Content.Roads.Get(TermCity.Core.Roads.DefaultRoads.KingsRoadName);
+            if (water)
+            {
+                var stroke = CellLines.Between(new(fixture.X, y - 2), new(fixture.Right, y + 2));
+                var crossing = TermCity.Core.Persistence.SaveGameStore.Deserialize(
+                    TermCity.Core.Persistence.SaveGameStore.Serialize(session.Game));
+                var built = crossing.BuildRoad(stroke, crossing.DefaultRoad);
+                Require(built.Success && built.Cells == stroke.Count,
+                    $"A player-built angled river crossing must include every ordered stroke cell: {built.Message}.");
+                foreach (var p in stroke)
+                {
+                    Require(crossing.Map.HasRoad(p.X, p.Y), $"The player crossing lost {p}.");
+                    map.SetRoad(p.X, p.Y, map.Content.Roads.Default);
+                }
+            }
+            else
+                for (int cx = fixture.X; cx <= fixture.Right; cx++) map.SetRoad(cx, y, bridgeRoad);
+            session.Game.Touch();
+            session.SetZoom(1);
+            host.Map.RefreshCells();
+            session.CenterOn(new(x, y));
+            view.Sync(session, host.Map.Size);
+            Require(view.BridgeSegmentsDrawn > 0, "Water crossings and short steep valleys must have structural bridge models.");
+            Require(view.BridgeSurfaceAt(new(x + 0.5f, y + 0.5f)),
+                "The tested crossing itself must be a bridge, not an unrelated bridge elsewhere in the viewport.");
+            var bridgeVectors = new RoadVectorLayer();
+            bridgeVectors.Sync(session.Game);
+            var bridgeLayout = new RoadMeshLayout(map, bridgeVectors.Paths);
+            var bridgeMeshes = new RoadSurfaceMeshes(bridgeLayout);
+            int solidEdges = 0;
+            var sidePixels = new List<Vector3>();
+            for (int cy = fixture.Y / TerrainSprite.ChunkCells; cy <= fixture.Bottom / TerrainSprite.ChunkCells; cy++)
+                for (int cx = fixture.X / TerrainSprite.ChunkCells; cx <= fixture.Right / TerrainSprite.ChunkCells; cx++)
+                {
+                    var chunk = bridgeMeshes.Build(session, cx, cy);
+                    using var groundMesh = chunk.Ground;
+                    using var roadMesh = chunk.Roads;
+                    using var bankMesh = chunk.Banks;
+                    foreach (var sample in chunk.BridgeSideSamples)
+                    {
+                        if (sample.Top.X < fixture.X || sample.Top.X > fixture.Right + 1 ||
+                            sample.Top.Z < fixture.Y || sample.Top.Z > fixture.Bottom + 1) continue;
+                        Require(sample.Top.X == sample.Bottom.X && sample.Top.Z == sample.Bottom.Z &&
+                            Math.Abs(sample.Top.Y - sample.Bottom.Y - 0.12f) < 0.001f &&
+                            Math.Abs(sample.Top.Y - bridgeLayout.HeightAt(new(sample.Top.X, sample.Top.Z))) < 0.001f,
+                            "Bridge decks must have solid vertical edge faces meeting their actual top surface.");
+                        solidEdges++;
+                        sidePixels.Add(sample.Top.Lerp(sample.Bottom, 0.5f));
+                    }
+                }
+            Require(solidEdges > 0, "The tested bridge must contain actual deck side faces, not only a thin surface.");
+            var vertices = view.SurfaceVertices(new(x, y));
+            float ground = vertices.Min(p => p.Y), deck = view.RenderedGroundHeight(map, x + 0.5f, y + 0.5f);
+            Require(deck - ground > 0.1f, "A bridge must retain visible water or valley terrain underneath its deck.");
+            if (water)
+            {
+                var waterVertices = vertices.Where(p => p.Y < -0.03f).ToArray();
+                Require(waterVertices.Length > 0 && waterVertices.Max(p => p.Y) - waterVertices.Min(p => p.Y) < 0.002f,
+                    "Water below the bridge must have a gentle continuous surface, not hill terraces.");
+            }
+            var pointer = view.ScreenPoint(new(x + 0.5f, deck, y + 0.5f));
+            Require(host.Map.TryMapPosition(pointer, out var picked) && picked == new Pos(x, y),
+                "Bridge deck picking must select the visible road, not the terrain beneath it.");
+            for (int frame = 0; frame < 5; frame++)
+                await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            if (capturePath is not null && DisplayServer.GetName() != "headless")
+            {
+                await RenderedFrame(host);
+                using var image = view.Texture.GetImage();
+                foreach (var point in sidePixels)
+                {
+                    var screen = view.ScreenPoint(point);
+                    int ix = (int)screen.X, iy = (int)screen.Y;
+                    if (ix < 0 || iy < 0 || ix >= image.GetWidth() || iy >= image.GetHeight()) continue;
+                    var pixel = image.GetPixel(ix, iy);
+                    Require(pixel.G > 0.15f || pixel.B > 0.15f,
+                        $"Bridge deck/edge joins must not expose black lines at {point}, pixel {ix},{iy}: {pixel}.");
+                }
+                var error = image.SavePng(Path.ChangeExtension(capturePath, water ? ".bridge.png" : ".valley-bridge.png"));
+                if (error != Error.Ok) throw new IOException($"Bridge screenshot failed: {error}.");
+                var waterPoint = view.ScreenPoint(new(x + 0.5f, TerrainSprite.WaterCornerLevel(map, x, y + 2), y + 2.5f));
+                if (water && new Rect2(Vector2.Zero, host.Map.Size).HasPoint(waterPoint))
+                {
+                    var pixel = image.GetPixel((int)waterPoint.X, (int)waterPoint.Y);
+                    Require(pixel.B > pixel.R * 1.3f,
+                        $"Bridge capture must show the current water surface, not a stale terrain frame: " +
+                        $"pixel {pixel} at {waterPoint}, visible ground {view.GroundPoint(waterPoint)}.");
+                }
+            }
+        }
+        foreach (var entry in original)
+        {
+            map.SetTerrain(entry.Position.X, entry.Position.Y, entry.Terrain);
+            map.SetSeaWater(entry.Position.X, entry.Position.Y, entry.Sea);
+            map.SetRiverWater(entry.Position.X, entry.Position.Y, entry.River);
+            map.SetRoad(entry.Position.X, entry.Position.Y, false);
+            if (entry.Road is { } road) map.SetRoad(entry.Position.X, entry.Position.Y, road);
+        }
+        session.Game.Touch();
+        GD.Print("TERMCITY_BRIDGE_RENDER_OK");
+    }
+
+    private static async Task VerifyTrafficCirclePlacement(Main host, string? capturePath)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        var view = host.Map.Perspective!;
+        var template = TermCity.Core.Roads.RoadTemplate.TrafficCircle;
+        var desired = new Pos(map.Width / 2 + 28, map.Height / 2 - 28);
+        var origin = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf)
+            .Where(p => session.Game.RoadTemplatePlacementError(template, p) is null &&
+                new CellRect(p.X - 1, p.Y - 1, 7, 7).Cells().All(c => map.InBounds(c) && !map.HasRoad(c.X, c.Y)))
+            .OrderBy(p => Math.Abs(p.X - desired.X) + Math.Abs(p.Y - desired.Y)).First();
+        session.SetZoom(1);
+        host.Map.RefreshCells();
+        session.CenterOn(origin.Offset(2, 2));
+        session.PlaceCursor(origin);
+        session.PreviewRoadTemplate(template);
+        host.Map.RefreshCells();
+        view.Sync(session, host.Map.Size);
+        Require(session.FixedPlacementToolActive && view.IndicatorObjectCount > 0,
+            "Traffic-circle placement must expose a live footprint/model preview, not a blocking confirmation dialog.");
+        var point = new Vector3(origin.X + 0.5f, view.RenderedGroundHeight(map, origin.X + 0.5f, origin.Y + 0.5f),
+            origin.Y + 0.5f);
+        host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
+        { ButtonIndex = MouseButton.Left, Pressed = true, Position = view.ScreenPoint(point) });
+        Require(session.Preview is null && map.HasRoad(origin.X, origin.Y), "Clicking must place the entire traffic circle.");
+        host.Map.RefreshCells();
+        view.Sync(session, host.Map.Size);
+        Require(!view.RoadSurfaceAt(new(origin.X + 2.5f, origin.Y + 2.5f)),
+            "The traffic circle's grassy center must remain visibly open.");
+        for (int cy = origin.Y; cy < origin.Y + template.Height; cy++)
+            for (int cx = origin.X; cx < origin.X + template.Width; cx++)
+            {
+                var visible = session.Game.Network.RoadAtCellCenter(cx, cy);
+                Require((visible is not null) == view.RoadSurfaceAt(new(cx + 0.5f, cy + 0.5f)),
+                    "Selected-cell road reporting must match the traffic circle's actual mesh footprint.");
+                if (visible is null)
+                    Require(!CellInspector.Summary(session.Game, new(cx, cy)).Contains("Road", StringComparison.Ordinal),
+                        "Bare selections must not report a nearby logical route.");
+            }
+        for (int frame = 0; frame < 3; frame++)
+            await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+        if (capturePath is not null && DisplayServer.GetName() != "headless")
+        {
+            await RenderedFrame(host);
+            using var image = view.Texture.GetImage();
+            var error = image.SavePng(Path.ChangeExtension(capturePath, ".circle.png"));
+            if (error != Error.Ok) throw new IOException($"Traffic-circle screenshot failed: {error}.");
+        }
+        session.SetZoom(0);
+        host.Map.RefreshCells();
+        GD.Print("TERMCITY_TRAFFIC_CIRCLE_OK");
+    }
+
+    private static async Task VerifyHillRoadRamps(Main host, string? capturePath)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        var view = host.Map.Perspective!;
+        int x = map.Width / 2 + 28, y = map.Height / 2 + 25;
+        var fixture = new CellRect(x - 11, y - 11, 23, 23);
+        var original = fixture.Cells().Select(p => (Position: p, Terrain: map.TerrainAt(p.X, p.Y),
+            Road: map.RoadTypeAt(p.X, p.Y), Sea: map.IsSea(p.X, p.Y), River: map.IsRiver(p.X, p.Y))).ToArray();
+        foreach (var p in fixture.Cells())
+        {
+            map.SetRoad(p.X, p.Y, false);
+            map.SetTerrain(p.X, p.Y, map.Content.Terrains.Get(
+                p.X > fixture.X && p.X < fixture.Right && p.Y > fixture.Y && p.Y < fixture.Bottom ? "Hill" : "Meadow"));
+        }
+        foreach (var p in fixture.Cells().Where(p => p.Y == y))
+            map.SetRoad(p.X, p.Y, map.Content.Roads.Get(TermCity.Core.Roads.DefaultRoads.KingsRoadName));
+        session.Game.Touch();
+        session.SetZoom(1);
+        host.Map.RefreshCells();
+        session.CenterOn(new(x, y));
+        view.Sync(session, host.Map.Size);
+        Require(view.RoadMeshChunksDrawn > 0, "Roads must be drawn as dedicated mesh surfaces, not terrain paint.");
+        for (float px = x - 2; px <= x + 2; px += 0.25f)
+            foreach (float pz in new[] { y + 0.5f, y + 0.5f - RoadMeshLayout.HalfWidth - RoadMeshLayout.ShoulderWidth,
+                y + 0.5f + RoadMeshLayout.HalfWidth + RoadMeshLayout.ShoulderWidth })
+                Require(Math.Abs(view.RenderedGroundHeight(map, px, pz) -
+                    TerrainSprite.Elevation(map, (int)px, y)) < 0.001f,
+                    "The summit carriageway and both outer shoulders must meet level hilltop ground exactly.");
+        Require(view.CliffEdges.All(edge =>
+        {
+            var midpoint = (edge.A + edge.B) / 2;
+            return midpoint.X < x - 2 || midpoint.X > x + 2 || Math.Abs(midpoint.Y - y - 0.5f) > 1;
+        }), "A level hilltop must not have thin cutting-wall lines beside the road.");
+        Require(view.RenderedGroundHeight(map, fixture.X + 0.5f, y + 0.5f) >
+            TerrainSprite.Elevation(map, fixture.X, y),
+            "The incline must build a supported approach above low ground at the foot of the terraces.");
+        for (int cx = fixture.X + 1; cx <= fixture.Right; cx++)
+        {
+            if (view.RoadSurfaceAt(new(cx, y + 0.5f)))
+                Require(Math.Abs(view.RenderedGroundHeight(map, cx - 0.0001f, y + 0.5f) -
+                    view.RenderedGroundHeight(map, cx + 0.0001f, y + 0.5f)) < 0.001f,
+                    "Dedicated road meshes must share continuous heights across cell and chunk boundaries.");
+            foreach (int cy in new[] { y - 1, y, y + 1 })
+            {
+                float px = cx + 0.5f, pz = cy + 0.5f;
+                float height = view.RenderedGroundHeight(map, px, pz);
+                var pointer = view.ScreenPoint(new(px, height, pz));
+                if (!new Rect2(Vector2.Zero, host.Map.Size).HasPoint(pointer)) continue;
+                Require(host.Map.TryMapPosition(pointer, out var picked) && picked == new Pos(cx, cy),
+                    $"Picking must match the rendered road-cutting triangle: expected {cx},{cy} at {height}, " +
+                    $"got {picked}, pointer {pointer}, ground {view.GroundPoint(pointer)}.");
+                Require(Math.Abs(view.GroundPoint(pointer).Y - height) < 0.001f,
+                    "Ground picking must intersect the exact rendered ramp height.");
+                if (cy != y && !view.GradedPanelAt(map, px, pz) &&
+                    TerrainSprite.WaterSurface(map, cx, cy) == 0 &&
+                    TerrainSprite.WaterSurface(map, cx + 1, cy) == 0 &&
+                    TerrainSprite.WaterSurface(map, cx, cy + 1) == 0 &&
+                    TerrainSprite.WaterSurface(map, cx + 1, cy + 1) == 0)
+                    Require(Math.Abs(height - TerrainSprite.Elevation(map, cx, cy)) < 0.001f,
+                        "A steep cutting must restore the terrace within a quarter-cell of the road boundary.");
+            }
+        }
+        foreach (var edge in view.CliffEdges)
+            Require(!view.RoadSurfaceAt((edge.A + edge.B) / 2),
+                $"No exposed cutting wall may intersect the road mesh: {edge.A} to {edge.B}.");
+        Require(view.ExposedCutTriangles > 0,
+            "Steep road-cut banks must expose shaded earth instead of stretched grass.");
+        Require(view.ExposedCutCenters.Any(p => p.Z < y + 0.45f) && view.ExposedCutCenters.Any(p => p.Z > y + 0.55f),
+            "A hill road must expose tight cut faces on both sides of the carriageway.");
+        foreach (var cell in fixture.Cells())
+            if (TerrainSprite.Elevation(map, cell.X, cell.Y) > 0 &&
+                TerrainSprite.WaterSurface(map, cell.X, cell.Y) == 0 &&
+                TerrainSprite.WaterSurface(map, cell.X + 1, cell.Y) == 0 &&
+                TerrainSprite.WaterSurface(map, cell.X, cell.Y + 1) == 0 &&
+                TerrainSprite.WaterSurface(map, cell.X + 1, cell.Y + 1) == 0)
+            {
+                for (int row = 0; row < 4; row++)
+                    for (int column = 0; column < 4; column++)
+                    {
+                        float px = cell.X + (column + 0.5f) / 4, pz = cell.Y + (row + 0.5f) / 4;
+                        if (view.GradedPanelAt(map, px, pz)) continue;
+                        Require(Math.Abs(view.RenderedGroundHeight(map, px, pz) -
+                            TerrainSprite.Elevation(map, cell.X, cell.Y)) < 0.001f,
+                            "Hilltop panels outside the road cutting must remain level, not blend into the incline.");
+                    }
+            }
+        for (int frame = 0; frame < 3; frame++)
+            await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+        if (capturePath is not null && DisplayServer.GetName() != "headless")
+        {
+            await RenderedFrame(host);
+            using var image = view.Texture.GetImage();
+            foreach (var sample in view.WallSamples)
+            {
+                var projected = view.ScreenPoint(sample);
+                int ix = (int)projected.X, iy = (int)projected.Y;
+                if (ix < 1 || iy < 1 || ix >= image.GetWidth() - 1 || iy >= image.GetHeight() - 1) continue;
+                var pixel = image.GetPixel(ix, iy);
+                Require(pixel.G > 0.15f || pixel.B > 0.15f,
+                    $"Terrace/cutting wall must not expose black wedges at {sample}, pixel {ix},{iy}.");
+            }
+            for (float pz = y - 0.5f; pz <= y + 1.5f; pz += 0.05f)
+                for (float px = fixture.X + 1; px < fixture.Right - 1; px += 0.05f)
+                {
+                    var pointer = view.ScreenPoint(new(px, view.RenderedGroundHeight(map, px, pz), pz));
+                    int ix = (int)pointer.X, iy = (int)pointer.Y;
+                    if (ix < 0 || iy < 0 || ix >= image.GetWidth() || iy >= image.GetHeight()) continue;
+                    var pixel = image.GetPixel(ix, iy);
+                    Require(pixel.G > 0.15f || pixel.B > 0.15f,
+                        $"Road-cut surface must not expose black background at {px},{pz}, pixel {ix},{iy}.");
+                    if (view.RoadSurfaceAt(new(px, pz)))
+                        Require(pixel.G <= pixel.R * 1.2f || pixel.G <= pixel.B * 1.1f,
+                            $"Grass must not protrude through the paved hill road at {px},{pz}, pixel {ix},{iy}: {pixel}.");
+                }
+            var error = image.SavePng(Path.ChangeExtension(capturePath, ".hills.png"));
+            if (error != Error.Ok) throw new IOException($"Hill-road screenshot failed: {error}.");
+            session.SetZoom(0);
+            host.Map.Invalidate(true);
+            host.Map.RefreshCells();
+            session.CenterOn(new(x - 5, y));
+            view.Sync(session, host.Map.Size);
+            for (int frame = 0; frame < 3; frame++)
+                await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            await RenderedFrame(host);
+            using var approach = view.Texture.GetImage();
+            Require(view.ScreenPoint(new(x - 4.5f, 0, y + 0.5f)).DistanceTo(host.Map.Size / 2) < host.Map.Grid.PixelHeight * 2,
+                "The incline capture must remain centered on the tested hill, not recenter on the old cursor after zooming.");
+            for (float pz = y - 0.1f; pz <= y + 1.1f; pz += 0.1f)
+                for (float px = fixture.X + 1; px <= x; px += 0.1f)
+                {
+                    var pointer = view.ScreenPoint(new(px, view.RenderedGroundHeight(map, px, pz), pz));
+                    int ix = (int)pointer.X, iy = (int)pointer.Y;
+                    if (ix < 0 || iy < 0 || ix >= approach.GetWidth() || iy >= approach.GetHeight()) continue;
+                    var pixel = approach.GetPixel(ix, iy);
+                    Require(pixel.G > 0.15f || pixel.B > 0.15f,
+                        $"The supported incline must not expose black gaps beside its edges at {px},{pz}, pixel {ix},{iy}.");
+                    if (view.RoadSurfaceAt(new(px, pz)))
+                        Require(pixel.G <= pixel.R * 1.2f || pixel.G <= pixel.B * 1.1f,
+                            $"Grass must not protrude through the supported incline at {px},{pz}, pixel {ix},{iy}: {pixel}.");
+                }
+            error = approach.SavePng(Path.ChangeExtension(capturePath, ".hill-approach.png"));
+            if (error != Error.Ok) throw new IOException($"Hill-approach screenshot failed: {error}.");
+            session.SetZoom(1);
+            host.Map.Invalidate(true);
+            host.Map.RefreshCells();
+            session.CenterOn(new(x, y));
+        }
+        for (int cy = fixture.Y; cy <= fixture.Bottom; cy++)
+            map.SetRoad(x, cy, map.Content.Roads.Default);
+        for (int cy = y - 3; cy <= y; cy++)
+        {
+            map.SetRoad(fixture.X + 3, cy, map.Content.Roads.Default);
+            map.SetRoad(fixture.X + 6, cy, map.Content.Roads.Default);
+        }
+        for (int cx = fixture.X + 3; cx <= fixture.X + 6; cx++)
+            map.SetRoad(cx, y - 3, map.Content.Roads.Default);
+        session.Game.Touch();
+        view.Sync(session, host.Map.Size);
+        Require(view.RoadMeshChunksDrawn > 0 && view.RoadSurfaceAt(new(x + 0.5f, y + 0.5f)),
+            "Crossing road centerlines must form one fully covered junction.");
+        var roadVectors = new RoadVectorLayer();
+        roadVectors.Sync(session.Game);
+        var roadLayout = new RoadMeshLayout(map, roadVectors.Paths);
+        var roadMeshes = new RoadSurfaceMeshes(roadLayout);
+        for (int chunkY = fixture.Y / TerrainSprite.ChunkCells; chunkY <= fixture.Bottom / TerrainSprite.ChunkCells; chunkY++)
+            for (int chunkX = fixture.X / TerrainSprite.ChunkCells; chunkX <= fixture.Right / TerrainSprite.ChunkCells; chunkX++)
+            {
+                var chunk = roadMeshes.Build(session, chunkX, chunkY);
+                using var groundMesh = chunk.Ground;
+                using var pavingMesh = chunk.Roads;
+                using var bankMesh = chunk.Banks;
+                var vertices = chunk.Ground.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                for (int i = 0; i < vertices.Length; i += 3)
+                {
+                    var center = (vertices[i] + vertices[i + 1] + vertices[i + 2]) / 3;
+                    int cx = (int)Math.Floor(center.X), cy = (int)Math.Floor(center.Z);
+                    if (!map.InBounds(cx, cy) || TerrainSprite.Elevation(map, cx, cy) <= 0) continue;
+                    var point = new System.Numerics.Vector2(center.X, center.Z);
+                    bool insideClearing = roadLayout.InGroundCorridor(point) || roadMeshes.IsRemnant(map, new(center.X, center.Z));
+                    bool interior = insideClearing && new[] { new Vector2(0.001f, 0), new Vector2(-0.001f, 0),
+                        new Vector2(0, 0.001f), new Vector2(0, -0.001f) }.All(offset =>
+                            roadLayout.InGroundCorridor(point + new System.Numerics.Vector2(offset.X, offset.Y)) ||
+                            roadMeshes.IsRemnant(map, new(center.X + offset.X, center.Z + offset.Y)));
+                    Require(!interior,
+                        $"Grass-textured triangles must not cover cleared hill-road cells at {center}.");
+                }
+            }
+        Require(roadMeshes.RoundedJoinCount > 0,
+            "The hill-road fixture must generate curved terrace joins, not only test the standalone curve helper.");
+        Require(view.CliffEdges.All(edge => !view.RoadSurfaceAt((edge.A + edge.B) / 2)),
+            "A hillside junction must not contain intersecting bank walls.");
+        for (int frame = 0; frame < 3; frame++)
+            await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+        if (capturePath is not null && DisplayServer.GetName() != "headless")
+        {
+            session.SetZoom(0);
+            host.Map.Invalidate(true);
+            host.Map.RefreshCells();
+            session.CenterOn(new(x - 5, y));
+            view.Sync(session, host.Map.Size);
+            for (int frame = 0; frame < 3; frame++)
+                await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            await RenderedFrame(host);
+            using var junction = view.Texture.GetImage();
+            var error = junction.SavePng(Path.ChangeExtension(capturePath, ".junction.png"));
+            if (error != Error.Ok) throw new IOException($"Junction screenshot failed: {error}.");
+            for (float pz = y - 4; pz <= y + 1; pz += 0.125f)
+                for (float px = fixture.X + 2; px <= x + 1; px += 0.125f)
+                {
+                    var point = new Vector2(px, pz);
+                    if (TerrainSprite.Elevation(map, (int)px, (int)pz) <= 0 ||
+                        !view.GradedPanelAt(map, px + 0.06f, pz) ||
+                        !view.GradedPanelAt(map, px - 0.06f, pz) ||
+                        !view.GradedPanelAt(map, px, pz + 0.06f) ||
+                        !view.GradedPanelAt(map, px, pz - 0.06f)) continue;
+                    var ground = new Vector3(px, view.RenderedGroundHeight(map, px, pz), pz);
+                    var pointer = view.ScreenPoint(ground);
+                    int ix = (int)pointer.X, iy = (int)pointer.Y;
+                    if (ix < 0 || iy < 0 || ix >= junction.GetWidth() || iy >= junction.GetHeight() ||
+                        view.GroundPoint(pointer).DistanceTo(ground) > 0.02f) continue;
+                    var pixel = junction.GetPixel(ix, iy);
+                    Require(pixel.G <= pixel.R * 1.2f || pixel.G <= pixel.B * 1.1f,
+                        $"Hill-road carriageways, shoulders and cleared remnants must not render grass at {point}: {pixel}.");
+                }
+        }
+        foreach (var entry in original)
+        {
+            map.SetTerrain(entry.Position.X, entry.Position.Y, entry.Terrain);
+            map.SetSeaWater(entry.Position.X, entry.Position.Y, entry.Sea);
+            map.SetRiverWater(entry.Position.X, entry.Position.Y, entry.River);
+            map.SetRoad(entry.Position.X, entry.Position.Y, false);
+            if (entry.Road is { } road) map.SetRoad(entry.Position.X, entry.Position.Y, road);
+        }
+        session.Game.Touch();
+        session.SetZoom(0);
+        host.Map.RefreshCells();
+        GD.Print("TERMCITY_HILL_ROAD_RAMPS_OK");
+    }
+
+    private static async Task VerifyDiagonalHillCuts(Main host, string? capturePath)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        var view = host.Map.Perspective!;
+        int x = map.Width / 2 + 27, y = map.Height / 2 + 24;
+        var fixture = new CellRect(x - 9, y - 9, 19, 19);
+        var original = fixture.Cells().Select(p => (Position: p, Terrain: map.TerrainAt(p.X, p.Y),
+            Sea: map.IsSea(p.X, p.Y), River: map.IsRiver(p.X, p.Y), Road: map.RoadTypeAt(p.X, p.Y), Feature: map.FeatureAt(p.X, p.Y))).ToArray();
+        foreach (var p in fixture.Cells())
+        {
+            map.SetRoad(p.X, p.Y, false);
+            map.SetFeature(p.X, p.Y, null);
+            map.SetTerrain(p.X, p.Y, map.Content.Terrains.Get(
+                p.X >= x - 5 && p.Y >= y - 5 ? "Hill" : "Meadow"));
+        }
+        foreach (var p in CellLines.Between(new(x - 8, y - 7), new(x + 8, y + 7)))
+            map.SetRoad(p.X, p.Y, map.Content.Roads.Get(TermCity.Core.Roads.DefaultRoads.KingsRoadName));
+        session.Game.Touch();
+        session.SetZoom(1);
+        host.Map.RefreshCells();
+        session.CenterOn(new(x, y));
+        view.Sync(session, host.Map.Size);
+        var cutVectors = new RoadVectorLayer();
+        cutVectors.Sync(session.Game);
+        var cutMeshes = new RoadSurfaceMeshes(new RoadMeshLayout(map, cutVectors.Paths));
+        for (int cy = fixture.Y / TerrainSprite.ChunkCells; cy <= fixture.Bottom / TerrainSprite.ChunkCells; cy++)
+            for (int cx = fixture.X / TerrainSprite.ChunkCells; cx <= fixture.Right / TerrainSprite.ChunkCells; cx++)
+            {
+                var chunk = cutMeshes.Build(session, cx, cy);
+                using var ground = chunk.Ground;
+                using var roads = chunk.Roads;
+                using var banks = chunk.Banks;
+            }
+        Require(cutMeshes.NarrowCutFacesClosed > 0,
+            "The diagonal hill fixture must close narrow cut joins that fixed-width side probes miss.");
+        for (int frame = 0; frame < 3; frame++)
+            await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+        if (capturePath is not null && DisplayServer.GetName() != "headless")
+        {
+            await RenderedFrame(host);
+            using var image = view.Texture.GetImage();
+            var error = image.SavePng(Path.ChangeExtension(capturePath, ".diagonal-hill-cuts.png"));
+            if (error != Error.Ok) throw new IOException($"Diagonal hill-cut screenshot failed: {error}.");
+            foreach (var sample in view.WallSamples)
+            {
+                if (Math.Abs(sample.X - x) > 7 || Math.Abs(sample.Z - y) > 7) continue;
+                var pointer = view.ScreenPoint(sample);
+                int ix = (int)pointer.X, iy = (int)pointer.Y;
+                if (ix < 0 || iy < 0 || ix >= image.GetWidth() || iy >= image.GetHeight()) continue;
+                var pixel = image.GetPixel(ix, iy);
+                Require(pixel.G > 0.15f || pixel.B > 0.15f,
+                    $"Diagonal hill-cut joins must not leave fine black lines at {sample}, pixel {ix},{iy}: {pixel}.");
+            }
+        }
+        foreach (var entry in original)
+        {
+            map.SetTerrain(entry.Position.X, entry.Position.Y, entry.Terrain);
+            map.SetSeaWater(entry.Position.X, entry.Position.Y, entry.Sea);
+            map.SetRiverWater(entry.Position.X, entry.Position.Y, entry.River);
+            map.SetRoad(entry.Position.X, entry.Position.Y, false);
+            if (entry.Road is { } road) map.SetRoad(entry.Position.X, entry.Position.Y, road);
+            map.SetFeature(entry.Position.X, entry.Position.Y, entry.Feature);
+        }
+        session.Game.Touch();
+        session.SetZoom(0);
+        host.Map.RefreshCells();
+        GD.Print("TERMCITY_DIAGONAL_HILL_CUTS_OK");
+    }
+
+    private static void VerifySmoothPerspectivePanning(Main host)
+    {
+        var session = host.Session;
+        var view = host.Map.Perspective!;
+        var center = new Pos(session.Game.Map.Width / 2, session.Game.Map.Height / 2);
+        foreach (int zoom in new[] { -2, -1, 0, 1 })
+        {
+            session.SetZoom(zoom);
+            host.Map.RefreshCells();
+            for (int tilt = 0; tilt < 3; tilt++)
+            {
+                for (int rotation = 0; rotation < 2; rotation++)
+                {
+                    foreach (var direction in new[] { Vector2.Right, Vector2.Down, new Vector2(0.6f, 0.8f) })
+                    {
+                        session.CenterOn(center);
+                        view.Sync(session, host.Map.Size);
+                        var start = host.Map.Size / 2;
+                        var anchor = view.GroundPlanePoint(start);
+                        host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
+                        { ButtonIndex = MouseButton.Middle, Pressed = true, Position = start });
+                        int builds = view.GeometryBuilds;
+                        for (int step = 1; step <= 48; step++)
+                        {
+                            var pointer = start + direction * (step * 0.25f);
+                            host.Map.EmitSignal(Control.SignalName.GuiInput,
+                                new InputEventMouseMotion { Position = pointer });
+                            Require(view.ScreenPoint(anchor).DistanceTo(pointer) < 0.1f,
+                                $"Slow dragging must follow the pointer within 0.1 pixels at zoom {zoom}, " +
+                                $"tilt {view.Elevation}, rotation {view.Azimuth}, step {step}.");
+                            host.Map.EmitSignal(Control.SignalName.GuiInput,
+                                new InputEventMouseMotion { Position = pointer });
+                            Require(view.ScreenPoint(anchor).DistanceTo(pointer) < 0.1f,
+                                "Repeating a stationary drag event must not cause camera drift.");
+                        }
+                        Require(view.GeometryBuilds <= builds + 1,
+                            "Subcell panning must retain buffered geometry instead of rebuilding each event.");
+                        host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
+                        { ButtonIndex = MouseButton.Middle, Pressed = false, Position = start });
+                    }
+                    view.Rotate(90);
+                }
+                view.Rotate(-180);
+                view.Tilt();
+            }
+        }
+        session.SetZoom(0);
+        host.Map.RefreshCells();
+        session.CenterOn(center);
+        view.Sync(session, host.Map.Size);
+        var trackpadAnchor = view.GroundPlanePoint(host.Map.Size / 2);
+        for (int step = 1; step <= 32; step++)
+        {
+            host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventPanGesture
+            { Position = host.Map.Size / 2, Delta = new(0, 0.01f) });
+            var actual = view.ScreenPoint(trackpadAnchor);
+            Require(Math.Abs(actual.X - host.Map.Size.X / 2) < 0.1f &&
+                actual.Y < host.Map.Size.Y / 2, "Small trackpad scrolls must move in screen space without zigzag.");
+        }
+        session.CenterOn(center);
+        view.Sync(session, host.Map.Size);
+        Require(view.CameraOffset == Vector2.Zero, "Recentering must clear fractional pan remainders.");
+        GD.Print("TERMCITY_SMOOTH_PANNING_OK");
+    }
+
+    private static void VerifyTerraceFoundations(Main host)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        var view = host.Map.Perspective!;
+        var area = map.BuildingFootprints.Values.First(a => map.BuildingAt(a.X, a.Y)!.Name == "Cottage");
+        var fixture = new CellRect(area.X - 1, area.Y - 4, 9, 9);
+        var original = fixture.Cells().Select(p => (Position: p, Terrain: map.TerrainAt(p.X, p.Y))).ToArray();
+        foreach (var p in fixture.Cells())
+            map.SetTerrain(p.X, p.Y, map.Content.Terrains.Get(
+                p.X > fixture.X && p.X < fixture.Right && p.Y > fixture.Y && p.Y < fixture.Bottom ? "Hill" : "Meadow"));
+        session.Game.Touch();
+        session.CenterOn(new(area.X, area.Y));
+        host.Map.RefreshCells();
+        view.Sync(session, host.Map.Size);
+        float highest = area.Cells().Max(p => TerrainSprite.Elevation(map, p.X, p.Y));
+        float lowest = area.Cells().Min(p => TerrainSprite.Elevation(map, p.X, p.Y));
+        var anchor = new Pos(area.X, area.Y);
+        Require(highest > lowest && view.BuildingVolumes(anchor).Any(bounds =>
+            Math.Abs(bounds.Size.X - 1) < 0.001f && Math.Abs(bounds.Size.Z - 1) < 0.001f &&
+            bounds.Position.Y <= lowest && bounds.End.Y >= highest),
+            "Buildings spanning terraces must have a supporting foundation from the lower terrain to the level floor.");
+        session.SelectCell(anchor);
+        foreach (int zoom in new[] { -2, -1, 0, 1 })
+        {
+            session.SetZoom(zoom);
+            host.Map.RefreshCells();
+            view.Sync(session, host.Map.Size);
+            Require(Math.Abs(view.SelectionOutlineThickness * host.Map.Size.Y / view.CameraSpan - 2) < 0.001f,
+                "Selection marker must retain two-pixel nominal thickness at every zoom.");
+            float selectedHeight = session.ActiveArea.Cells().Where(p => map.InBounds(p.X, p.Y))
+                .Max(p => TerrainSprite.Elevation(map, p.X, p.Y));
+            Require(view.SelectionOutlineHeight > selectedHeight,
+                "Selection marker must remain above the highest selected terrain after zooming.");
+        }
+        session.SetZoom(0);
+        host.Map.RefreshCells();
+        view.Sync(session, host.Map.Size);
+        var pointer = view.ScreenPoint(new(area.X + area.Width / 2f,
+            highest + 0.8f, area.Y + area.Height / 2f));
+        Require(host.Map.TryPickBuilding(pointer, out var picked) && picked == anchor,
+            "A building raised onto its highest terrace must remain pickable.");
+        foreach (var entry in original) map.SetTerrain(entry.Position.X, entry.Position.Y, entry.Terrain);
+        session.Game.Touch();
+        GD.Print("TERMCITY_TERRACE_FOUNDATIONS_OK");
+    }
+
+    private static async Task VerifyClosedTerrainEdges(Main host, string? capturePath)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        var view = host.Map.Perspective!;
+        int x = map.Width / 2 + 17, y = map.Height / 2 + 12;
+        var fixture = new CellRect(x - 3, y - 3, 7, 7);
+        var terrains = fixture.Cells().Select(p => (Position: p, Terrain: map.TerrainAt(p.X, p.Y),
+            Sea: map.IsSea(p.X, p.Y), River: map.IsRiver(p.X, p.Y))).ToArray();
+        foreach (var p in fixture.Cells())
+            map.SetTerrain(p.X, p.Y, map.Content.Terrains.Get(p.X <= x ? "Hill" : "Water"));
+        session.Game.Touch();
+        session.SetZoom(1);
+        host.Map.RefreshCells();
+        session.CenterOn(new(x, y));
+        view.Sync(session, host.Map.Size);
+        var bankVectors = new RoadVectorLayer();
+        bankVectors.Sync(session.Game);
+        var bankMeshes = new RoadSurfaceMeshes(new RoadMeshLayout(map, bankVectors.Paths));
+        int shoreSamples = 0;
+        for (int cy = fixture.Y / TerrainSprite.ChunkCells; cy <= fixture.Bottom / TerrainSprite.ChunkCells; cy++)
+            for (int cx = fixture.X / TerrainSprite.ChunkCells; cx <= fixture.Right / TerrainSprite.ChunkCells; cx++)
+            {
+                var bank = bankMeshes.Build(session, cx, cy);
+                using var groundMesh = bank.Ground;
+                using var pavingMesh = bank.Roads;
+                using var cliffMesh = bank.Banks;
+                foreach (var sample in bank.ShoreSamples)
+                {
+                    Require(sample.Top.X == sample.Bottom.X && sample.Top.Z == sample.Bottom.Z &&
+                        sample.Top.Y >= sample.Bottom.Y,
+                        "Riverbanks must drop vertically at the contour, not slope into the water.");
+                    shoreSamples++;
+                }
+            }
+        Require(shoreSamples > 0, "The hill/river fixture must contain actual vertical shoreline walls.");
+        foreach (var p in fixture.Cells())
+        {
+            float center = view.RenderedGroundHeight(map, p.X + 0.5f, p.Y + 0.5f);
+            if (!map.TerrainAt(p.X, p.Y).Buildable)
+                Require(center < 0, "Water must remain below the land rather than inheriting terrace elevations.");
+            if (map.TerrainAt(p.X, p.Y).BuildCostModifier > 1 &&
+                TerrainSprite.WaterSurface(map, p.X, p.Y) == 0 &&
+                TerrainSprite.WaterSurface(map, p.X + 1, p.Y) == 0 &&
+                TerrainSprite.WaterSurface(map, p.X, p.Y + 1) == 0 &&
+                TerrainSprite.WaterSurface(map, p.X + 1, p.Y + 1) == 0 &&
+                !view.GradedPanelAt(map, p.X + 0.5f, p.Y + 0.5f))
+                Require(Math.Abs(center - TerrainSprite.Elevation(map, p.X, p.Y)) < 0.001f,
+                    "Coastal hill tops must stay level, not collapse into shoreline wedges.");
+        }
+        Require(view.CliffEdges.All(edge =>
+            TerrainSprite.WaterSurface(map, (edge.A.X + edge.B.X) / 2, (edge.A.Y + edge.B.Y) / 2) < 0.38),
+            "No land cliff may extend into the visible river surface.");
+        if (DisplayServer.GetName() != "headless")
+        {
+            for (int frame = 0; frame < 3; frame++)
+                await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            await RenderedFrame(host);
+            using var image = view.Texture.GetImage();
+            if (capturePath is not null)
+            {
+                var error = image.SavePng(Path.ChangeExtension(capturePath, ".river-cliff.png"));
+                if (error != Error.Ok) throw new IOException($"River-cliff screenshot failed: {error}.");
+            }
+            var midpoint = view.ScreenPoint(new(x + 0.5f, 0, y + 0.5f));
+            for (int dy = -30; dy <= 30; dy++)
+                for (int dx = -50; dx <= 50; dx++)
+                {
+                    var pixel = image.GetPixel((int)midpoint.X + dx, (int)midpoint.Y + dy);
+                    Require(pixel.G > 0.15f || pixel.B > 0.15f,
+                        "The rendered hill/river junction must not expose dark background cracks.");
+                }
+            if (capturePath is not null)
+            {
+                view.Tilt();
+                Require(view.Elevation == 50, "Riverbank capture must begin from the normal 35-degree view.");
+                view.Tilt();
+                view.Sync(session, host.Map.Size);
+                for (int frame = 0; frame < 3; frame++)
+                    await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+                await RenderedFrame(host);
+                using var lowView = view.Texture.GetImage();
+                var error = lowView.SavePng(Path.ChangeExtension(capturePath, ".river-cliff-low.png"));
+                if (error != Error.Ok) throw new IOException($"Low-angle river-cliff screenshot failed: {error}.");
+                view.Tilt();
+                view.Sync(session, host.Map.Size);
+            }
+        }
+        foreach (var entry in terrains)
+        {
+            map.SetTerrain(entry.Position.X, entry.Position.Y, entry.Terrain);
+            map.SetSeaWater(entry.Position.X, entry.Position.Y, entry.Sea);
+            map.SetRiverWater(entry.Position.X, entry.Position.Y, entry.River);
+        }
+        session.Game.Touch();
+        session.SetZoom(0);
+        host.Map.RefreshCells();
+        GD.Print("TERMCITY_TERRAIN_EDGES_OK");
+    }
+
+    private static async Task VerifyRiverBeaches(Main host, string? capturePath)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        var view = host.Map.Perspective!;
+        var center = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf).First(p =>
+            p.X >= 10 && p.X < map.Width - 10 && p.Y >= 8 && p.Y < map.Height - 8 &&
+            ShorelineLayout.BeachStrength(p.X, p.Y) > 0.99f &&
+            new CellRect(p.X - 8, p.Y - 6, 17, 13).Cells().All(c => map.BuildingAt(c.X, c.Y) is null));
+        int x = center.X, y = center.Y;
+        var fixture = new CellRect(x - 8, y - 6, 17, 13);
+        var original = fixture.Cells().Select(p => (Position: p, Terrain: map.TerrainAt(p.X, p.Y),
+            Road: map.RoadTypeAt(p.X, p.Y), Feature: map.FeatureAt(p.X, p.Y), Zone: map.ZoneAt(p.X, p.Y),
+            Sea: map.IsSea(p.X, p.Y), River: map.IsRiver(p.X, p.Y))).ToArray();
+        foreach (var p in fixture.Cells())
+        {
+            map.SetRoad(p.X, p.Y, false);
+            map.SetFeature(p.X, p.Y, null);
+            int bankX = x + (int)Math.Round((p.Y - y) * 0.3);
+            map.SetTerrain(p.X, p.Y, map.Content.Terrains.Get(p.X < bankX ? "Meadow" : p.X < bankX + 5 ? "Water" : "Hill"));
+            if (p.X >= bankX && p.X < bankX + 5) map.SetSeaWater(p.X, p.Y, true);
+        }
+        session.Game.Touch();
+        session.SetZoom(1);
+        host.Map.RefreshCells();
+        session.CenterOn(center);
+        view.Sync(session, host.Map.Size);
+        var vectors = new RoadVectorLayer();
+        vectors.Sync(session.Game);
+        var meshes = new RoadSurfaceMeshes(new RoadMeshLayout(map, vectors.Paths));
+        int beachVertices = 0, cliffSamples = 0;
+        var beachFaces = new Dictionary<int, Vector3[]>();
+        for (int cy = fixture.Y / TerrainSprite.ChunkCells; cy <= fixture.Bottom / TerrainSprite.ChunkCells; cy++)
+            for (int cx = fixture.X / TerrainSprite.ChunkCells; cx <= fixture.Right / TerrainSprite.ChunkCells; cx++)
+            {
+                var chunk = meshes.Build(session, cx, cy);
+                using var ground = chunk.Ground;
+                using var paving = chunk.Roads;
+                using var banks = chunk.Banks;
+                foreach (var face in chunk.Faces) beachFaces[face.Key] = face.Value;
+                using var arrays = ground.SurfaceGetArrays(0);
+                var vertices = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                var colors = arrays[(int)Mesh.ArrayType.Color].AsColorArray();
+                for (int i = 0; i < vertices.Length; i++)
+                {
+                    if (vertices[i].X > x - 2 && vertices[i].X < x && Math.Abs(vertices[i].Z - y) < 2 &&
+                        colors[i].A >= 0.5f && colors[i].A < 0.9f && vertices[i].Y < -0.03f)
+                        beachVertices++;
+                    var vertex = vertices[i];
+                    if (colors[i].A < 0.5f || vertex.X < x - 4 || vertex.X >= x || Math.Abs(vertex.Z - y) >= 3) continue;
+                    float expected = TerrainSprite.WaterCornerLevel(map, (int)vertex.X, (int)vertex.Z) *
+                        ShorelineLayout.BankAmount(map, vertex.X, vertex.Z);
+                    Require(Math.Abs(vertex.Y - expected) < 0.002f,
+                        $"Beach and inland terrain must share slope heights at every mesh vertex: {vertex}, expected {expected}.");
+                }
+                foreach (var sample in chunk.ShoreSamples)
+                    if (sample.Top.X > x + 4 && sample.Top.X < x + 7 && Math.Abs(sample.Top.Z - y) < 2 &&
+                        sample.Top.Y - sample.Bottom.Y > 0.25f) cliffSamples++;
+            }
+        Require(beachVertices > 0, "Selected sea coasts must contain sandy land next to the narrow water transition.");
+        Require(cliffSamples > 0, "Raised hills must retain vertical cliff banks beside the same river.");
+        for (int cy = y - 3; cy <= y + 3; cy++)
+            for (int cx = x - 4; cx < x; cx++)
+                for (int step = 1; step < 8; step++)
+                {
+                    float offset = step / 8f;
+                    CompareEdge(cx, cy, cx + 1, cy, new(cx + 1, cy + offset));
+                    CompareEdge(cx, cy, cx, cy + 1, new(cx + offset, cy + 1));
+                }
+        void CompareEdge(int ax, int ay, int bx, int by, Vector2 point)
+        {
+            if (TerrainSprite.WaterSurface(map, point.X, point.Y) >= ShorelineLayout.WaterThreshold) return;
+            float a = EdgeHeight(beachFaces[map.Index(ax, ay)], point);
+            float b = EdgeHeight(beachFaces[map.Index(bx, by)], point);
+            Require(float.IsFinite(a) && float.IsFinite(b) && Math.Abs(a - b) < 0.001f,
+                $"Beach/inland cell edges must meet without cracks at {point}: {a} versus {b}.");
+        }
+        static float EdgeHeight(Vector3[] faces, Vector2 point)
+        {
+            float height = float.NegativeInfinity;
+            for (int i = 0; i < faces.Length; i += 3)
+            {
+                var a = faces[i]; var b = faces[i + 1]; var c = faces[i + 2];
+                var ab = new Vector2(b.X - a.X, b.Z - a.Z);
+                var ac = new Vector2(c.X - a.X, c.Z - a.Z);
+                var ap = point - new Vector2(a.X, a.Z);
+                float denominator = ab.Cross(ac);
+                if (Math.Abs(denominator) < 0.0000001f) continue;
+                float u = ap.Cross(ac) / denominator, v = ab.Cross(ap) / denominator;
+                if (u < -0.001f || v < -0.001f || u + v > 1.001f) continue;
+                height = Math.Max(height, a.Y + u * (b.Y - a.Y) + v * (c.Y - a.Y));
+            }
+            return height;
+        }
+        float px = x - 0.5f, pz = y + 0.5f;
+        var beachPoint = new Vector3(px, view.RenderedGroundHeight(map, px, pz), pz);
+        var pointer = view.ScreenPoint(beachPoint);
+        Require(view.GroundPoint(pointer).DistanceTo(beachPoint) < 0.01f,
+            "Beach picking must follow the gently lowered sandy surface.");
+        map.SetFeature(x - 1, y, map.Content.Features.Get("Tree"));
+        Require(!TerrainSprite.NaturalFeatureVisible(session.Game, x - 1, y),
+            "Trees from existing saves must not render where their footprint reaches visible water.");
+        map.SetFeature(x - 1, y, null);
+        for (int frame = 0; frame < 3; frame++)
+            await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+        if (capturePath is not null && DisplayServer.GetName() != "headless")
+        {
+            await RenderedFrame(host);
+            using var image = view.Texture.GetImage();
+            var pixel = image.GetPixel((int)pointer.X, (int)pointer.Y);
+            Require(pixel.R > pixel.B * 1.1f && pixel.G > pixel.B * 1.1f,
+                $"The beach must render as visible sand rather than grass or water: {pixel}.");
+            for (float pzScan = y - 2; pzScan <= y + 2; pzScan += 0.1f)
+                for (float pxScan = x - 4; pxScan <= x + 1; pxScan += 0.025f)
+                {
+                    var projected = view.ScreenPoint(new(pxScan, view.RenderedGroundHeight(map, pxScan, pzScan), pzScan));
+                    int ix = (int)projected.X, iy = (int)projected.Y;
+                    if (ix < 0 || iy < 0 || ix >= image.GetWidth() || iy >= image.GetHeight()) continue;
+                    var sample = image.GetPixel(ix, iy);
+                    Require(sample.G > 0.15f || sample.B > 0.15f,
+                        $"Beach/land/water triangles must not leave black seams at {pxScan},{pzScan}: {sample}.");
+                }
+            var error = image.SavePng(Path.ChangeExtension(capturePath, ".beach.png"));
+            if (error != Error.Ok) throw new IOException($"Beach screenshot failed: {error}.");
+        }
+        var well = map.Content.Buildings.Get("Town Well");
+        var plot = new CellRect(x - well.Width, y, well.Width, well.Height);
+        var anchor = new Pos(plot.X, plot.Y);
+        float supportedGround = view.RenderedGroundHeight(map, x - 0.5f, y + 0.5f);
+        map.SetBuildingFootprint(well, plot);
+        session.Game.Touch();
+        view.Sync(session, host.Map.Size);
+        Require(Math.Abs(view.RenderedGroundHeight(map, x - 0.5f, y + 0.5f) - supportedGround) < 0.001f,
+            "Beach geometry must not change when a coastal building is placed.");
+        Require(view.BuildingVolumes(anchor, 0x79634b).Any(volume =>
+            volume.Position.Y <= supportedGround && volume.End.Y >= 0),
+            "Coastal building foundations must reach the beach instead of floating above it.");
+        foreach (var p in plot.Cells()) map.ClearCell(p.X, p.Y);
+        foreach (var entry in original)
+        {
+            map.SetTerrain(entry.Position.X, entry.Position.Y, entry.Terrain);
+            map.SetSeaWater(entry.Position.X, entry.Position.Y, entry.Sea);
+            map.SetRiverWater(entry.Position.X, entry.Position.Y, entry.River);
+            map.SetRoad(entry.Position.X, entry.Position.Y, false);
+            if (entry.Road is { } road) map.SetRoad(entry.Position.X, entry.Position.Y, road);
+            map.SetFeature(entry.Position.X, entry.Position.Y, entry.Feature);
+            map.SetZone(entry.Position.X, entry.Position.Y, entry.Zone);
+        }
+        session.Game.Touch();
+        session.SetZoom(0);
+        host.Map.RefreshCells();
+        GD.Print("TERMCITY_RIVER_BEACHES_OK");
+    }
+
+    private static async Task VerifyShoreRoadSeams(Main host, string? capturePath)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        var view = host.Map.Perspective!;
+        int x = map.Width / 2 + 34, y = map.Height / 2 + 18;
+        var fixture = new CellRect(x - 4, y - 6, 9, 13);
+        var original = fixture.Cells().Select(p => (Position: p, Terrain: map.TerrainAt(p.X, p.Y),
+            Sea: map.IsSea(p.X, p.Y), River: map.IsRiver(p.X, p.Y), Road: map.RoadTypeAt(p.X, p.Y), Feature: map.FeatureAt(p.X, p.Y))).ToArray();
+        foreach (int profile in new[] { 0, 1, 2 })
+        {
+            bool raised = profile == 1;
+            foreach (var p in fixture.Cells())
+            {
+                map.SetRoad(p.X, p.Y, false);
+                map.SetFeature(p.X, p.Y, null);
+                map.SetTerrain(p.X, p.Y, map.Content.Terrains.Get(p.X > x ? "Water" :
+                    raised || profile == 2 && p.Y > y + 1 ? "Hill" : "Meadow"));
+            }
+            for (int cy = y - 5; cy <= y + 5; cy++)
+                map.SetRoad(x, cy, map.Content.Roads.Get(TermCity.Core.Roads.DefaultRoads.KingsRoadName));
+            session.Game.Touch();
+            session.SetZoom(1);
+            host.Map.RefreshCells();
+            session.CenterOn(new(x, y));
+            view.Sync(session, host.Map.Size);
+            var vectors = new RoadVectorLayer();
+            vectors.Sync(session.Game);
+            var layout = new RoadMeshLayout(map, vectors.Paths);
+            var meshes = new RoadSurfaceMeshes(layout);
+            int tested = 0;
+            for (int cy = fixture.Y / TerrainSprite.ChunkCells; cy <= fixture.Bottom / TerrainSprite.ChunkCells; cy++)
+                for (int cx = fixture.X / TerrainSprite.ChunkCells; cx <= fixture.Right / TerrainSprite.ChunkCells; cx++)
+                {
+                    var chunk = meshes.Build(session, cx, cy);
+                    using var ground = chunk.Ground;
+                    using var roads = chunk.Roads;
+                    using var banks = chunk.Banks;
+                    foreach (var sample in chunk.ShoreSamples)
+                    {
+                        var point = new System.Numerics.Vector2(sample.Top.X, sample.Top.Z);
+                        if (Math.Abs(sample.Top.Z - y) > 3 || Math.Abs(sample.Top.X - x - 0.8f) > 0.5f ||
+                            !layout.InGroundCorridor(point)) continue;
+                        int px = (int)Math.Floor(point.X), py = (int)Math.Floor(point.Y);
+                        float expected = layout.SupportedShoulderHeight(point, TerrainSprite.Elevation(map, px, py));
+                        Require(Math.Abs(sample.Top.Y - expected) < 0.001f,
+                            $"Shore walls must close against the actual road shoulder, not leave a thin gap: {sample.Top}, expected {expected}.");
+                        tested++;
+                    }
+                }
+            Require(tested > 0, "The shoreline-road fixture must test the road/shore intersection itself.");
+            for (int frame = 0; frame < 3; frame++)
+                await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            if (capturePath is not null && DisplayServer.GetName() != "headless")
+            {
+                await RenderedFrame(host);
+                using var image = view.Texture.GetImage();
+                for (float pz = y - 3; pz <= y + 3; pz += 0.05f)
+                    for (float px = x + 0.5f; px <= x + 1.2f; px += 0.025f)
+                    {
+                        var pointer = view.ScreenPoint(new(px, view.RenderedGroundHeight(map, px, pz), pz));
+                        int ix = (int)pointer.X, iy = (int)pointer.Y;
+                        if (ix < 0 || iy < 0 || ix >= image.GetWidth() || iy >= image.GetHeight()) continue;
+                        var pixel = image.GetPixel(ix, iy);
+                        Require(pixel.G > 0.15f || pixel.B > 0.15f,
+                            $"Road/shore junction must not expose fine black gaps at {px},{pz}: {pixel}.");
+                    }
+                var error = image.SavePng(Path.ChangeExtension(capturePath, profile == 2 ? ".incline-shore-road.png" :
+                    raised ? ".hill-shore-road.png" : ".shore-road.png"));
+                if (error != Error.Ok) throw new IOException($"Shore-road screenshot failed: {error}.");
+            }
+        }
+        foreach (var entry in original)
+        {
+            map.SetTerrain(entry.Position.X, entry.Position.Y, entry.Terrain);
+            map.SetSeaWater(entry.Position.X, entry.Position.Y, entry.Sea);
+            map.SetRiverWater(entry.Position.X, entry.Position.Y, entry.River);
+            map.SetRoad(entry.Position.X, entry.Position.Y, false);
+            if (entry.Road is { } road) map.SetRoad(entry.Position.X, entry.Position.Y, road);
+            map.SetFeature(entry.Position.X, entry.Position.Y, entry.Feature);
+        }
+        session.Game.Touch();
+        session.SetZoom(0);
+        host.Map.RefreshCells();
+        GD.Print("TERMCITY_SHORE_ROAD_SEAMS_OK");
+    }
+
+    public static async Task VerifyBuildingRendering(Main host)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        int cx = map.Width / 2, cy = map.Height / 2;
+        var gallery = new CellRect(cx - 24, cy - 15, 48, 30);
+        foreach (var p in session.Game.DemolitionCells(gallery.Cells()))
+        {
+            map.ClearCell(p.X, p.Y);
+            map.SetTerrain(p.X, p.Y, map.Content.Terrains.Base);
+        }
+        int n = 0;
+        foreach (var type in map.Content.Buildings.Where(type => !type.DebugOnly || CityGame.DebugToolsAvailable))
+        {
+            int x = gallery.X + n % 6 * 8, y = gallery.Y + n / 6 * 5;
+            var area = new CellRect(x, y, type.Width, type.Height);
+            foreach (var p in area.Cells()) map.SetZone(p.X, p.Y, type.Zone);
+            map.SetBuildingFootprint(type, area);
+            if (type.Zone == ZoneType.Residential) map.SetHousehold(x, y, new Household(2, 2, 1));
+            n++;
+        }
+        for (int y = gallery.Y + 2; y < gallery.Y + 4; y++)
+            for (int x = gallery.X + 5; x < gallery.X + 8; x++)
+                map.SetTerrain(x, y, map.Content.Terrains.Get("Hill"));
+        map.SetFeature(gallery.X + 5, gallery.Y + 3, map.Content.Features.Get("Rock"));
+        map.SetFeature(gallery.X + 6, gallery.Y + 2, map.Content.Features.Get("Tree"));
+        for (int y = gallery.Y + 7; y < gallery.Y + 9; y++)
+            for (int x = gallery.X + 6; x < gallery.X + 8; x++)
+                map.SetTerrain(x, y, map.Content.Terrains.Get("Water"));
+        foreach (var p in CellLines.Between(new(cx - 24, cy + 19), new(cx + 24, cy + 27)))
+            for (int dy = -1; dy <= 1; dy++)
+                if (map.InBounds(p.X, p.Y + dy))
+                {
+                    map.SetTerrain(p.X, p.Y + dy, map.Content.Terrains.Get("Water"));
+                    map.SetFeature(p.X, p.Y + dy, null);
+                }
+        session.Game.Touch();
+        foreach (int zoom in new[] { 1, 0, -1, -2 })
+        {
+            session.SetZoom(zoom);
+            session.CenterOn(new(cx, cy));
+            host.Map.Invalidate(true);
+            await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            Require(host.Map.BuildingsDrawn > 0, $"No building sprites drawn at zoom {zoom}.");
+            var area = map.BuildingFootprints.Values.First(a => map.BuildingAt(a.X, a.Y)!.Name == "Parish Church");
+            var type = map.BuildingAt(area.X, area.Y)!;
+            var sprite = BuildingSprite.Render(type, area.Width, area.Height, CellHash.Pick(area.X, area.Y, 2));
+            int roofPixel = Enumerable.Range(0, sprite.Width * sprite.Lift)
+                .First(i => sprite.Pixels[i * 4 + 3] == 255);
+            var origin = session.ScreenToMap(0, 0);
+            float pixelScale = host.Map.Grid.PixelWidth / (12f * session.Stride);
+            var pointer = new Vector2((area.X - origin.X) * 12 + roofPixel % sprite.Width + 0.5f,
+                (area.Y - origin.Y) * 22 - sprite.Lift + roofPixel / sprite.Width + 0.5f) * pixelScale;
+            if (new Rect2(Vector2.Zero, host.Map.Size).HasPoint(pointer))
+            {
+                Require(host.Map.TryPickBuilding(pointer, out var picked) && picked == new Pos(area.X, area.Y),
+                    $"Raised roofs must pick their building at zoom {zoom}.");
+                host.Map.EmitSignal(Control.SignalName.GuiInput,
+                    new InputEventMouseButton { ButtonIndex = MouseButton.Right, Pressed = true, Position = pointer });
+                Require(session.Prompt?.Title == BuildingReport.Title, "Right-clicking a raised roof must open Building Status.");
+                session.ClosePrompt();
+            }
+        }
+        session.SetZoom(0);
+        session.CenterOn(new(cx, cy));
+        session.ClearSelection();
+        session.PlaceCursor(new(cx + 23, cy + 14));
+        host.Effects.Clear();
+        host.Map.Invalidate(true);
+        GD.Print("TERMCITY_BUILDING_RENDER_OK");
+    }
+
     public static async Task RunNativeInput(Main host)
     {
         var session = host.Session;
@@ -39,10 +1346,26 @@ internal static class GodotSmoke
         async Task KeyEvent(Key code, bool ctrl = false, uint unicode = 0, bool meta = false, Key physical = Key.None,
             bool shift = false)
         {
-            Input.ParseInputEvent(new InputEventKey { Keycode = code, PhysicalKeycode = physical,
-                Pressed = true, CtrlPressed = ctrl, MetaPressed = meta, Unicode = unicode, ShiftPressed = shift });
-            Input.ParseInputEvent(new InputEventKey { Keycode = code, PhysicalKeycode = physical,
-                Pressed = false, CtrlPressed = ctrl, MetaPressed = meta, Unicode = unicode, ShiftPressed = shift });
+            Input.ParseInputEvent(new InputEventKey
+            {
+                Keycode = code,
+                PhysicalKeycode = physical,
+                Pressed = true,
+                CtrlPressed = ctrl,
+                MetaPressed = meta,
+                Unicode = unicode,
+                ShiftPressed = shift
+            });
+            Input.ParseInputEvent(new InputEventKey
+            {
+                Keycode = code,
+                PhysicalKeycode = physical,
+                Pressed = false,
+                CtrlPressed = ctrl,
+                MetaPressed = meta,
+                Unicode = unicode,
+                ShiftPressed = shift
+            });
             await Frames();
         }
         await Frames();
@@ -60,7 +1383,10 @@ internal static class GodotSmoke
             foreach (bool pressed in new[] { true, false })
                 host.GetViewport().PushInput(new InputEventMouseButton
                 {
-                    ButtonIndex = MouseButton.Left, Pressed = pressed, Position = click, GlobalPosition = click,
+                    ButtonIndex = MouseButton.Left,
+                    Pressed = pressed,
+                    Position = click,
+                    GlobalPosition = click,
                 }, true);
             await Frames();
             Require(session.Prompt?.Title == (session.Game.Config.FullRules ? "Treasury, tithes and loans" : "Treasury"),
@@ -75,7 +1401,9 @@ internal static class GodotSmoke
         Require(emptyGoldWidth > 0, "Smoke must exercise empty space beside gold text.");
         treasuryLink.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
         {
-            ButtonIndex = MouseButton.Left, Pressed = true, Position = new Vector2(emptyGoldWidth / 2, treasuryLink.Size.Y / 2),
+            ButtonIndex = MouseButton.Left,
+            Pressed = true,
+            Position = new Vector2(emptyGoldWidth / 2, treasuryLink.Size.Y / 2),
         });
         Require(session.Prompt is null, "Empty space in the gold label must not open the economy dialog.");
         var populationClick = populationLink.GetGlobalRect().GetCenter();
@@ -104,7 +1432,9 @@ internal static class GodotSmoke
         foreach (bool pressed in new[] { true, false })
             host.GetViewport().PushInput(new InputEventMouseButton
             {
-                ButtonIndex = MouseButton.Left, Pressed = pressed, Position = populationClick,
+                ButtonIndex = MouseButton.Left,
+                Pressed = pressed,
+                Position = populationClick,
                 GlobalPosition = populationClick,
             }, true);
         await Frames();
@@ -127,22 +1457,28 @@ internal static class GodotSmoke
         Require(host.GetNode<AudioStreamPlayer>("CityMusic").Playing,
             "Music player stopped while the main thread was stalled.");
 
-            Require(!Descendants(host).OfType<Button>().Any(b =>
-                b.Text.StartsWith("F1 ", StringComparison.Ordinal) || b.Text.StartsWith("F3 ", StringComparison.Ordinal) ||
-                b.Text.StartsWith("F5 ", StringComparison.Ordinal) || b.Text.StartsWith("F6 ", StringComparison.Ordinal) ||
-                b.Text.StartsWith("F7 ", StringComparison.Ordinal) || b.Text.StartsWith("F8 ", StringComparison.Ordinal) ||
-                b.Text.StartsWith("F9 ", StringComparison.Ordinal) || b.Text == "ESC GAME"),
-                "The keyboard shortcut toolbar must not be displayed.");
-            Require(!Descendants(host).OfType<Label>().Any(l => l.Text.StartsWith("Arrows: move", StringComparison.Ordinal)),
-                "Header still contains the movement guidance row.");
-            var zoomIndicator = Descendants(host).OfType<Label>().Single(l => l.Name == "ZoomIndicator");
-            Require(zoomIndicator.Text == session.ZoomLabel &&
-                zoomIndicator.GetParent().GetChild<Button>(0).Text == "[-]" &&
-                zoomIndicator.GetParent().GetChild<Button>(2).Text == "[+]",
-                "Minimap zoom indicator must be flanked by its buttons.");
+        Require(!Descendants(host).OfType<Button>().Any(b =>
+            b.Text.StartsWith("F1 ", StringComparison.Ordinal) || b.Text.StartsWith("F3 ", StringComparison.Ordinal) ||
+            b.Text.StartsWith("F5 ", StringComparison.Ordinal) || b.Text.StartsWith("F6 ", StringComparison.Ordinal) ||
+            b.Text.StartsWith("F7 ", StringComparison.Ordinal) || b.Text.StartsWith("F8 ", StringComparison.Ordinal) ||
+            b.Text.StartsWith("F9 ", StringComparison.Ordinal) || b.Text == "ESC GAME"),
+            "The keyboard shortcut toolbar must not be displayed.");
+        Require(!Descendants(host).OfType<Label>().Any(l => l.Text.StartsWith("Arrows: move", StringComparison.Ordinal)),
+            "Header still contains the movement guidance row.");
+        var zoomIndicator = Descendants(host).OfType<Label>().Single(l => l.Name == "ZoomIndicator");
+        float heading = host.Map.Perspective!.Azimuth;
+        await KeyEvent(Key.Bracketleft, unicode: '[');
+        Require(host.Map.Perspective.Azimuth == Mathf.PosMod(heading - 90, 360),
+            "[ must rotate the map 90 degrees left.");
+        await KeyEvent(Key.Bracketright, unicode: ']');
+        Require(host.Map.Perspective.Azimuth == heading, "] must rotate the map 90 degrees right.");
+        Require(zoomIndicator.Text == session.ZoomLabel &&
+            zoomIndicator.GetParent().GetChild<Button>(0).Text == "[-]" &&
+            zoomIndicator.GetParent().GetChild<Button>(2).Text == "[+]",
+            "Minimap zoom indicator must be flanked by its buttons.");
         var headerLabels = Descendants(host).OfType<Label>()
             .Where(l => l.Name == "AppTitle" || l.Name == "CityNameDisplay" || l.Name == "Calendar" ||
-                l.Name == "WeekProgress" || l.Name == "Population" || l.Name == "ViewsHeader" || l.Name == "GuideHeader" || l.Name == "ReportsHeader" || l.Name == "Budget")
+                l.Name == "WeekProgress" || l.Name == "TimeSpeed" || l.Name == "Population" || l.Name == "ViewsHeader" || l.Name == "GuideHeader" || l.Name == "ReportsHeader" || l.Name == "Budget")
             .ToArray();
         float headerCenter = headerLabels[0].GetGlobalRect().GetCenter().Y;
         Require(headerLabels.All(l => Math.Abs(l.GetGlobalRect().GetCenter().Y - headerCenter) < 1),
@@ -167,6 +1503,20 @@ internal static class GodotSmoke
             Descendants(host).OfType<CalendarIcon>().Single().Feast ==
                 MedievalCalendar.Feast(session.Game.WeekOfYear, session.Game.Config.WeeksPerYear),
             "Time header must use ordinal weeks or the corresponding feast name and icon.");
+        var speedHeader = headerLabels.Single(label => label.Name == "TimeSpeed");
+        var originalSpeed = session.Game.Speed;
+        bool originalPaused = session.Game.Paused;
+        foreach (var speed in Enum.GetValues<GameSpeed>())
+        {
+            session.SetSpeed(speed);
+            Require(speedHeader.Text == Fmt.SpeedLabel(speed) &&
+                speedHeader.GetParent().GetChild(speedHeader.GetParent().GetChildCount() - 1) == speedHeader &&
+                speedHeader.HorizontalAlignment == HorizontalAlignment.Right,
+                "The rightmost time-header label must show 1x/2x/3x for Slow/Medium/Fast.");
+        }
+        session.SetSpeed(originalSpeed);
+        session.Game.Paused = originalPaused;
+        session.Game.Touch();
         var stableHeader = headerLabels.Select(label => (Label: label, Text: label.Text,
             Minimum: label.CustomMinimumSize, Size: label.Size,
             Position: label.GlobalPosition, FontSize: label.GetThemeFontSize("font_size"))).ToArray();
@@ -192,386 +1542,398 @@ internal static class GodotSmoke
         foreach (var slot in stableHeader) slot.Label.Text = slot.Text;
         host.FitHeaderFonts();
         await Frames();
-            int beforeZoom = session.ZoomLevel;
-            zoomIndicator.GetParent().GetChild<Button>(2).EmitSignal(Button.SignalName.Pressed);
-            Require(session.ZoomLevel == beforeZoom + 1 && zoomIndicator.Text == session.ZoomLabel,
-                "Minimap zoom-in button failed.");
-            zoomIndicator.GetParent().GetChild<Button>(0).EmitSignal(Button.SignalName.Pressed);
-            Require(session.ZoomLevel == beforeZoom, "Minimap zoom-out button failed.");
-            foreach (var zone in Zones.Placeable)
+        int beforeZoom = session.ZoomLevel;
+        zoomIndicator.GetParent().GetChild<Button>(2).EmitSignal(Button.SignalName.Pressed);
+        Require(session.ZoomLevel == beforeZoom + 1 && zoomIndicator.Text == session.ZoomLabel,
+            "Minimap zoom-in button failed.");
+        zoomIndicator.GetParent().GetChild<Button>(0).EmitSignal(Button.SignalName.Pressed);
+        Require(session.ZoomLevel == beforeZoom, "Minimap zoom-out button failed.");
+        foreach (var zone in Zones.Placeable)
+        {
+            var letter = Descendants(host).OfType<Label>().Single(l => l.Name == $"Demand{Zones.Get(zone).Letter}");
+            var bar = letter.GetParent().GetChild<ProgressBar>(1);
+            Require(bar.GetThemeStylebox("fill") is StyleBoxFlat fill &&
+                letter.GetThemeColor("font_color") == fill.BgColor,
+                "Demand letter does not match its bar color.");
+        }
+        var demandHeading = Descendants(host).OfType<Label>().Single(b => b.Name == "DemandHeading");
+        Require(demandHeading.GetThemeFontSize("font_size") >= 13 &&
+            demandHeading.GetThemeColor("font_color") == new Color("#70b7ff"),
+            "Sidebar headings must be larger and blue.");
+        Require(!Descendants(host).Any(n => n.Name == "CollapseCaret") &&
+            demandHeading.GetParent().GetParent().GetChild<Control>(1).Visible,
+            "Sidebar sections must remain open without collapse carets.");
+        Require(Descendants(host).OfType<Label>().Any(l => l.Name == "AppTitle" && l.Text == "TermCity"),
+            "Left header must retain the TermCity title.");
+        var calendarLabel = Descendants(host).OfType<Label>().Single(l => l.Name == "WeekProgress");
+        Require(calendarLabel.Text == "[PAUSED]" &&
+            calendarLabel.GetThemeColor("font_color") == new Color("#ffe066"),
+            "PAUSED must replace the week progression bar in yellow.");
+        Require(calendarLabel.HorizontalAlignment == HorizontalAlignment.Center &&
+            Descendants(host).OfType<Label>().Single(l => l.Name == "Calendar").HorizontalAlignment == HorizontalAlignment.Left &&
+            Descendants(host).OfType<Label>().Single(l => l.Name == "Population").HorizontalAlignment == HorizontalAlignment.Left,
+            "Calendar, week bar and population alignment is incorrect.");
+        Require(speedHeader.Text == Fmt.SpeedLabel(originalSpeed),
+            "The time header must retain its speed indicator while paused.");
+        Require(populationHeader.GetParent() is TerminalFrame { Name: var popFrame } &&
+            popFrame == "PopulationHeaderFrame" &&
+            budgetHeader.GetParent() is TerminalFrame { Name: var fundsFrame } &&
+            fundsFrame == "FundsHeaderFrame" && populationHeader.GetParent() != budgetHeader.GetParent() &&
+            !budgetHeader.Text.Contains("TREASURY", StringComparison.Ordinal),
+            "POP and funds must use separate frames and omit the TREASURY label.");
+        populationHeader.EmitSignal(Control.SignalName.GuiInput,
+            new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = true });
+        await Frames();
+        Require(session.Prompt is null && populationHeader.MouseDefaultCursorShape != Control.CursorShape.PointingHand &&
+            !populationHeader.TooltipText.Contains("Open city menu", StringComparison.Ordinal),
+            "The POP header must be display-only and not open the city menu.");
+        Require(dateHeader.GetParent<HBoxContainer>().GetThemeConstant("separation") == 12,
+            "The time section must have increased spacing between its fields.");
+        if (session.Game.Config.FullRules)
+            Require(budgetHeader.Text.Contains(
+                $" [{(session.Game.Finance.Net > 0 ? "+" : "")}{Fmt.CompactMoney(session.Game.Finance.Net)}]",
+                StringComparison.Ordinal) && !budgetHeader.Text.Contains("/wk", StringComparison.Ordinal),
+                "Weekly gold must use brackets, omit the weekly suffix and show no plus for zero.");
+        var reportsHeader = headerLabels.Single(label => label.Name == "ReportsHeader");
+        var viewsHeader = headerLabels.Single(label => label.Name == "ViewsHeader");
+        viewsHeader.EmitSignal(Control.SignalName.GuiInput,
+            new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = true });
+        await Frames();
+        var viewsBar = Descendants(host).OfType<TerminalFrame>().Single(frame => frame.Name == "ViewsBar");
+        Require(viewsBar.IsVisibleInTree() && !viewsBar.JoinAdjacent &&
+            viewsBar.GlobalPosition.IsEqualApprox(host.Map.GlobalPosition) &&
+            host.Map.GetGlobalRect().Encloses(viewsBar.GetGlobalRect()) &&
+            viewsBar.GetChild<ScrollContainer>(0).GetChild(0) is HBoxContainer,
+            "VIEWS must open a horizontal terminal icon bar at the map's top left.");
+        foreach (var overlay in Enum.GetValues<MapOverlay>())
+        {
+            var viewButton = Descendants(viewsBar).OfType<Button>().Single(button => button.Name == $"View{overlay}");
+            Require(viewButton.Text.Length == 0 &&
+                viewButton.GetChild<ConstructionIcon>(0) is { Overlay: var renderedOverlay } &&
+                renderedOverlay == overlay,
+                "Every VIEWS option must use rendered artwork for its specific overlay, not a text glyph.");
+            viewButton.EmitSignal(Button.SignalName.Pressed);
+            await Frames();
+            Require(session.Overlay == overlay && viewsBar.IsVisibleInTree(),
+                "Clicking each view icon must select the overlay without closing the bar.");
+            Require(host.Map.Grid.VectorRoads,
+                "Selecting an overlay must retain rendered roads instead of terminal road glyphs.");
+        }
+        await KeyEvent(Key.Escape);
+        Require(!viewsBar.IsVisibleInTree() && session.Prompt is null &&
+            session.Overlay == MapOverlay.Happiness,
+            "Esc must close VIEWS without clearing its overlay or opening Game Menu.");
+        viewsHeader.EmitSignal(Control.SignalName.GuiInput,
+            new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = true });
+        await Frames();
+        await Frames();
+        host.GetViewport().PushInput(new InputEventMouseButton
+        {
+            ButtonIndex = MouseButton.Left,
+            Pressed = true,
+            Position = host.Size - Vector2.One,
+            GlobalPosition = host.Size - Vector2.One
+        }, true);
+        host.GetViewport().PushInput(new InputEventMouseButton
+        {
+            ButtonIndex = MouseButton.Left,
+            Pressed = false,
+            Position = host.Size - Vector2.One,
+            GlobalPosition = host.Size - Vector2.One
+        }, true);
+        await Frames();
+        Require(viewsBar.IsVisibleInTree() && session.Overlay == MapOverlay.Happiness && session.Prompt is null,
+            "Clicking away must keep VIEWS active.");
+        viewsHeader.EmitSignal(Control.SignalName.GuiInput,
+            new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = true });
+        await Frames();
+        Require(!viewsBar.IsVisibleInTree() && session.Overlay == MapOverlay.Happiness,
+            "Toggling VIEWS must close its bar without clearing the overlay.");
+        session.SetOverlay(MapOverlay.Off);
+        await KeyEvent(Key.O, shift: true);
+        Require(session.Overlay == MapOverlay.Happiness,
+            "Shift+O must restore the most recently selected overlay.");
+        await KeyEvent(Key.O, shift: true);
+        Require(session.Overlay == MapOverlay.Off, "Shift+O must switch overlays off.");
+        var guideHeader = headerLabels.Single(label => label.Name == "GuideHeader");
+        Require(guideHeader.Text == "GUIDE" && guideHeader.GetParent() is TerminalFrame { Name: var guideFrameName } &&
+            guideFrameName == "GuideHeaderFrame", "GUIDE must use a separate terminal header frame.");
+        guideHeader.EmitSignal(Control.SignalName.GuiInput,
+            new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = true });
+        await Frames();
+        Require(session.Prompt is { Title: "TermCity guide", Tabs.Count: 9 },
+            "Clicking GUIDE must open the complete guide.");
+        string beforeGuideDismissal = SaveGameStore.Serialize(session.Game);
+        var guideDialog = Descendants(host).OfType<TerminalFrame>()
+            .Single(frame => frame.Name == "CityDialog" && frame.IsVisibleInTree());
+        var outsideGuide = Vector2.One;
+        Require(!guideDialog.GetGlobalRect().HasPoint(outsideGuide),
+            "Guide dismissal test must click outside its frame.");
+        foreach (bool pressed in new[] { true, false })
+            host.GetViewport().PushInput(new InputEventMouseButton
             {
-                var letter = Descendants(host).OfType<Label>().Single(l => l.Name == $"Demand{Zones.Get(zone).Letter}");
-                var bar = letter.GetParent().GetChild<ProgressBar>(1);
-                Require(bar.GetThemeStylebox("fill") is StyleBoxFlat fill &&
-                    letter.GetThemeColor("font_color") == fill.BgColor,
-                    "Demand letter does not match its bar color.");
-            }
-            var demandHeading = Descendants(host).OfType<Label>().Single(b => b.Name == "DemandHeading");
-            Require(demandHeading.GetThemeFontSize("font_size") >= 13 &&
-                demandHeading.GetThemeColor("font_color") == new Color("#70b7ff"),
-                "Sidebar headings must be larger and blue.");
-            Require(!Descendants(host).Any(n => n.Name == "CollapseCaret") &&
-                demandHeading.GetParent().GetParent().GetChild<Control>(1).Visible,
-                "Sidebar sections must remain open without collapse carets.");
-            Require(Descendants(host).OfType<Label>().Any(l => l.Name == "AppTitle" && l.Text == "TermCity"),
-                "Left header must retain the TermCity title.");
-            var calendarLabel = Descendants(host).OfType<Label>().Single(l => l.Name == "WeekProgress");
-            Require(calendarLabel.Text == "[PAUSED]" &&
-                calendarLabel.GetThemeColor("font_color") == new Color("#ffe066"),
-                "PAUSED must replace the week progression bar in yellow.");
-            Require(calendarLabel.HorizontalAlignment == HorizontalAlignment.Center &&
-                Descendants(host).OfType<Label>().Single(l => l.Name == "Calendar").HorizontalAlignment == HorizontalAlignment.Left &&
-                Descendants(host).OfType<Label>().Single(l => l.Name == "Population").HorizontalAlignment == HorizontalAlignment.Left,
-                "Calendar, week bar and population alignment is incorrect.");
-            Require(!Descendants(host).Any(node => node.Name == "ClockStatus"),
-                "The top header must not show a speed indicator.");
-            Require(populationHeader.GetParent() is TerminalFrame { Name: var popFrame } &&
-                popFrame == "PopulationHeaderFrame" &&
-                budgetHeader.GetParent() is TerminalFrame { Name: var fundsFrame } &&
-                fundsFrame == "FundsHeaderFrame" && populationHeader.GetParent() != budgetHeader.GetParent() &&
-                !budgetHeader.Text.Contains("TREASURY", StringComparison.Ordinal),
-                "POP and funds must use separate frames and omit the TREASURY label.");
-            populationHeader.EmitSignal(Control.SignalName.GuiInput,
-                new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = true });
-            await Frames();
-            Require(session.Prompt is null && populationHeader.MouseDefaultCursorShape != Control.CursorShape.PointingHand &&
-                !populationHeader.TooltipText.Contains("Open city menu", StringComparison.Ordinal),
-                "The POP header must be display-only and not open the city menu.");
-            Require(dateHeader.GetParent<HBoxContainer>().GetThemeConstant("separation") == 12,
-                "The time section must have increased spacing between its fields.");
-            if (session.Game.Config.FullRules)
-                Require(budgetHeader.Text.Contains(
-                    $" [{(session.Game.Finance.Net > 0 ? "+" : "")}{Fmt.CompactMoney(session.Game.Finance.Net)}]",
-                    StringComparison.Ordinal) && !budgetHeader.Text.Contains("/wk", StringComparison.Ordinal),
-                    "Weekly gold must use brackets, omit the weekly suffix and show no plus for zero.");
-            var reportsHeader = headerLabels.Single(label => label.Name == "ReportsHeader");
-            var viewsHeader = headerLabels.Single(label => label.Name == "ViewsHeader");
-            viewsHeader.EmitSignal(Control.SignalName.GuiInput,
-                new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = true });
-            await Frames();
-            var viewsBar = Descendants(host).OfType<TerminalFrame>().Single(frame => frame.Name == "ViewsBar");
-            Require(viewsBar.IsVisibleInTree() && !viewsBar.JoinAdjacent &&
-                viewsBar.GlobalPosition.IsEqualApprox(host.Map.GlobalPosition) &&
-                host.Map.GetGlobalRect().Encloses(viewsBar.GetGlobalRect()) &&
-                viewsBar.GetChild<ScrollContainer>(0).GetChild(0) is HBoxContainer,
-                "VIEWS must open a horizontal terminal icon bar at the map's top left.");
-            foreach (var overlay in Enum.GetValues<MapOverlay>())
+                ButtonIndex = MouseButton.Left,
+                Pressed = pressed,
+                Position = outsideGuide,
+                GlobalPosition = outsideGuide,
+            }, true);
+        await Frames();
+        Require(session.Prompt is null && beforeGuideDismissal == SaveGameStore.Serialize(session.Game),
+            "Clicking outside Guide must close it without modifying the city.");
+        Require(reportsHeader.Text == "REPORTS" &&
+            reportsHeader.GetParent() is TerminalFrame { Name: var reportsFrameName } &&
+            reportsFrameName == "ReportsHeaderFrame" &&
+            reportsHeader.GetParent().GetIndex() == populationHeader.GetParent().GetIndex() + 2 &&
+            guideHeader.GetParent().GetIndex() == reportsHeader.GetParent().GetIndex() + 1 &&
+            budgetHeader.GetParent().GetIndex() == guideHeader.GetParent().GetIndex() + 1,
+            "GUIDE and REPORTS must have separate frames between population and funds.");
+        reportsHeader.EmitSignal(Control.SignalName.GuiInput,
+            new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = true });
+        await Frames();
+        Require(session.Prompt?.Title == "Weekly Report",
+            "Clicking REPORTS must open the weekly report.");
+        var reportDialog = Descendants(host).OfType<TerminalFrame>()
+            .Single(frame => frame.Name == "CityDialog" && frame.IsVisibleInTree());
+        float reportWidth = Math.Min(720, host.Size.X - host.Map.GetParent<Control>().GlobalPosition.X - 64) + 28;
+        Require(Math.Abs(reportDialog.Size.X - reportWidth) < 1,
+            $"Reports must use a wider, screen-clamped layout: {reportDialog.Size.X} vs {reportWidth}.");
+        Require(!reportDialog.JoinAdjacent &&
+            reportDialog.GetThemeStylebox("panel") is StyleBoxFlat { BgColor: var reportBackground } &&
+            reportBackground == Colors.Black &&
+            Descendants(reportDialog).OfType<MarginContainer>().Single(m => m.Name == "DialogContentMargin")
+                .GetThemeConstant("margin_left") == 2,
+            "Reports must use shared terminal frames and compact equal padding.");
+        VerifyDialogButtonBorders(reportDialog);
+        VerifyMapCenteredDialog(host, reportDialog);
+        var reportScroll = Descendants(reportDialog).OfType<ScrollContainer>()
+            .Single(scroll => scroll.IsVisibleInTree());
+        var scrollbar = reportScroll.GetVScrollBar();
+        foreach (string scrollbarState in new[] { "scroll", "scroll_focus", "grabber", "grabber_highlight", "grabber_pressed" })
+            Require(scrollbar.GetThemeStylebox(scrollbarState) is StyleBoxFlat scrollbarStyle &&
+                scrollbarStyle.CornerRadiusTopLeft == 0 && scrollbarStyle.CornerRadiusTopRight == 0 &&
+                scrollbarStyle.CornerRadiusBottomLeft == 0 && scrollbarStyle.CornerRadiusBottomRight == 0 &&
+                new[] { Side.Left, Side.Top, Side.Right, Side.Bottom }
+                    .All(side => scrollbarStyle.GetBorderWidth(side) == 1),
+                "Report scrollbars must use square terminal tracks and block thumbs in all states.");
+        Require(scrollbar.GetThemeStylebox("grabber_highlight") is StyleBoxFlat { BgColor: var thumbHighlight } &&
+            thumbHighlight == Colors.White, "Terminal scrollbar hover must visibly highlight its thumb.");
+        reportScroll.ScrollVertical = 80;
+        await Frames();
+        Require(scrollbar.Visible ? reportScroll.ScrollVertical > 0 : reportScroll.ScrollVertical == 0,
+            "Report scrolling must follow whether the current tab overflows.");
+        reportScroll.ScrollVertical = 0;
+        await Frames();
+        var reportTables = Descendants(reportDialog).OfType<GridContainer>()
+            .Where(table => table.Name.ToString().StartsWith("ReportTable", StringComparison.Ordinal)).ToArray();
+        var reportSections = ReportTables.Build(session);
+        var sizeProgress = Descendants(reportDialog).OfType<ProgressBar>().Single(bar => bar.Name == "CitySizeProgress");
+        Require(Math.Abs(sizeProgress.Value - CityProgression.SizeProgress(session.Game).Fraction) < 1e-6 &&
+            !sizeProgress.ShowPercentage && reportSections.Count == 1 &&
+            !reportSections.SelectMany(section => section.Rows).Any(row => row[0].Text == "Unlocks"),
+            "Weekly Report must retain city size progress but move milestone unlocks into the guide.");
+        var reportHeaders = Descendants(reportDialog).OfType<TerminalFrame>()
+            .Where(frame => frame.Name.ToString().StartsWith("ReportSectionHeader", StringComparison.Ordinal)).ToArray();
+        Require(reportHeaders.Length == reportSections.Count &&
+            reportHeaders.Select((frame, index) => !frame.JoinAdjacent &&
+                frame.GetChild<Label>(0).Text == reportSections[index].Title &&
+                frame.GetThemeStylebox("panel") is StyleBoxFlat { BgColor: var background } &&
+                background == Colors.Black).All(valid => valid),
+            "Every report subheader must use the shared closed double-white terminal frame.");
+        Require(reportTables.Length == reportSections.Count,
+            "Reports must render every summary, zone and milestone as a table.");
+        for (int section = 0; section < reportTables.Length; section++)
+        {
+            var table = reportTables[section];
+            var values = reportSections[section].Rows.SelectMany(row => row).ToArray();
+            Require(table.Columns == 2 && table.GetChildCount() == values.Length &&
+                table.GetThemeConstant("h_separation") == 0 && table.GetThemeConstant("v_separation") == 0,
+                "Report label/value cells must form a connected terminal grid.");
+            for (int cellIndex = 0; cellIndex < values.Length; cellIndex++)
             {
-                var viewButton = Descendants(viewsBar).OfType<Button>().Single(button => button.Name == $"View{overlay}");
-                Require(viewButton.Text.Length == 0 &&
-                    viewButton.GetChild<ConstructionIcon>(0) is { Overlay: var renderedOverlay } &&
-                    renderedOverlay == overlay,
-                    "Every VIEWS option must use rendered artwork for its specific overlay, not a text glyph.");
-                viewButton.EmitSignal(Button.SignalName.Pressed);
-                await Frames();
-                Require(session.Overlay == overlay && viewsBar.IsVisibleInTree(),
-                    "Clicking each view icon must select the overlay without closing the bar.");
-                Require(host.Map.Grid.VectorRoads,
-                    "Selecting an overlay must retain rendered roads instead of terminal road glyphs.");
+                var cell = table.GetChild<PanelContainer>(cellIndex);
+                var label = cell.GetChild<Label>(0);
+                if (cellIndex % 2 == 0)
+                    Require(label.GetThemeFont("font").GetStringSize(label.Text,
+                        fontSize: label.GetThemeFontSize("font_size")).X <= label.Size.X + 0.01f,
+                        $"Report label '{label.Text}' must fit on one line.");
+                Require(label.Text == values[cellIndex].Text &&
+                    label.GetThemeColor("font_color") == new Color(values[cellIndex].Color.R / 255f,
+                        values[cellIndex].Color.G / 255f, values[cellIndex].Color.B / 255f) &&
+                    cell.GetThemeStylebox("panel") is StyleBoxFlat style && style.BorderColor == Colors.White &&
+                    style.BorderWidthLeft == (cellIndex % 2 == 0 ? 1 : 0) &&
+                    style.BorderWidthTop == (cellIndex < 2 ? 1 : 0) &&
+                    style.BorderWidthRight == 1 && style.BorderWidthBottom == 1,
+                    "Reports must preserve their data/colors and share City sidebar grid styling.");
             }
-            await KeyEvent(Key.Escape);
-            Require(!viewsBar.IsVisibleInTree() && session.Prompt is null &&
-                session.Overlay == MapOverlay.Happiness,
-                "Esc must close VIEWS without clearing its overlay or opening Game Menu.");
-            viewsHeader.EmitSignal(Control.SignalName.GuiInput,
-                new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = true });
-            await Frames();
-            await Frames();
-            host.GetViewport().PushInput(new InputEventMouseButton { ButtonIndex = MouseButton.Left,
-                Pressed = true, Position = host.Size - Vector2.One, GlobalPosition = host.Size - Vector2.One }, true);
-            host.GetViewport().PushInput(new InputEventMouseButton { ButtonIndex = MouseButton.Left,
-                Pressed = false, Position = host.Size - Vector2.One, GlobalPosition = host.Size - Vector2.One }, true);
-            await Frames();
-            Require(viewsBar.IsVisibleInTree() && session.Overlay == MapOverlay.Happiness && session.Prompt is null,
-                "Clicking away must keep VIEWS active.");
-            viewsHeader.EmitSignal(Control.SignalName.GuiInput,
-                new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = true });
-            await Frames();
-            Require(!viewsBar.IsVisibleInTree() && session.Overlay == MapOverlay.Happiness,
-                "Toggling VIEWS must close its bar without clearing the overlay.");
-            session.SetOverlay(MapOverlay.Off);
-            await KeyEvent(Key.O, shift: true);
-            Require(session.Overlay == MapOverlay.Happiness,
-                "Shift+O must restore the most recently selected overlay.");
-            await KeyEvent(Key.O, shift: true);
-            Require(session.Overlay == MapOverlay.Off, "Shift+O must switch overlays off.");
-            var guideHeader = headerLabels.Single(label => label.Name == "GuideHeader");
-            Require(guideHeader.Text == "GUIDE" && guideHeader.GetParent() is TerminalFrame { Name: var guideFrameName } &&
-                guideFrameName == "GuideHeaderFrame", "GUIDE must use a separate terminal header frame.");
-            guideHeader.EmitSignal(Control.SignalName.GuiInput,
-                new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = true });
-            await Frames();
-            Require(session.Prompt is { Title: "TermCity guide", Tabs.Count: 9 },
-                "Clicking GUIDE must open the complete guide.");
-            string beforeGuideDismissal = SaveGameStore.Serialize(session.Game);
-            var guideDialog = Descendants(host).OfType<TerminalFrame>()
-                .Single(frame => frame.Name == "CityDialog" && frame.IsVisibleInTree());
-            var outsideGuide = Vector2.One;
-            Require(!guideDialog.GetGlobalRect().HasPoint(outsideGuide),
-                "Guide dismissal test must click outside its frame.");
-            foreach (bool pressed in new[] { true, false })
-                host.GetViewport().PushInput(new InputEventMouseButton
-                {
-                    ButtonIndex = MouseButton.Left, Pressed = pressed,
-                    Position = outsideGuide, GlobalPosition = outsideGuide,
-                }, true);
-            await Frames();
-            Require(session.Prompt is null && beforeGuideDismissal == SaveGameStore.Serialize(session.Game),
-                "Clicking outside Guide must close it without modifying the city.");
-            Require(reportsHeader.Text == "REPORTS" &&
-                reportsHeader.GetParent() is TerminalFrame { Name: var reportsFrameName } &&
-                reportsFrameName == "ReportsHeaderFrame" &&
-                reportsHeader.GetParent().GetIndex() == populationHeader.GetParent().GetIndex() + 2 &&
-                guideHeader.GetParent().GetIndex() == reportsHeader.GetParent().GetIndex() + 1 &&
-                budgetHeader.GetParent().GetIndex() == guideHeader.GetParent().GetIndex() + 1,
-                "GUIDE and REPORTS must have separate frames between population and funds.");
-            reportsHeader.EmitSignal(Control.SignalName.GuiInput,
-                new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = true });
-            await Frames();
-            Require(session.Prompt?.Title == "Weekly Report",
-                "Clicking REPORTS must open the weekly report.");
-            var reportDialog = Descendants(host).OfType<TerminalFrame>()
-                .Single(frame => frame.Name == "CityDialog" && frame.IsVisibleInTree());
-            float reportWidth = Math.Min(720, host.Size.X - host.Map.GetParent<Control>().GlobalPosition.X - 64) + 28;
-            Require(Math.Abs(reportDialog.Size.X - reportWidth) < 1,
-                $"Reports must use a wider, screen-clamped layout: {reportDialog.Size.X} vs {reportWidth}.");
-            Require(!reportDialog.JoinAdjacent &&
-                reportDialog.GetThemeStylebox("panel") is StyleBoxFlat { BgColor: var reportBackground } &&
-                reportBackground == Colors.Black &&
-                Descendants(reportDialog).OfType<MarginContainer>().Single(m => m.Name == "DialogContentMargin")
-                    .GetThemeConstant("margin_left") == 2,
-                "Reports must use shared terminal frames and compact equal padding.");
-            VerifyDialogButtonBorders(reportDialog);
-            VerifyMapCenteredDialog(host, reportDialog);
-            var reportScroll = Descendants(reportDialog).OfType<ScrollContainer>()
-                .Single(scroll => scroll.IsVisibleInTree());
-            var scrollbar = reportScroll.GetVScrollBar();
-            foreach (string scrollbarState in new[] { "scroll", "scroll_focus", "grabber", "grabber_highlight", "grabber_pressed" })
-                Require(scrollbar.GetThemeStylebox(scrollbarState) is StyleBoxFlat scrollbarStyle &&
-                    scrollbarStyle.CornerRadiusTopLeft == 0 && scrollbarStyle.CornerRadiusTopRight == 0 &&
-                    scrollbarStyle.CornerRadiusBottomLeft == 0 && scrollbarStyle.CornerRadiusBottomRight == 0 &&
-                    new[] { Side.Left, Side.Top, Side.Right, Side.Bottom }
-                        .All(side => scrollbarStyle.GetBorderWidth(side) == 1),
-                    "Report scrollbars must use square terminal tracks and block thumbs in all states.");
-            Require(scrollbar.GetThemeStylebox("grabber_highlight") is StyleBoxFlat { BgColor: var thumbHighlight } &&
-                thumbHighlight == Colors.White, "Terminal scrollbar hover must visibly highlight its thumb.");
-            reportScroll.ScrollVertical = 80;
-            await Frames();
-            Require(scrollbar.Visible ? reportScroll.ScrollVertical > 0 : reportScroll.ScrollVertical == 0,
-                "Report scrolling must follow whether the current tab overflows.");
-            reportScroll.ScrollVertical = 0;
-            await Frames();
-            var reportTables = Descendants(reportDialog).OfType<GridContainer>()
-                .Where(table => table.Name.ToString().StartsWith("ReportTable", StringComparison.Ordinal)).ToArray();
-            var reportSections = ReportTables.Build(session);
-            var sizeProgress = Descendants(reportDialog).OfType<ProgressBar>().Single(bar => bar.Name == "CitySizeProgress");
-            Require(Math.Abs(sizeProgress.Value - CityProgression.SizeProgress(session.Game).Fraction) < 1e-6 &&
-                !sizeProgress.ShowPercentage && reportSections.Count == 1 &&
-                !reportSections.SelectMany(section => section.Rows).Any(row => row[0].Text == "Unlocks"),
-                "Weekly Report must retain city size progress but move milestone unlocks into the guide.");
-            var reportHeaders = Descendants(reportDialog).OfType<TerminalFrame>()
-                .Where(frame => frame.Name.ToString().StartsWith("ReportSectionHeader", StringComparison.Ordinal)).ToArray();
-            Require(reportHeaders.Length == reportSections.Count &&
-                reportHeaders.Select((frame, index) => !frame.JoinAdjacent &&
-                    frame.GetChild<Label>(0).Text == reportSections[index].Title &&
-                    frame.GetThemeStylebox("panel") is StyleBoxFlat { BgColor: var background } &&
-                    background == Colors.Black).All(valid => valid),
-                "Every report subheader must use the shared closed double-white terminal frame.");
-            Require(reportTables.Length == reportSections.Count,
-                "Reports must render every summary, zone and milestone as a table.");
-            for (int section = 0; section < reportTables.Length; section++)
-            {
-                var table = reportTables[section];
-                var values = reportSections[section].Rows.SelectMany(row => row).ToArray();
-                Require(table.Columns == 2 && table.GetChildCount() == values.Length &&
-                    table.GetThemeConstant("h_separation") == 0 && table.GetThemeConstant("v_separation") == 0,
-                    "Report label/value cells must form a connected terminal grid.");
-                for (int cellIndex = 0; cellIndex < values.Length; cellIndex++)
-                {
-                    var cell = table.GetChild<PanelContainer>(cellIndex);
-                    var label = cell.GetChild<Label>(0);
-                    if (cellIndex % 2 == 0)
-                        Require(label.GetThemeFont("font").GetStringSize(label.Text,
-                            fontSize: label.GetThemeFontSize("font_size")).X <= label.Size.X + 0.01f,
-                            $"Report label '{label.Text}' must fit on one line.");
-                    Require(label.Text == values[cellIndex].Text &&
-                        label.GetThemeColor("font_color") == new Color(values[cellIndex].Color.R / 255f,
-                            values[cellIndex].Color.G / 255f, values[cellIndex].Color.B / 255f) &&
-                        cell.GetThemeStylebox("panel") is StyleBoxFlat style && style.BorderColor == Colors.White &&
-                        style.BorderWidthLeft == (cellIndex % 2 == 0 ? 1 : 0) &&
-                        style.BorderWidthTop == (cellIndex < 2 ? 1 : 0) &&
-                        style.BorderWidthRight == 1 && style.BorderWidthBottom == 1,
-                        "Reports must preserve their data/colors and share City sidebar grid styling.");
-                }
-            }
-            Require(Descendants(reportDialog).OfType<Button>().Single(button => button is MnemonicButton)
-                .GetParent() is HBoxContainer { Alignment: BoxContainer.AlignmentMode.End },
-                "Reports Close action must sit at the bottom right.");
-            Require(session.Prompt!.Tabs!.Select(tab => tab.Title).SequenceEqual(
-                new[] { "Overview", "Population", "Economy", "Services", "Growth", "Food & Seasons", "Events" }),
-                "Weekly Report must expose its seven reporting tabs.");
-            for (int tab = 1; tab < 7; tab++)
-            {
-                await KeyEvent(Key.Right);
-                Require(session.Prompt?.ActiveTab == tab && session.Prompt.Title == "Weekly Report",
-                    "Arrow keys must select each report tab without changing the city.");
-                var tables = Descendants(reportDialog).OfType<GridContainer>()
-                    .Where(table => table.Name.ToString().StartsWith("ReportTable", StringComparison.Ordinal)).ToArray();
-                var groups = ReportTables.Build(session);
-                Require(tables.Length == groups.Count, "Every report tab must render its own table groups.");
-                for (int group = 0; group < groups.Count; group++)
-                    Require(Descendants(tables[group]).OfType<Label>().Select(label => label.Text)
-                        .SequenceEqual(groups[group].Rows.SelectMany(row => row).Select(cell => cell.Text)),
-                        "Report tab tables must display their actual data.");
-                Require(!Descendants(reportDialog).OfType<ProgressBar>().Any(bar => bar.Name == "CitySizeProgress"),
-                    "City-size progress belongs only on the Overview tab.");
-                VerifyMapCenteredDialog(host, reportDialog);
-                VerifyDialogButtonBorders(reportDialog);
-                if (tab == 3 && session.Game.Config.FullRules)
-                {
-                    var serviceScroll = Descendants(reportDialog).OfType<ScrollContainer>()
-                        .Single(scroll => scroll.IsVisibleInTree());
-                    serviceScroll.ScrollVertical = 80;
-                    await Frames();
-                    Require(serviceScroll.ScrollVertical > 0, "The detailed Services report must remain scrollable.");
-                }
-            }
+        }
+        Require(Descendants(reportDialog).OfType<Button>().Single(button => button is MnemonicButton)
+            .GetParent() is HBoxContainer { Alignment: BoxContainer.AlignmentMode.End },
+            "Reports Close action must sit at the bottom right.");
+        Require(session.Prompt!.Tabs!.Select(tab => tab.Title).SequenceEqual(
+            new[] { "Overview", "Population", "Economy", "Services", "Growth", "Food & Seasons", "Events" }),
+            "Weekly Report must expose its seven reporting tabs.");
+        for (int tab = 1; tab < 7; tab++)
+        {
             await KeyEvent(Key.Right);
-            Require(session.Prompt?.ActiveTab == 0, "Report tabs must wrap back to Overview.");
-            await KeyEvent(Key.Escape);
-            Require(!Descendants(host).OfType<PauseDialog>().Any() &&
-                !Descendants(host).OfType<PauseStage>().Any(),
-                "Paused gameplay must not create an overlay or animation.");
-            var pauseHeaderBounds = headerLabels.Select(label => label.GetGlobalRect()).ToArray();
-            string beforePause = SaveGameStore.Serialize(session.Game);
-            int beforePauseRebuilds = host.Map.Grid.Rebuilds;
-            host.GetWindow().EmitSignal(Window.SignalName.FocusEntered);
-            host._Process(0.5);
-            Require(beforePause == SaveGameStore.Serialize(session.Game) && beforePauseRebuilds == host.Map.Grid.Rebuilds,
-                "Paused updates must not advance gameplay or rebuild the map.");
-            host.GetWindow().EmitSignal(Window.SignalName.FocusExited);
-            host._Process(1);
-            Require(calendarLabel.Text == "[PAUSED]", "Focus changes must retain the paused header.");
-            host.GetWindow().EmitSignal(Window.SignalName.FocusEntered);
-            await KeyEvent(Key.Space);
-            Require(!session.Game.Paused &&
-                calendarLabel.Text == Fmt.WeekBar(session.Game.Day, session.Game.Config.DaysPerWeek) &&
-                calendarLabel.GetThemeColor("font_color") == new Color("#70d7ff"),
-                "Space must resume and restore the week progression bar.");
-            Require(headerLabels.Select(label => label.GetGlobalRect()).SequenceEqual(pauseHeaderBounds),
-                "Pause/resume must not shift the header layout.");
-            foreach (var dialogKey in new[] { Key.F1, Key.F3, Key.F6, Key.F7, Key.F8, Key.Escape })
+            Require(session.Prompt?.ActiveTab == tab && session.Prompt.Title == "Weekly Report",
+                "Arrow keys must select each report tab without changing the city.");
+            var tables = Descendants(reportDialog).OfType<GridContainer>()
+                .Where(table => table.Name.ToString().StartsWith("ReportTable", StringComparison.Ordinal)).ToArray();
+            var groups = ReportTables.Build(session);
+            Require(tables.Length == groups.Count, "Every report tab must render its own table groups.");
+            for (int group = 0; group < groups.Count; group++)
+                Require(Descendants(tables[group]).OfType<Label>().Select(label => label.Text)
+                    .SequenceEqual(groups[group].Rows.SelectMany(row => row).Select(cell => cell.Text)),
+                    "Report tab tables must display their actual data.");
+            Require(!Descendants(reportDialog).OfType<ProgressBar>().Any(bar => bar.Name == "CitySizeProgress"),
+                "City-size progress belongs only on the Overview tab.");
+            VerifyMapCenteredDialog(host, reportDialog);
+            VerifyDialogButtonBorders(reportDialog);
+            if (tab == 3 && session.Game.Config.FullRules)
             {
-                await KeyEvent(dialogKey);
-                Require(session.Prompt is not null && !session.Game.Paused &&
-                    calendarLabel.Text == "[PAUSED]" && calendarLabel.GetThemeColor("font_color") == new Color("#ffe066"),
-                    $"{dialogKey} must display the paused indicator while its dialog suspends a running game.");
-                double suspendedDay = session.Game.ElapsedDays;
-                host._Process(0.25);
-                Require(session.Game.ElapsedDays == suspendedDay, "Dialog must not advance the calendar.");
-                var pausedPrompt = session.Prompt;
-                await KeyEvent(Key.Space);
-                Require(!session.ClockSuspended && ReferenceEquals(session.Prompt, pausedPrompt) &&
-                    calendarLabel.Text != "[PAUSED]",
-                    "Space must explicitly resume time without closing the current dialog.");
-                await KeyEvent(Key.Space);
-                Require(session.ClockSuspended && session.Game.Paused && ReferenceEquals(session.Prompt, pausedPrompt),
-                    "Space must pause from a dialog without activating its focused action.");
-                session.ClosePrompt();
-                session.TogglePause();
+                var serviceScroll = Descendants(reportDialog).OfType<ScrollContainer>()
+                    .Single(scroll => scroll.IsVisibleInTree());
+                serviceScroll.ScrollVertical = 80;
                 await Frames();
-                Require(!session.Game.Paused &&
-                    calendarLabel.Text == Fmt.WeekBar(session.Game.Day, session.Game.Config.DaysPerWeek),
-                    "Closing a dialog must restore the running progression indicator.");
+                Require(serviceScroll.ScrollVertical > 0, "The detailed Services report must remain scrollable.");
             }
-            session.PreviewRoad();
-            await Frames();
-            Require(calendarLabel.Text == "[PAUSED]" && !session.Game.Paused,
-                "Placement previews must also show the suspended-clock indicator.");
-            await KeyEvent(Key.P);
-            Require(!session.ClockSuspended && session.Preview is not null,
-                "P must resume while preserving a placement preview.");
-            await KeyEvent(Key.P);
-            Require(session.ClockSuspended && session.Preview is not null,
-                "P must pause again without cancelling placement.");
-            session.CancelPreview();
+        }
+        await KeyEvent(Key.Right);
+        Require(session.Prompt?.ActiveTab == 0, "Report tabs must wrap back to Overview.");
+        await KeyEvent(Key.Escape);
+        Require(!Descendants(host).OfType<PauseDialog>().Any() &&
+            !Descendants(host).OfType<PauseStage>().Any(),
+            "Paused gameplay must not create an overlay or animation.");
+        var pauseHeaderBounds = headerLabels.Select(label => label.GetGlobalRect()).ToArray();
+        string beforePause = SaveGameStore.Serialize(session.Game);
+        int beforePauseRebuilds = host.Map.Grid.Rebuilds;
+        host.GetWindow().EmitSignal(Window.SignalName.FocusEntered);
+        host._Process(0.5);
+        Require(beforePause == SaveGameStore.Serialize(session.Game) && beforePauseRebuilds == host.Map.Grid.Rebuilds,
+            "Paused updates must not advance gameplay or rebuild the map.");
+        host.GetWindow().EmitSignal(Window.SignalName.FocusExited);
+        host._Process(1);
+        Require(calendarLabel.Text == "[PAUSED]", "Focus changes must retain the paused header.");
+        host.GetWindow().EmitSignal(Window.SignalName.FocusEntered);
+        await KeyEvent(Key.Space);
+        Require(!session.Game.Paused &&
+            calendarLabel.Text == Fmt.WeekBar(session.Game.Day, session.Game.Config.DaysPerWeek) &&
+            calendarLabel.GetThemeColor("font_color") == new Color("#70d7ff"),
+            "Space must resume and restore the week progression bar.");
+        Require(headerLabels.Select(label => label.GetGlobalRect()).SequenceEqual(pauseHeaderBounds),
+            "Pause/resume must not shift the header layout.");
+        foreach (var dialogKey in new[] { Key.F1, Key.F3, Key.F6, Key.F7, Key.F8, Key.Escape })
+        {
+            await KeyEvent(dialogKey);
+            Require(session.Prompt is not null && !session.Game.Paused &&
+                calendarLabel.Text == "[PAUSED]" && calendarLabel.GetThemeColor("font_color") == new Color("#ffe066"),
+                $"{dialogKey} must display the paused indicator while its dialog suspends a running game.");
+            double suspendedDay = session.Game.ElapsedDays;
+            host._Process(0.25);
+            Require(session.Game.ElapsedDays == suspendedDay, "Dialog must not advance the calendar.");
+            var pausedPrompt = session.Prompt;
+            await KeyEvent(Key.Space);
+            Require(!session.ClockSuspended && ReferenceEquals(session.Prompt, pausedPrompt) &&
+                calendarLabel.Text != "[PAUSED]",
+                "Space must explicitly resume time without closing the current dialog.");
+            await KeyEvent(Key.Space);
+            Require(session.ClockSuspended && session.Game.Paused && ReferenceEquals(session.Prompt, pausedPrompt),
+                "Space must pause from a dialog without activating its focused action.");
+            session.ClosePrompt();
             session.TogglePause();
             await Frames();
-            await KeyEvent(Key.P);
-            Require(session.Game.Paused && calendarLabel.Text == "[PAUSED]",
-                "P must pause without obstructing gameplay.");
-            await KeyEvent(Key.Escape);
-            Require(session.Game.Paused && session.Prompt?.Title == "GAME MENU",
-                "Escape while paused must open Game Menu without unpausing.");
-            await KeyEvent(Key.Escape);
-            session.ShowSessionMenu();
-            await Frames();
-            Require(calendarLabel.Text == "[PAUSED]", "Other menus must retain the paused header.");
-            host._Process(0.5);
-            await KeyEvent(Key.Escape);
-            Require(session.Game.Paused && session.Prompt is null &&
-                !Descendants(host).OfType<PauseDialog>().Any(),
-                "Closing a menu while paused must leave the map unobstructed.");
-            session.ShowMilestone(0);
-            await Frames();
-            var growthDialog = Descendants(host).OfType<TerminalFrame>()
-                .Single(frame => frame.Name == "CityDialog" && frame.IsVisibleInTree());
-            float growthWidth = Math.Min(720,
-                host.Size.X - host.Map.GetParent<Control>().GlobalPosition.X - 64) + 28;
-            Require(Math.Abs(growthDialog.Size.X - growthWidth) < 1,
-                "City Grew! must have a wider, screen-clamped layout.");
-            VerifyMapCenteredDialog(host, growthDialog);
-            VerifyDialogButtonBorders(growthDialog);
-            var growthTitle = Descendants(growthDialog).OfType<Label>()
-                .Single(label => label.Text == "Your City Grew!");
-            Require(growthTitle.HorizontalAlignment == HorizontalAlignment.Center &&
-                growthTitle.Modulate == new Color("#ffe066"),
-                "Growth title must be centered and yellow.");
-            Require(Descendants(growthDialog).OfType<TerminalFrame>().Single(frame => frame.Name == "ReportSectionHeader0")
-                .GetChild<Label>(0).Modulate == new Color("#88ee99") &&
-                Descendants(growthDialog).OfType<Label>().Single(label => label.Name == "NewServicesHeader").Text == "New Services",
-                "New city size must be green, with a New Services header before unlocked buildings.");
-            var citySizeHeading = Descendants(growthDialog).OfType<TerminalFrame>()
-                .Single(frame => frame.Name == "ReportSectionHeader0").GetChild<Label>(0);
-            var newServicesHeading = Descendants(growthDialog).OfType<Label>().Single(label => label.Name == "NewServicesHeader");
-            Require(citySizeHeading.HorizontalAlignment == HorizontalAlignment.Center &&
-                citySizeHeading.GetThemeFontSize("font_size") == 24 &&
-                newServicesHeading.GetThemeFontSize("font_size") == 24,
-                "City size and New Services must use matching enlarged 24-point headings.");
-            var unlockedBuildings = session.Game.Map.Content.Buildings.Where(building => building.PlayerPlaceable &&
-                building.MinPopulation > 0 && CityProgression.RequiredPopulation(building) == 100).ToArray();
-            var milestoneArt = Descendants(growthDialog).OfType<Label>().Where(label => label.Name == "MilestoneBuildingArt").ToArray();
-            Require(milestoneArt.Length == unlockedBuildings.Length,
-                "Every newly unlocked building must show its artwork.");
-            foreach (var building in unlockedBuildings)
-            {
-                var art = milestoneArt.Single(label => label.TooltipText == building.Name);
-                Require(art.Text == (building.FootprintArt.Count > 0
-                        ? string.Join("\n", building.FootprintArt) : building.Glyphs[0]) &&
-                    art.GetParent().GetParent<HBoxContainer>().GetChild<Control>(0).GetGlobalRect().End.X <= art.GlobalPosition.X,
-                    "Building artwork must match its footprint or icon and sit to the right of its feature table.");
-            }
-            var growthScroll = Descendants(growthDialog).OfType<ScrollContainer>().Single(control => control.IsVisibleInTree());
-            Require(growthDialog.ClipContents && growthScroll.ClipContents,
-                "Growth dialog and scrolling viewport must clip overflowing frames and text.");
-            foreach (string scrollbarState in new[] { "scroll", "grabber", "grabber_highlight", "grabber_pressed" })
-                Require(growthScroll.GetVScrollBar().GetThemeStylebox(scrollbarState) is StyleBoxFlat barStyle &&
-                    barStyle.CornerRadiusTopLeft == 0 && barStyle.CornerRadiusTopRight == 0 &&
-                    barStyle.BorderWidthLeft == 1 && barStyle.BorderWidthRight == 1,
-                    "Growth scrollbar must use the shared square terminal track and thumb styling.");
-            Require(session.Prompt!.Title == "Your City Grew!" && session.Game.Paused &&
-                Descendants(growthDialog).OfType<GridContainer>().Count() == MilestoneReport.Build(session.Game, 0).Groups.Count,
-                "Milestone dialog must pause and render all newly unlocked building feature tables.");
-            var previousMilestone = Descendants(growthDialog).OfType<Button>().Single(button => button.Text.StartsWith("Previous", StringComparison.Ordinal));
-            Require(previousMilestone.Disabled, "Previous must be disabled at the first milestone.");
-            session.SelectPrompt(1);
-            await Frames();
-            Require(session.Prompt?.ActiveTab == 1 && session.Prompt.Title == "Your City Grew!",
-                "Next must browse the next milestone without leaving the announcement.");
-            session.SelectPrompt(0);
-            await Frames();
-            Require(session.Prompt?.ActiveTab == 0, "Previous must return to the newly reached milestone.");
-            await KeyEvent(Key.Escape);
+            Require(!session.Game.Paused &&
+                calendarLabel.Text == Fmt.WeekBar(session.Game.Day, session.Game.Config.DaysPerWeek),
+                "Closing a dialog must restore the running progression indicator.");
+        }
+        session.PreviewRoad();
+        await Frames();
+        Require(calendarLabel.Text == "[PAUSED]" && !session.Game.Paused,
+            "Placement previews must also show the suspended-clock indicator.");
+        await KeyEvent(Key.P);
+        Require(!session.ClockSuspended && session.Preview is not null,
+            "P must resume while preserving a placement preview.");
+        await KeyEvent(Key.P);
+        Require(session.ClockSuspended && session.Preview is not null,
+            "P must pause again without cancelling placement.");
+        session.CancelPreview();
+        session.TogglePause();
+        await Frames();
+        await KeyEvent(Key.P);
+        Require(session.Game.Paused && calendarLabel.Text == "[PAUSED]",
+            "P must pause without obstructing gameplay.");
+        await KeyEvent(Key.Escape);
+        Require(session.Game.Paused && session.Prompt?.Title == "GAME MENU",
+            "Escape while paused must open Game Menu without unpausing.");
+        await KeyEvent(Key.Escape);
+        session.ShowSessionMenu();
+        await Frames();
+        Require(calendarLabel.Text == "[PAUSED]", "Other menus must retain the paused header.");
+        host._Process(0.5);
+        await KeyEvent(Key.Escape);
+        Require(session.Game.Paused && session.Prompt is null &&
+            !Descendants(host).OfType<PauseDialog>().Any(),
+            "Closing a menu while paused must leave the map unobstructed.");
+        session.ShowMilestone(0);
+        await Frames();
+        var growthDialog = Descendants(host).OfType<TerminalFrame>()
+            .Single(frame => frame.Name == "CityDialog" && frame.IsVisibleInTree());
+        float growthWidth = Math.Min(720,
+            host.Size.X - host.Map.GetParent<Control>().GlobalPosition.X - 64) + 28;
+        Require(Math.Abs(growthDialog.Size.X - growthWidth) < 1,
+            "City Grew! must have a wider, screen-clamped layout.");
+        VerifyMapCenteredDialog(host, growthDialog);
+        VerifyDialogButtonBorders(growthDialog);
+        var growthTitle = Descendants(growthDialog).OfType<Label>()
+            .Single(label => label.Text == "Your City Grew!");
+        Require(growthTitle.HorizontalAlignment == HorizontalAlignment.Center &&
+            growthTitle.Modulate == new Color("#ffe066"),
+            "Growth title must be centered and yellow.");
+        Require(Descendants(growthDialog).OfType<TerminalFrame>().Single(frame => frame.Name == "ReportSectionHeader0")
+            .GetChild<Label>(0).Modulate == new Color("#88ee99") &&
+            Descendants(growthDialog).OfType<Label>().Single(label => label.Name == "NewServicesHeader").Text == "New Services",
+            "New city size must be green, with a New Services header before unlocked buildings.");
+        var citySizeHeading = Descendants(growthDialog).OfType<TerminalFrame>()
+            .Single(frame => frame.Name == "ReportSectionHeader0").GetChild<Label>(0);
+        var newServicesHeading = Descendants(growthDialog).OfType<Label>().Single(label => label.Name == "NewServicesHeader");
+        Require(citySizeHeading.HorizontalAlignment == HorizontalAlignment.Center &&
+            citySizeHeading.GetThemeFontSize("font_size") == 24 &&
+            newServicesHeading.GetThemeFontSize("font_size") == 24,
+            "City size and New Services must use matching enlarged 24-point headings.");
+        var unlockedBuildings = session.Game.Map.Content.Buildings.Where(building => building.PlayerPlaceable &&
+            building.MinPopulation > 0 && CityProgression.RequiredPopulation(building) == 100).ToArray();
+        var milestoneArt = Descendants(growthDialog).OfType<Label>().Where(label => label.Name == "MilestoneBuildingArt").ToArray();
+        Require(milestoneArt.Length == unlockedBuildings.Length,
+            "Every newly unlocked building must show its artwork.");
+        foreach (var building in unlockedBuildings)
+        {
+            var art = milestoneArt.Single(label => label.TooltipText == building.Name);
+            Require(art.Text == (building.FootprintArt.Count > 0
+                    ? string.Join("\n", building.FootprintArt) : building.Glyphs[0]) &&
+                art.GetParent().GetParent<HBoxContainer>().GetChild<Control>(0).GetGlobalRect().End.X <= art.GlobalPosition.X,
+                "Building artwork must match its footprint or icon and sit to the right of its feature table.");
+        }
+        var growthScroll = Descendants(growthDialog).OfType<ScrollContainer>().Single(control => control.IsVisibleInTree());
+        Require(growthDialog.ClipContents && growthScroll.ClipContents,
+            "Growth dialog and scrolling viewport must clip overflowing frames and text.");
+        foreach (string scrollbarState in new[] { "scroll", "grabber", "grabber_highlight", "grabber_pressed" })
+            Require(growthScroll.GetVScrollBar().GetThemeStylebox(scrollbarState) is StyleBoxFlat barStyle &&
+                barStyle.CornerRadiusTopLeft == 0 && barStyle.CornerRadiusTopRight == 0 &&
+                barStyle.BorderWidthLeft == 1 && barStyle.BorderWidthRight == 1,
+                "Growth scrollbar must use the shared square terminal track and thumb styling.");
+        Require(session.Prompt!.Title == "Your City Grew!" && session.Game.Paused &&
+            Descendants(growthDialog).OfType<GridContainer>().Count() == MilestoneReport.Build(session.Game, 0).Groups.Count,
+            "Milestone dialog must pause and render all newly unlocked building feature tables.");
+        var previousMilestone = Descendants(growthDialog).OfType<Button>().Single(button => button.Text.StartsWith("Previous", StringComparison.Ordinal));
+        Require(previousMilestone.Disabled, "Previous must be disabled at the first milestone.");
+        session.SelectPrompt(1);
+        await Frames();
+        Require(session.Prompt?.ActiveTab == 1 && session.Prompt.Title == "Your City Grew!",
+            "Next must browse the next milestone without leaving the announcement.");
+        session.SelectPrompt(0);
+        await Frames();
+        Require(session.Prompt?.ActiveTab == 0, "Previous must return to the newly reached milestone.");
+        await KeyEvent(Key.Escape);
 
         var nameLabel = Descendants(host).OfType<Label>().Single(l => l.Name == "CityNameDisplay");
         var editor = Descendants(host).OfType<LineEdit>().Single(l => l.Name == "CityNameEditor");
@@ -607,7 +1969,7 @@ internal static class GodotSmoke
         {
             editor.CaretBlink = false;
             await Frames();
-            await host.ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+            await RenderedFrame(host);
             using var image = host.GetViewport().GetTexture().GetImage();
             var scale = new Vector2(image.GetWidth() / host.Size.X, image.GetHeight() / host.Size.Y);
             float caretWidth = editor.GetThemeConstant("caret_width");
@@ -751,7 +2113,8 @@ internal static class GodotSmoke
             "Game menu must use uppercase title/actions/options without descriptions.");
         host.GetViewport().PushInput(new InputEventMouseMotion
         {
-            Position = Vector2.Zero, GlobalPosition = Vector2.Zero,
+            Position = Vector2.Zero,
+            GlobalPosition = Vector2.Zero,
         }, true);
         await Frames();
         Require(host.GetViewport().GuiGetFocusOwner() == menuCancel,
@@ -833,7 +2196,8 @@ internal static class GodotSmoke
         var pathPointer = savePathLabel.GetGlobalRect().GetCenter();
         host.GetViewport().PushInput(new InputEventMouseMotion
         {
-            Position = pathPointer, GlobalPosition = pathPointer,
+            Position = pathPointer,
+            GlobalPosition = pathPointer,
         }, true);
         await Frames();
         var saveDialog = Descendants(host).OfType<PanelContainer>().Single(panel => panel.Name == "CityDialog");
@@ -1043,6 +2407,8 @@ internal static class GodotSmoke
         Require(session.Prompt?.Title == "Load city", "Native Escape did not return from the path dialog to the load menu.");
         await KeyEvent(Key.Escape);
         Require(session.Prompt is null, "Native Escape did not close the root load menu.");
+        bool pausedBeforeCancel = session.Game.Paused;
+        session.Game.Paused = true;
         string beforeCancel = SaveGameStore.Serialize(session.Game);
         session.PreviewDemolish();
         await Frames();
@@ -1052,6 +2418,7 @@ internal static class GodotSmoke
         await KeyEvent(Key.Enter);
         Require(session.Preview is null, "Preview Enter did not select the focused cancel button.");
         Require(beforeCancel == SaveGameStore.Serialize(session.Game), "Focused cancel changed the city.");
+        session.Game.Paused = pausedBeforeCancel;
         session.ShowSessionMenu();
         int reportChoice = session.Prompt!.Choices.ToList().FindIndex(choice => choice.Label == "Report");
         var reportShortcut = session.Prompt.Shortcuts[reportChoice];
@@ -1087,8 +2454,11 @@ internal static class GodotSmoke
         foreach (bool pressed in new[] { true, false })
             host.GetViewport().PushInput(new InputEventMouseButton
             {
-                ButtonIndex = MouseButton.Left, Pressed = pressed, ShiftPressed = true,
-                Position = helpClick, GlobalPosition = helpClick,
+                ButtonIndex = MouseButton.Left,
+                Pressed = pressed,
+                ShiftPressed = true,
+                Position = helpClick,
+                GlobalPosition = helpClick,
             }, true);
         await Frames();
         Require(ReferenceEquals(servicePrompt, session.Prompt) && session.Preview is null &&
@@ -1114,13 +2484,16 @@ internal static class GodotSmoke
         await KeyEvent(Key.Escape);
         Require(ReferenceEquals(servicePrompt, session.Prompt), "Help must preserve placement menu history.");
         for (int index = 0; index < session.Prompt!.Shortcuts.Count; index++)
-            if (session.Prompt.Shortcuts[index].Shift) { shiftedChoice = index; break; }
+            if (session.Prompt.Shortcuts[index].Shift &&
+                session.Game.Map.Content.Buildings.Find(session.Prompt.Choices[index].Label) is { } shortcutBuilding &&
+                CityProgression.IsUnlocked(session.Game, shortcutBuilding))
+            { shiftedChoice = index; break; }
         if (shiftedChoice >= 0)
         {
             var shortcut = session.Prompt.Shortcuts[shiftedChoice];
             string buildingName = session.Prompt.Choices[shiftedChoice].Label;
             await KeyEvent((Key)shortcut.Letter, shift: true);
-            Require(session.Preview?.Building?.Name == buildingName, "Shift mnemonic selected the wrong service building.");
+            Require(session.Preview?.Building?.Name == buildingName, "Shift mnemonic selected the wrong unlocked service building.");
             await KeyEvent(Key.Escape);
             Require(session.Prompt?.Title == "Service buildings" && session.Prompt.SelectedIndex == shiftedChoice,
                 "Preview cancellation did not restore the service menu and focus.");
@@ -1137,8 +2510,12 @@ internal static class GodotSmoke
         {
             host.GetViewport().PushInput(new InputEventPanGesture
             {
-                Position = host.Map.GlobalPosition + pointer, Delta = delta,
-                ShiftPressed = shift, AltPressed = alt, CtrlPressed = ctrl, MetaPressed = meta,
+                Position = host.Map.GlobalPosition + pointer,
+                Delta = delta,
+                ShiftPressed = shift,
+                AltPressed = alt,
+                CtrlPressed = ctrl,
+                MetaPressed = meta,
             }, true);
             await Frames();
         }
@@ -1213,7 +2590,8 @@ internal static class GodotSmoke
         {
             host.GetViewport().PushInput(new InputEventMagnifyGesture
             {
-                Position = host.Map.GlobalPosition + pointer, Factor = factor,
+                Position = host.Map.GlobalPosition + pointer,
+                Factor = factor,
             }, true);
             await Frames();
         }
@@ -1244,7 +2622,9 @@ internal static class GodotSmoke
         var panStart = new Pos(session.CameraX, session.CameraY);
         host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
         {
-            ButtonIndex = MouseButton.Left, Pressed = true, Position = pointer,
+            ButtonIndex = MouseButton.Left,
+            Pressed = true,
+            Position = pointer,
         });
         host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseMotion
         {
@@ -1252,13 +2632,17 @@ internal static class GodotSmoke
         });
         host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
         {
-            ButtonIndex = MouseButton.Left, Pressed = false,
+            ButtonIndex = MouseButton.Left,
+            Pressed = false,
         });
         Require(session.CameraX == panStart.X - 3 && session.CameraY == panStart.Y - 1,
             "Plain left-drag did not pan the map.");
         host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
         {
-            ButtonIndex = MouseButton.Left, Pressed = true, Position = pointer, ShiftPressed = true,
+            ButtonIndex = MouseButton.Left,
+            Pressed = true,
+            Position = pointer,
+            ShiftPressed = true,
         });
         host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseMotion
         {
@@ -1271,7 +2655,8 @@ internal static class GodotSmoke
             "Selection drag at the edge did not scroll and extend selection.");
         host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
         {
-            ButtonIndex = MouseButton.Left, Pressed = false,
+            ButtonIndex = MouseButton.Left,
+            Pressed = false,
         });
         OpenGameMenu(host);
         await Frames();
@@ -1281,7 +2666,9 @@ internal static class GodotSmoke
         await KeyEvent(Key.T);
         host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
         {
-            ButtonIndex = MouseButton.Left, Pressed = true, Position = pointer,
+            ButtonIndex = MouseButton.Left,
+            Pressed = true,
+            Position = pointer,
         });
         host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseMotion
         {
@@ -1289,7 +2676,8 @@ internal static class GodotSmoke
         });
         host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
         {
-            ButtonIndex = MouseButton.Left, Pressed = false,
+            ButtonIndex = MouseButton.Left,
+            Pressed = false,
         });
         Require(session.RoadToolActive && session.Preview?.Area.Width == 4,
             "Road-line preview blocked pointer endpoint dragging.");
@@ -1300,19 +2688,24 @@ internal static class GodotSmoke
         var camera = new Pos(session.CameraX, session.CameraY);
         host.Minimap.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
         {
-            ButtonIndex = MouseButton.Left, Pressed = true, Position = host.Minimap.Size / 2,
+            ButtonIndex = MouseButton.Left,
+            Pressed = true,
+            Position = host.Minimap.Size / 2,
         });
         host.Minimap.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseMotion { Position = host.Minimap.Size });
         host.Minimap.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
         {
-            ButtonIndex = MouseButton.Left, Pressed = false,
+            ButtonIndex = MouseButton.Left,
+            Pressed = false,
         });
         Require(session.CameraX > camera.X && session.CameraY > camera.Y, "Minimap drag did not move to the map edge.");
         session.ShowSessionMenu();
         camera = new Pos(session.CameraX, session.CameraY);
         host.Minimap.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
         {
-            ButtonIndex = MouseButton.Left, Pressed = true, Position = Vector2.Zero,
+            ButtonIndex = MouseButton.Left,
+            Pressed = true,
+            Position = Vector2.Zero,
         });
         Require(camera == new Pos(session.CameraX, session.CameraY), "Modal permitted minimap navigation.");
         await KeyEvent(Key.Escape);
@@ -1574,15 +2967,20 @@ internal static class GodotSmoke
         float beforeDrag = split.SidebarWidth;
         host.GetViewport().PushInput(new InputEventMouseButton
         {
-            Position = dragPoint, GlobalPosition = dragPoint, ButtonIndex = MouseButton.Left, Pressed = true,
+            Position = dragPoint,
+            GlobalPosition = dragPoint,
+            ButtonIndex = MouseButton.Left,
+            Pressed = true,
         }, true);
         for (int step = 1; step <= 5; step++)
         {
             var position = dragPoint - new Vector2(step, 0);
             host.GetViewport().PushInput(new InputEventMouseMotion
             {
-                Position = position, GlobalPosition = position,
-                Relative = new Vector2(-1, 0), ButtonMask = MouseButtonMask.Left,
+                Position = position,
+                GlobalPosition = position,
+                Relative = new Vector2(-1, 0),
+                ButtonMask = MouseButtonMask.Left,
             }, true);
             await Frames();
             Require(Math.Abs(split.SidebarWidth - beforeDrag - step) < 1,
@@ -1591,8 +2989,10 @@ internal static class GodotSmoke
         }
         host.GetViewport().PushInput(new InputEventMouseButton
         {
-            Position = dragPoint - new Vector2(5, 0), GlobalPosition = dragPoint - new Vector2(5, 0),
-            ButtonIndex = MouseButton.Left, Pressed = false,
+            Position = dragPoint - new Vector2(5, 0),
+            GlobalPosition = dragPoint - new Vector2(5, 0),
+            ButtonIndex = MouseButton.Left,
+            Pressed = false,
         }, true);
         await Frames();
         Require(split.SidebarWidth > CitySplit.MinimumSidebar, "Dragging the divider did not resize the sidebar.");
@@ -1688,9 +3088,10 @@ internal static class GodotSmoke
         foreach (var p in session.Game.Map.BuildingFootprintAt(areaSpot.X, areaSpot.Y).Cells())
         {
             var screen = new Pos(p.X - session.CameraX, p.Y - session.CameraY);
-            Require(host.Map.Grid.VisualAt(session, screen.X, screen.Y)?.Glyph.Contains('\n') == true,
-                "Larger building cells are not filled with ASCII art.");
+            Require(host.Map.Grid.VisualAt(session, screen.X, screen.Y)?.Glyph == " ",
+                "Building cells must leave their glyphs to the raised pixel-sprite layer.");
         }
+        if (!headless) Require(host.Map.BuildingsDrawn > 0, "Raised building sprites were not drawn.");
         session.PlaceCursor(new Pos(areaSpot.X + green.Width, areaSpot.Y));
         await Frames();
         if (!headless) Require(host.Map.AreasDrawn == 0, "Unselected buildings still show range circles.");
@@ -1702,7 +3103,9 @@ internal static class GodotSmoke
             (inspectionCell.Y - session.CameraY + 0.5f) * TerminalGrid.CellHeight);
         host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
         {
-            ButtonIndex = MouseButton.Right, Pressed = true, Position = inspectionPosition,
+            ButtonIndex = MouseButton.Right,
+            Pressed = true,
+            Position = inspectionPosition,
         });
         await Frames();
         Require(session.Prompt?.Title == BuildingReport.Title &&
@@ -1780,7 +3183,11 @@ internal static class GodotSmoke
         if (host.Map.DrawCount > draws)
         {
             Require(host.Map.EffectGlyphsDrawn > 0, "The map drew a frame without the running effect glyphs.");
-            if (host.Map.Grid.VectorRoads && session.Game.Map.RoadCells.Any())
+            var visible = session.ScreenToMap(0, 0);
+            var view = new CellRect(visible.X, visible.Y,
+                host.Map.Grid.Columns * session.Stride, host.Map.Grid.Rows * session.Stride);
+            if (host.Map.Grid.VectorRoads && session.Game.Map.RoadCells.Any(i =>
+                view.Contains(session.Game.Map.PosOf(i))))
                 Require(host.Map.RoadChunksDrawn > 0, "The map drew a frame without the curved roads.");
         }
         else GD.Print("Godot did not draw during the effects check (headless); effect glyph drawing was not exercised.");
@@ -1832,7 +3239,7 @@ internal static class GodotSmoke
         var session = host.Session;
         var rail = Descendants(host).OfType<ScrollContainer>().Single(n => n.Name == "ConstructionSidebar");
         var icons = Descendants(rail).OfType<Button>().ToArray();
-        Require(icons.Length == TermCity.Core.Buildings.ServiceKinds.All.Count + 1 &&
+        Require(icons.Length == TermCity.Core.Buildings.ServiceKinds.All.Count + (CityGame.DebugToolsAvailable ? 2 : 1) &&
             rail.GetGlobalRect().End.X <= host.Map.GlobalPosition.X,
             "Construction rail must show roads and every service category to the left of the map.");
         Require(icons[0].GetChild<ConstructionIcon>(0).Glyph ==
@@ -1880,7 +3287,8 @@ internal static class GodotSmoke
             icon.GetThemeFontSize("font_size") == 24),
             "Construction icons must use enlarged buttons and glyphs.");
         Require(icons.Select(icon => icon.GetChild<ConstructionIcon>(0).Kind)
-            .SequenceEqual(new[] { ServiceKind.None }.Concat(ServiceKinds.All)),
+            .SequenceEqual(new[] { ServiceKind.None }.Concat(ServiceKinds.All)
+                .Concat(CityGame.DebugToolsAvailable ? new[] { ServiceKind.Defence } : [])),
             "Construction artwork must match its service category.");
         icons[0].EmitSignal(Control.SignalName.MouseEntered);
         Require(ConstructionIcon.WiggleAngleAt(0.25f) < 0 &&
@@ -1952,7 +3360,8 @@ internal static class GodotSmoke
             "Hover highlighting must remain available through the construction modal shield.");
         shield.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
         {
-            ButtonIndex = MouseButton.Left, Pressed = true,
+            ButtonIndex = MouseButton.Left,
+            Pressed = true,
             GlobalPosition = policeIcon.GetGlobalRect().GetCenter(),
         });
         await frames();
@@ -1994,6 +3403,22 @@ internal static class GodotSmoke
         Require(session.Prompt?.Title == "Roads", "Cancelling placement must restore the catalog.");
         Descendants(host).OfType<Button>().Single(b => b.Text == "Cancel").EmitSignal(Button.SignalName.Pressed);
         Require(session.Prompt is null && session.Preview is null, "Cancel did not close the catalog.");
+        if (CityGame.DebugToolsAvailable)
+        {
+            icons.Single(button => button.Name == "Monuments").EmitSignal(Button.SignalName.Pressed);
+            await frames();
+            Require(session.Prompt?.Title == "Monuments (Debug)" && !Add().Disabled &&
+                SelectedBuilding().Text == "Bewildered Duck",
+                "Debug launch must offer immediate monument placement without a population gate.");
+            Add().EmitSignal(Button.SignalName.Pressed);
+            Require(session.Preview?.Building?.IsMonument == true && session.Preview.Area.Width == 8 &&
+                session.Preview.Area.Height == 6 && session.Game.Money == money,
+                "The debug monument must use the ordinary full-footprint placement preview without spending gold.");
+            session.CancelPreview();
+            await frames();
+            Descendants(host).OfType<Button>().Single(button => button.Text == "Cancel").EmitSignal(Button.SignalName.Pressed);
+            await frames();
+        }
         foreach (var kind in new[] { ServiceKind.Power, ServiceKind.Water, ServiceKind.Granary })
         {
             icons.Single(button => button.Name == CityReport.ServiceName(kind)).EmitSignal(Button.SignalName.Pressed);
@@ -2140,7 +3565,10 @@ internal static class GodotSmoke
         foreach (bool pressed in new[] { true, false })
             host.GetViewport().PushInput(new InputEventMouseButton
             {
-                ButtonIndex = MouseButton.Left, Pressed = pressed, Position = outside, GlobalPosition = outside,
+                ButtonIndex = MouseButton.Left,
+                Pressed = pressed,
+                Position = outside,
+                GlobalPosition = outside,
             }, true);
         await frames();
         Require(session.Prompt is null && session.Preview is null && session.Game.Money == money,
@@ -2172,8 +3600,9 @@ internal static class GodotSmoke
                 var cells = Descendants(host).OfType<GridContainer>().Single(n => n.Name == "ConstructionStats")
                     .GetChildren().OfType<PanelContainer>().Select(cell => cell.HasMeta("details_value")
                         ? cell.GetMeta("details_value").AsString() : cell.GetChild<Label>(0).Text).ToArray();
-                var selectedType = session.Game.Map.Content.Buildings.FirstOrDefault(building => building.Name == choice.Text);
-                bool hasAreaEffect = selectedType is null || AreaOfEffect.ForBuilding(selectedType, new Pos(0, 0)).Count > 0;
+                var selectedType = session.Game.Map.Content.Buildings.FirstOrDefault(building => building.CatalogName == choice.Text);
+                bool hasAreaEffect = choice.Text != "Traffic Circle" &&
+                    (selectedType is null || AreaOfEffect.ForBuilding(selectedType, new Pos(0, 0)).Count > 0);
                 Require(!cells.Where((_, index) => index % 2 == 0).Contains("Area of Effect") &&
                     !Descendants(host).Any(node => node.Name == "ConstructionEffectIcon") &&
                     cells.Where((_, index) => index % 2 == 0).Count(text => text == "Effect") == (hasAreaEffect ? 1 : 0),
@@ -2184,16 +3613,20 @@ internal static class GodotSmoke
                     {
                         Require(cells[effectIndex + 1].Contains(
                             $"radius {area.Radius} cells. Area: {area.Radius * 2 + 1} x {area.Radius * 2 + 1} cells",
-                            StringComparison.Ordinal),
-                            "The single Effect row must include every effect's full cell-width and height.");
+                            StringComparison.Ordinal) ||
+                            cells[effectIndex + 1].Contains("No distance cutoff.", StringComparison.Ordinal),
+                            "Effects must describe pollution falloff or travel-based service response.");
                     }
                 Require(Descendants(host).OfType<Label>().Single(label => label.Name == "ConstructionDescription").Text ==
-                    (selectedType?.Description ?? session.Game.Map.Content.Roads.Single(road => road.Name == choice.Text).Description),
+                    (choice.Text == "Traffic Circle"
+                        ? ChoiceHelpContent.RoadTemplate(session.Game, TermCity.Core.Roads.RoadTemplate.TrafficCircle).Description
+                        : selectedType?.Description ?? session.Game.Map.Content.Roads.Single(road => road.Name == choice.Text).Description),
                     "Area effects must not be appended to the description.");
                 Require(!cells.Contains("Operation") && cells.All(text => !text.Contains("at current funding", StringComparison.Ordinal)),
                     "Catalog details must omit the Operation row and upkeep funding suffix.");
                 Require(cells[0] == "Cost" && cells[2] == "Upkeep" &&
-                    cells[1].EndsWith('g') && cells[1][..^1].All(c => char.IsDigit(c) || c == ',') &&
+                    (choice.Text == "Traffic Circle" ? cells[1].EndsWith("g (current plot)", StringComparison.Ordinal) :
+                        cells[1].EndsWith('g') && cells[1][..^1].All(c => char.IsDigit(c) || c == ',')) &&
                     cells.Where((_, index) => index % 2 == 0)
                         .All(text => text is not ("Does" or "Placement" or "Area icons")) &&
                     cells.Where((_, index) => index % 2 == 1)
@@ -2231,10 +3664,12 @@ internal static class GodotSmoke
         var map = session.Game.Map;
         var music = host.GetNode<AudioStreamPlayer>("CityMusic");
         Require(music.Playing && music.Stream is AudioStreamGenerator
-            {
-                MixRate: GreensleevesTrack.SampleRate,
-            } && host.MusicPhraseCount == 1,
-            "Greensleeves must stream its fixed opening, not loop a static WAV.");
+        {
+            MixRate: MedievalMusicSynth.SampleRate,
+        } && host.MusicPhraseCount == 1,
+            "Registered medieval songs must use the shared streaming player, not additional WAV players.");
+        Require(MusicRegistry.CreateDefault().Songs.Any(song => song.Title == host.CurrentMusicTitle),
+            "The streaming player must select its score through the music registry.");
         host.GetWindow().EmitSignal(Window.SignalName.FocusExited);
         Require(music.StreamPaused, "Music continued while the game window was unfocused.");
         host.GetWindow().EmitSignal(Window.SignalName.FocusEntered);
@@ -2448,8 +3883,13 @@ internal static class GodotSmoke
         Require(session.RoadToolActive, "Road line allowed a background action.");
         Press(Key.Enter);
         Require(session.Game.Map.HasRoad(start.X, start.Y), "Road line confirmation failed.");
-        host._UnhandledInput(new InputEventKey { Keycode = Key.Z, Pressed = true,
-            CtrlPressed = !OS.HasFeature("macos"), MetaPressed = OS.HasFeature("macos") });
+        host._UnhandledInput(new InputEventKey
+        {
+            Keycode = Key.Z,
+            Pressed = true,
+            CtrlPressed = !OS.HasFeature("macos"),
+            MetaPressed = OS.HasFeature("macos")
+        });
         Require(session.Prompt?.Title == "Undo last action", "Undo was not guarded.");
         Press(Key.Enter);
         Require(!session.Game.Map.HasRoad(start.X, start.Y), "Undo did not restore the city.");
@@ -2687,10 +4127,38 @@ internal static class GodotSmoke
         Require(!Descendants(panel).Any(node => node.Name == "ZonesTable"),
             "The Zones table was not removed.");
         Require(!Descendants(panel).Any(node => node.Name == "MINIMAPHeaderCell") &&
-            panel.Minimap.GetIndex() == 1 &&
+            panel.Minimap.GetIndex() == 2 &&
             Descendants(panel).OfType<Label>().Any(label => label.Name == "ZoomIndicator"),
             "The minimap must appear without a header and retain its zoom controls.");
         var zoomFrame = Descendants(panel).OfType<PanelContainer>().Single(control => control.Name == "MinimapZoomFrame");
+        var cameraControls = Descendants(panel).OfType<HBoxContainer>().Single(control => control.Name == "MinimapCameraControls");
+        Require(cameraControls.GetIndex() < zoomFrame.GetIndex(),
+            "TILT and ROTATE must be above the minimap zoom controls.");
+        var tiltButton = Descendants(cameraControls).OfType<Button>().Single(button => button.Text == "TILT");
+        var rotateButton = Descendants(cameraControls).OfType<Button>().Single(button => button.Text == "ROTATE");
+        Require(!Descendants(host.Map).OfType<Button>().Any(button => button.Text is "OVERHEAD" or "3D VIEW"),
+            "The map must not show the removed overhead toggle.");
+        foreach (var button in new[] { tiltButton, rotateButton })
+            foreach (string state in new[] { "normal", "hover", "pressed", "hover_pressed", "disabled", "focus" })
+                Require(button.GetThemeStylebox(state) is StyleBoxFlat style &&
+                    style.BgColor == Colors.Black && style.BorderColor == Colors.White &&
+                    new[] { Side.Left, Side.Top, Side.Right, Side.Bottom }.All(side => style.GetBorderWidth(side) == 1),
+                    "Each camera button must have its own single white border on black.");
+        if (host.Map.PerspectiveEnabled && host.Map.Perspective is { } camera && host.Session.Prompt is null &&
+            host.Session.Preview is null)
+        {
+            float azimuth = camera.Azimuth, elevation = camera.Elevation;
+            rotateButton.EmitSignal(BaseButton.SignalName.Pressed);
+            Require(camera.Azimuth == Mathf.PosMod(azimuth + 90, 360), "ROTATE must advance by 90 degrees.");
+            for (int i = 0; i < 3; i++) rotateButton.EmitSignal(BaseButton.SignalName.Pressed);
+            Require(camera.Azimuth == azimuth, "Four ROTATE clicks must return to the original heading.");
+            tiltButton.EmitSignal(BaseButton.SignalName.Pressed);
+            Require(camera.Elevation != elevation, "TILT must change camera elevation.");
+            tiltButton.EmitSignal(BaseButton.SignalName.Pressed);
+            Require(camera.Elevation != elevation, "TILT must provide three distinct elevations.");
+            tiltButton.EmitSignal(BaseButton.SignalName.Pressed);
+            Require(camera.Elevation == elevation, "Three TILT clicks must return to the original elevation.");
+        }
         Require(Descendants(zoomFrame).OfType<Label>().Single(label => label.Name == "ZoomIndicator")
             .GetThemeFontSize("font_size") == 20, "Zoom-level text must retain its enlarged 20-point size.");
         Require(zoomFrame is not TerminalFrame &&
@@ -2774,7 +4242,9 @@ internal static class GodotSmoke
                 {
                     var label = table.GetChild<PanelContainer>(row * 2 + column).GetChild<Label>(0);
                     var expected = rows[row][column];
-                    if (column == 1 && rows[row][0].Text is "Fuel" or "Water" or "Grain")
+                    bool gaugeOnly = column == 1 && (rows[row][0].Text is "Fuel" or "Water" ||
+                        rows[row][0].Text == "Grain" && host.Session.Game.GrainRequired);
+                    if (gaugeOnly)
                     {
                         var gauge = label.GetChildren().OfType<ResourceGauge>().Single();
                         var supply = rows[row][0].Text == "Fuel" ? host.Session.Game.Services.Power : host.Session.Game.Services.Water;
@@ -2801,7 +4271,6 @@ internal static class GodotSmoke
                         Require(label.GetThemeFont("font").GetStringSize(label.Text,
                             fontSize: label.GetThemeFontSize("font_size")).X <= label.Size.X + 1,
                             $"City text is truncated: {label.Text}, width={label.Size.X}.");
-                    bool gaugeOnly = column == 1 && rows[row][0].Text is "Fuel" or "Water" or "Grain";
                     Require(label.Text == (gaugeOnly ? "" : expected.Text) && label.GetThemeColor("font_color") ==
                         new Color(expected.Color.R / 255f, expected.Color.G / 255f, expected.Color.B / 255f),
                         $"{name} has incorrect values or colors.");

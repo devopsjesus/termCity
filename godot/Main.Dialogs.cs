@@ -76,7 +76,7 @@ public partial class Main
     {
         _linePreview.Visible = Session.RoadToolActive && Session.Prompt is null;
         _lineSummary.Text = Session.Preview?.Summary + "\nArrows or drag set the endpoint. Enter confirms; Esc cancels.";
-        object? state = Session.Prompt ?? (Session.RoadToolActive || Session.BuildingToolActive ? null : (object?)Session.Preview);
+        object? state = Session.Prompt ?? (Session.RoadToolActive || Session.FixedPlacementToolActive ? null : (object?)Session.Preview);
         if (ReferenceEquals(state, _shownModal))
         {
             return;

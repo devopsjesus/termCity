@@ -66,7 +66,7 @@ public class DemandFeedbackTests
         game.Map.SetBuilding(10, 21, game.Map.Content.Buildings.ForZone(ZoneType.Residential));
         game.Map.SetHousehold(10, 21, new Household(60, 20, 0));
         game.Touch();
-        Assert.True(game.Designate(new(30, 21, 1, 1), ZoneType.Commercial).Success);
+        Assert.True(game.Designate(new(30, 21, 2, 1), ZoneType.Commercial).Success);
         Assert.Equal(1, game.SupportedCells(ZoneType.Commercial));
         Assert.Equal(GrowthStatus.Ready, GrowthDiagnostics.ForZone(game, ZoneType.Commercial).Status);
         Assert.Equal(0, game.Demand.Commercial);

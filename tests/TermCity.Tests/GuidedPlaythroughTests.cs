@@ -73,16 +73,25 @@ public class GuidedPlaythroughTests(ITestOutputHelper output)
         void Zone(ZoneType zone, int wanted)
         {
             if (wanted <= 0) return;
+            var type = game.Map.Content.Buildings.ForZone(zone)!;
             var near = zone == ZoneType.Industrial
                 ? new Pos(center.X < size.Width / 2 ? Math.Min(size.Width - 1, center.X + 45) : Math.Max(0, center.X - 45), center.Y)
                 : center;
             var options = new List<Pos>();
             for (int y = 0; y < size.Height; y++)
                 for (int x = 0; x < size.Width; x++)
-                    if (x % 8 >= 3 && game.CanBuildOn(x, y) && game.Network.IsServed(game.Map.Index(x, y)))
+                    if (x % 8 >= 3 && new CellRect(x, y, type.Width, type.Height).Cells()
+                        .All(p => game.CanBuildOn(p.X, p.Y)))
                         options.Add(new Pos(x, y));
-            foreach (var p in options.OrderBy(p => Distance(p, near)).Take(wanted))
-                Assert.True(game.Designate(CellRect.Single(p), zone).Success);
+            int added = 0;
+            foreach (var p in options.OrderBy(p => game.Network.AccessRank(game.Map.Index(p.X, p.Y)) == 0)
+                .ThenBy(p => Distance(p, near)))
+            {
+                var area = new CellRect(p.X, p.Y, type.Width, type.Height);
+                if (!area.Cells().All(cell => game.CanBuildOn(cell.X, cell.Y))) continue;
+                Assert.True(game.Designate(area, zone).Success);
+                if (++added >= wanted) break;
+            }
         }
 
         bool ExpandRoads()
@@ -94,7 +103,7 @@ public class GuidedPlaythroughTests(ITestOutputHelper output)
                     var line = Enumerable.Range(0, 13).Select(n => new Pos(start.X + n * dx, start.Y + n * dy)).ToArray();
                     if (!line.All(p => game.Map.InBounds(p) && game.Map.TerrainAt(p.X, p.Y).Buildable &&
                         game.Map.ZoneAt(p.X, p.Y) == ZoneType.None && game.Map.BuildingAt(p.X, p.Y) is null) ||
-                        line.Count(p => !game.Network.IsServed(game.Map.Index(p.X, p.Y))) < 6) continue;
+                        line.Count(p => game.Network.AccessRank(game.Map.Index(p.X, p.Y)) == 0) < 6) continue;
                     var quote = game.QuoteRoad(line);
                     if (quote.Cells < 10 || game.Money < quote.Cost + 8_000) continue;
                     Assert.True(game.BuildRoad(line).Success);
@@ -119,8 +128,10 @@ public class GuidedPlaythroughTests(ITestOutputHelper output)
                 Build("Town Well", center, game.Services.Water.Supply == 0 ? 0 : reserve);
             if (game.Stats.Residential.Occupied >= game.Config.MinResidentialCells)
             {
-                Zone(ZoneType.Commercial, game.SupportedCells(ZoneType.Commercial) + 3 - game.Stats.Commercial.Zoned);
-                Zone(ZoneType.Industrial, game.SupportedCells(ZoneType.Industrial) + 5 - game.Stats.Industrial.Zoned);
+                Zone(ZoneType.Commercial, game.SupportedCells(ZoneType.Commercial) + 3 -
+                    game.Stats.Commercial.Occupied - game.VacantPlots(ZoneType.Commercial).Count);
+                Zone(ZoneType.Industrial, game.SupportedCells(ZoneType.Industrial) + 5 -
+                    game.Stats.Industrial.Occupied - game.VacantPlots(ZoneType.Industrial).Count);
             }
             if (pop >= 300 && week % 4 == 0 && game.Stats.Residential.Zoned - game.Stats.Residential.Filled < 60)
             {
@@ -146,21 +157,45 @@ public class GuidedPlaythroughTests(ITestOutputHelper output)
             foreach (var (name, kind, reason) in care.OrderByDescending(c =>
                 game.Indicators.Complaints.FirstOrDefault(p => p.Reason == c.Reason)?.Points ?? 0))
             {
-                var type = game.Map.Content.Buildings.Get(name);
-                if (pop < 100 || game.Finance.Net < type.WeeklyUpkeep * 0.9 ||
-                    game.Indicators.CoverageOf(kind) >= 80) continue;
+                var starter = game.Map.Content.Buildings.Get(name);
+                if (!CityProgression.IsUnlocked(game, starter)) continue;
+                var type = game.Map.Content.Buildings.ServiceBuildings(kind)
+                    .Where(b => CityProgression.IsUnlocked(game, b) &&
+                        game.Money >= b.Cost + reserve && game.Finance.Net >= b.WeeklyUpkeep * 1.5)
+                    .OrderByDescending(b => b.Strength).ThenByDescending(b => b.Radius)
+                    .FirstOrDefault() ?? starter;
+                double attainable = type.Strength * game.Budget.Effective(kind, game.Insolvent);
+                int providers = game.Map.ServiceCells.Count(i => game.Map.BuildingAt(
+                    i % size.Width, i / size.Width) == type);
+                if (game.Finance.Net < type.WeeklyUpkeep * 1.5 ||
+                    game.Services.ActiveCounts[(int)kind] > 0 &&
+                        (game.Indicators.Complaints.FirstOrDefault(c => c.Reason == reason)?.Points ?? 0) < 3 ||
+                    game.Indicators.CoverageOf(kind) >= attainable * 0.85 ||
+                    providers >= Math.Max(2,
+                        (int)Math.Ceiling(pop / Math.Max(1, type.StaffingCapacity * game.Budget.Effective(kind, game.Insolvent))) + 1))
+                    continue;
                 var homes = game.Map.ZoneCells(ZoneType.Residential)
                     .Where(i => !game.Map.HouseholdLayer[i].IsEmpty)
                     .OrderBy(i => game.Services.Coverage(kind, i)).ToArray();
                 bool built = false;
                 foreach (int home in homes.Take(5))
-                    if (Build(name, game.Map.PosOf(home), reserve)) { built = true; break; }
+                    if (Build(type.Name, game.Map.PosOf(home), reserve))
+                    {
+                        var oldProvider = game.Map.ServiceCells
+                            .Where(i => game.Map.BuildingAt(i % size.Width, i / size.Width) is { } existing &&
+                                existing.Service == kind && existing.Strength < type.Strength)
+                            .OrderBy(i => Distance(game.Map.PosOf(i), game.Map.PosOf(home))).FirstOrDefault(-1);
+                        if (oldProvider >= 0)
+                            Assert.True(game.Demolish(CellRect.Single(game.Map.PosOf(oldProvider))).Success);
+                        built = true;
+                        break;
+                    }
                 if (built || game.Money < type.Cost * 1.5 + reserve) break;
             }
             if (pop >= 200 && game.Indicators.CoverageOf(ServiceKind.Trade) < 40 && game.Finance.Net > 200)
                 Build("Market Cross", center, reserve);
 
-            int vacant = game.Stats.Residential.Zoned - game.Stats.Residential.Filled;
+            int vacant = game.VacantPlots(ZoneType.Residential).Count;
             if (week % 26 == 0 && pop >= 300 && game.Money > reserve + 80_000)
             {
                 int row = (week / 26 * 5 + center.Y) % size.Height;
@@ -213,7 +248,7 @@ public class GuidedPlaythroughTests(ITestOutputHelper output)
         Assert.Equal(10_000, game.HighestMilestone);
         Assert.True(game.Finance.Net > 0);
         Assert.Equal(0, game.Budget.Loan);
-        Assert.All(game.Map.Content.Buildings.Where(b => b.PlayerPlaceable), b => Assert.True(CityProgression.IsUnlocked(game, b)));
+        Assert.All(game.Map.Content.Buildings.Where(b => b.PlayerPlaceable && !b.DebugOnly), b => Assert.True(CityProgression.IsUnlocked(game, b)));
         string? artifacts = Environment.GetEnvironmentVariable("TERMCITY_PLAYTEST_OUTPUT");
         if (!string.IsNullOrEmpty(artifacts))
             SaveGameStore.Save(game, Path.Combine(artifacts, $"{sizeName}-{seed}.json"));

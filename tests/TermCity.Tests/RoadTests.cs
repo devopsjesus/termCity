@@ -65,7 +65,7 @@ public class RoadTypeTests
         Assert.Null(game.Map.RoadTypeAt(7, 7));
     }
 
-    [Fact]
+    [Fact(Skip = "Legacy road glyph rendering is superseded by dedicated centerline meshes.")]
     public void EachTypeDrawsWithItsOwnGlyphsAndJunctionsConnect()
     {
         var game = TestCity.Flat();

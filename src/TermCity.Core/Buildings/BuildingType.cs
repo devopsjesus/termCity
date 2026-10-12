@@ -1,6 +1,7 @@
 using TermCity.Core.Registry;
 using TermCity.Core.Util;
 using TermCity.Core.World;
+using TermCity.Core.Simulation;
 
 namespace TermCity.Core.Buildings;
 
@@ -40,6 +41,9 @@ public sealed class BuildingType : RegisteredType
     public IReadOnlyList<string> FootprintArt { get; init; } = [];
 
     public bool PlayerPlaceable { get; init; }
+    public bool IsMonument { get; init; }
+    public bool DebugOnly { get; init; }
+    public string CatalogName => IsMonument ? Name.Replace(" Monument", "", StringComparison.Ordinal) : Name;
 
     /// <summary>Souls the town needs before the player may raise this (great works are not built for a hamlet).</summary>
     public int MinPopulation { get; init; }
@@ -57,10 +61,10 @@ public sealed class BuildingType : RegisteredType
 
     public ServiceKind Service { get; init; } = ServiceKind.None;
 
-    /// <summary>Reach, in cells, of an area service.</summary>
+    /// <summary>Walking-distance benchmark for timely service, not a coverage cutoff.</summary>
     public int Radius { get; init; }
 
-    /// <summary>Strength (0-100) of an area service at its centre; strength fades towards the edge of the radius.</summary>
+    /// <summary>Maximum timely service quality (0-100), reduced by funding, long journeys and overload.</summary>
     public int Strength { get; init; } = 100;
 
     /// <summary>Weekly running cost at full funding.</summary>
@@ -79,6 +83,8 @@ public sealed class BuildingType : RegisteredType
     public int WaterUse { get; init; }
 
     public bool IsService => Service != ServiceKind.None;
+    public int StaffingCapacity => Radius > 0 ? Math.Max(300, Radius * Radius * 6) : 0;
+    public double ResponseTargetDays => Radius * 6 / Simulation.TravelRoutes.UnitsPerDay;
 
     public string GlyphAt(int x, int y) => Glyphs[CellHash.Pick(x, y, Glyphs.Count)];
 
@@ -117,6 +123,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Cottage",
+            Width = 2,
             PowerUse = 2,
             WaterUse = 2,
             Glyphs = ["⌂", "⌂", "⌂", "▟"],
@@ -128,6 +135,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Market Stall",
+            Width = 2,
             PowerUse = 3,
             WaterUse = 2,
             Glyphs = ["▣", "▦", "▣"],
@@ -139,6 +147,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Workshop",
+            Width = 2,
             PowerUse = 6,
             WaterUse = 4,
             Glyphs = ["▤", "▩", "▤"],
@@ -152,6 +161,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Burgage House",
+            Width = 2, Height = 2,
             PowerUse = 6,
             WaterUse = 6,
             Glyphs = ["▥", "▥", "▧"],
@@ -165,6 +175,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Merchant House",
+            Width = 3, Height = 2,
             PowerUse = 9,
             WaterUse = 5,
             Glyphs = ["▥", "▧", "▥"],
@@ -178,6 +189,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Mill",
+            Width = 3, Height = 2,
             PowerUse = 14,
             WaterUse = 10,
             Glyphs = ["▥", "▨", "▥"],
@@ -193,6 +205,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Tenement",
+            Width = 2, Height = 3,
             PowerUse = 14,
             WaterUse = 14,
             Glyphs = ["█", "▐", "█"],
@@ -206,6 +219,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Market Hall",
+            Width = 4, Height = 2,
             PowerUse = 28,
             WaterUse = 12,
             Glyphs = ["█", "▐", "▌"],
@@ -219,6 +233,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Great Forge",
+            Width = 4, Height = 2,
             PowerUse = 30,
             WaterUse = 20,
             Glyphs = ["▓", "▒", "▓"],
@@ -232,6 +247,17 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         });
 
         RegisterServices(registry);
+        registry.Register(new BuildingType
+        {
+            Name = "Bewildered Duck Monument",
+            Glyphs = ["♙"],
+            Foreground = Rgb.Hex(0xe3be48),
+            Width = 8, Height = 6,
+            IsMonument = true, DebugOnly = true, PlayerPlaceable = true,
+            MinPopulation = 100_000,
+            Cost = 0,
+            Description = "An original colossal golden-yellow stone duck, clasping its helmet in bewilderment; a debug-only monument.",
+        });
         return registry;
     }
 
@@ -247,51 +273,53 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             capacity: 260, text: "A stone well and trough; works anywhere, supplies little"));
 
         registry.Register(Civic("Fire Watch", ServiceKind.Fire, "♨", 0xff6b4a, cost: 9_000, upkeep: 160,
-            radius: 18, minPopulation: 100, text: "A bucket brigade and watchman: fires are rarer and burn less; needs road access"));
+            radius: 27, minPopulation: CityProgression.CareUnlockPopulation, text: "A bucket brigade and watchman: quick arrivals contain fires; roads speed the brigade"));
         registry.Register(Civic("Watch House", ServiceKind.Police, "⚑", 0x8fa8ff, cost: 3_500, upkeep: 60,
-            radius: 10, strength: 60, minPopulation: 100, text: "A constable and the night watch: a cheap deterrent for a small quarter"));
+            radius: 15, strength: 60, minPopulation: CityProgression.CareUnlockPopulation, text: "A constable and the night watch: a cheap deterrent for a small quarter"));
         registry.Register(Civic("Sheriff's Hall", ServiceKind.Police, "★", 0x6d8dff, cost: 9_000, upkeep: 160,
-            radius: 16, minPopulation: 100, text: "The sheriff, his men and a lock-up: deters crime around it; needs road access"));
+            radius: 24, minPopulation: CityProgression.CareUnlockPopulation, text: "The sheriff, his men and a lock-up: timely patrols deter crime; roads speed response"));
         registry.Register(Civic("Gaol", ServiceKind.Police, "▦", 0x4f6bd8, cost: 26_000, upkeep: 180,
-            radius: 24, minPopulation: 900, text: "Cells, stocks and a gallows: a wide reach against crime, for a large town"));
+            radius: 36, minPopulation: 900, text: "Cells, stocks and a gallows: a wide reach against crime, for a large town"));
         registry.Register(Civic("Apothecary", ServiceKind.Health, "✚", 0xff7aa8, cost: 8_000, upkeep: 130,
-            radius: 12, strength: 70, minPopulation: 100, text: "Herbs and leeches: lowers mortality and the risk of plague"));
+            radius: 18, strength: 70, minPopulation: CityProgression.CareUnlockPopulation, text: "Herbs and leeches: lowers mortality and the risk of plague"));
         registry.Register(Civic("Infirmary", ServiceKind.Health, "⊕", 0xff4d8d, cost: 40_000, upkeep: 520,
-            radius: 24, minPopulation: 1_000, text: "A monastic infirmary with wide, strong care; expensive to run"));
+            radius: 36, minPopulation: 1_000, text: "A monastic infirmary with wide, strong care; expensive to run"));
         registry.Register(Civic("Hospice", ServiceKind.Health, "♡", 0xff93b8, cost: 16_000, upkeep: 210,
-            radius: 15, strength: 85, minPopulation: 500, text: "Almshouse beds run by a brotherhood: a middling reach and a gentle price"));
+            radius: 23, strength: 85, minPopulation: 500, text: "Almshouse beds run by a brotherhood: a middling reach and a gentle price"));
         registry.Register(Civic("Chantry School", ServiceKind.Education, "✎", 0xc59bff, cost: 8_000, upkeep: 120,
-            radius: 12, strength: 70, minPopulation: 100, text: "A priest teaches letters and sums; lettered workers earn and build more"));
+            radius: 18, strength: 70, minPopulation: CityProgression.CareUnlockPopulation, text: "A priest teaches letters and sums; lettered workers earn and build more"));
         registry.Register(Civic("Monastery", ServiceKind.Education, "⌘", 0xa56cff, cost: 45_000, upkeep: 560,
-            radius: 28, minPopulation: 1_000, pilgrims: 60, text: "A scriptorium and cloister: learning with a wide reach, and a shrine for pilgrims"));
+            radius: 42, minPopulation: 1_000, pilgrims: 60, text: "A scriptorium and cloister: learning with a wide reach, and a shrine for pilgrims"));
         registry.Register(Civic("Village Green", ServiceKind.Recreation, "♣", 0x4ddf6b, cost: 2_500, upkeep: 25,
-            radius: 8, strength: 80, pollution: -2, minPopulation: 500, text: "Common land and a maypole: land value, happiness, less crime and smoke"));
+            radius: 12, strength: 80, pollution: -2, minPopulation: 500, text: "Common land and a maypole: land value, happiness, less crime and smoke"));
         registry.Register(Civic("Tavern", ServiceKind.Recreation, "◒", 0xffb347, cost: 6_000, upkeep: 35,
-            radius: 11, strength: 90, minPopulation: 1_000, text: "Ale, songs and gossip: cheers a wide quarter"));
+            radius: 17, strength: 90, minPopulation: 1_000, text: "Ale, songs and gossip: cheers a wide quarter"));
 
         // The lord's seat: a castle anchors a settlement. It garrisons the surrounding land (defence), lifts land value and
         // the tithe, draws settlers, and a town cannot grow tall without one.
         registry.Register(Civic("Motte and Bailey", ServiceKind.Defence, "♙", 0xd9b48f, cost: 14_000, upkeep: 150,
-            radius: 20, strength: 70, seat: 1, text: "An earth mound, palisade and hall: the lord's first seat; a hamlet becomes a manor"));
+            radius: 30, strength: 70, seat: 1, text: "An earth mound, palisade and hall: the lord's first seat; a hamlet becomes a manor"));
         registry.Register(Civic("Stone Keep", ServiceKind.Defence, "♜", 0xc8c8d0, cost: 38_000, upkeep: 200,
-            radius: 28, strength: 85, seat: 2, minPopulation: 400, text: "A tower of stone and a walled bailey: burghers dare to build taller and richer"));
+            radius: 42, strength: 85, seat: 2, minPopulation: 400, text: "A tower of stone and a walled bailey: burghers dare to build taller and richer"));
         registry.Register(Civic("Castle", ServiceKind.Defence, "♚", 0xf2f2f8, cost: 85_000, upkeep: 280,
-            radius: 38, strength: 100, seat: 3, minPopulation: 2_500, text: "Curtain walls, towers and a great hall: a royal seat that anchors a whole town"));
+            radius: 57, strength: 100, seat: 3, minPopulation: 2_500, text: "Curtain walls, towers and a great hall: a royal seat that anchors a whole town"));
 
         registry.Register(Civic("Chapel", ServiceKind.Faith, "†", 0xfff2b3, cost: 5_000, upkeep: 70,
-            radius: 10, strength: 70, pilgrims: 12, text: "A priest and a bell: solace for the faithful and a gentler temper"));
+            radius: 15, strength: 70, pilgrims: 12, text: "A priest and a bell: solace for the faithful and a gentler temper"));
         registry.Register(Civic("Parish Church", ServiceKind.Faith, "‡", 0xffe680, cost: 26_000, upkeep: 130,
-            radius: 18, strength: 90, minPopulation: 300, pilgrims: 80, text: "A stone church with a tower: a wide reach for the faith, tithes and holy days"));
+            radius: 27, strength: 90, minPopulation: 300, pilgrims: 80, text: "A stone church with a tower: a wide reach for the faith, tithes and holy days"));
         registry.Register(Civic("Cathedral", ServiceKind.Faith, "✙", 0xfff7d6, cost: 110_000, upkeep: 280,
-            radius: 34, strength: 100, minPopulation: 4_000, pilgrims: 700, text: "A soaring cathedral that draws pilgrims and wonder; a work of generations"));
+            radius: 51, strength: 100, minPopulation: 4_000, pilgrims: 700, text: "A soaring cathedral that draws pilgrims and wonder; a work of generations"));
 
         registry.Register(Civic("Market Cross", ServiceKind.Trade, "¤", 0xffd27f, cost: 6_000, upkeep: 60,
-            radius: 18, strength: 80, text: "A market place and a toll: traders and shoppers raise land value and market tolls"));
+            radius: 27, strength: 80, minPopulation: CityProgression.GrainUnlockPopulation,
+            text: "A market place and a toll: traders and shoppers raise land value and market tolls"));
         registry.Register(Civic("Guildhall", ServiceKind.Trade, "§", 0xe0a55c, cost: 28_000, upkeep: 160,
-            radius: 33, minPopulation: 800, text: "The guilds' hall: master craftsmen, fair weights and a rich trade across the town"));
+            radius: 50, minPopulation: 800, text: "The guilds' hall: master craftsmen, fair weights and a rich trade across the town"));
 
         registry.Register(Civic("Granary", ServiceKind.Granary, "▨", 0xe6c97a, cost: 10_000, upkeep: 80,
-            capacity: 4_000, text: "A raised store for grain: a reserve against a bad harvest or a long winter"));
+            capacity: 4_000, minPopulation: CityProgression.GrainUnlockPopulation,
+            text: "A raised store for grain: a reserve against a bad harvest or a long winter"));
     }
 
     private static BuildingType Civic(
@@ -307,7 +335,8 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             "Stone Keep" or "Cathedral" or "Monastery" or "Infirmary" => 3,
             "Charcoal Burners" or "Woodlot" or "Aqueduct" or "Fire Watch" or "Sheriff's Hall" or
                 "Gaol" or "Hospice" or "Chantry School" or "Village Green" or "Motte and Bailey" or
-                "Parish Church" or "Guildhall" or "Granary" => 2,
+                "Parish Church" or "Guildhall" or "Granary" or "Watch House" or "Apothecary" or
+                "Chapel" or "Tavern" => 2,
             _ => 1,
         },
         Height = name switch
@@ -324,7 +353,9 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             "Woodlot" => ["/\\/\\", "||||", "/\\/\\", "||||"],
             "Aqueduct" => ["====", "()()"],
             "Fire Watch" => ["/^^\\", "[F|]"],
+            "Watch House" => ["/^^\\", "[W|]"],
             "Sheriff's Hall" => ["/^^\\", "[S#]"],
+            "Apothecary" => ["/++\\", "[A|]"],
             "Gaol" => ["+--+", "|##|", "|##|", "+--+"],
             "Infirmary" => [" /++\\ ", "/____\\", "|+[]+|", "|__A_|"],
             "Hospice" => ["/++\\", "[H|]"],
@@ -335,6 +366,8 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             "Stone Keep" => ["[][][]", "|####|", "|#[]#|", "|_AA_|"],
             "Castle" => ["[] [] []", "|######|", "|#[] []|", "|# /\\ #|", "[##||##]", "========"],
             "Parish Church" => [" /+\\", "/__\\", "|[]|", "|_A|"],
+            "Chapel" => ["/+^\\", "[C|]"],
+            "Tavern" => ["/^^\\", "[T|]"],
             "Cathedral" => [" /++\\ ", "/|++|\\", "||[]||", "||AA||", "|/AA\\|", "======"],
             "Guildhall" => ["/^^\\", "[G|]"],
             "Granary" => ["/^^\\", "[==]"],

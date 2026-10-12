@@ -19,6 +19,7 @@ public sealed class RoadType : RegisteredType
     public required Rgb Foreground { get; init; }
 
     public required Rgb Background { get; init; }
+    public Rgb SurfaceColor { get; init; } = Rgb.Hex(0x897c5e);
 
     /// <summary>Multiplier on <see cref="Simulation.GameConfig.RoadCostPerCell"/>.</summary>
     public double CostMultiplier { get; init; } = 1.0;
@@ -91,6 +92,7 @@ public static class DefaultRoads
     public static RoadType CobbledRoad() => new()
     {
         Name = CobbledName,
+        SurfaceColor = Rgb.Hex(0x707477),
         Glyphs = Heavy,
         Foreground = Rgb.Hex(0xa9d4ff),
         Background = Rgb.Hex(0x2b2f3a),
@@ -104,6 +106,7 @@ public static class DefaultRoads
     public static RoadType KingsRoad() => new()
     {
         Name = KingsRoadName,
+        SurfaceColor = Rgb.Hex(0x565757),
         Glyphs = Double,
         Foreground = Rgb.Hex(0xffd166),
         Background = Rgb.Hex(0x33302a),

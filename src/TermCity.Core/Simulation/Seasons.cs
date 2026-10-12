@@ -85,7 +85,8 @@ public static class Seasons
 /// </summary>
 internal static class Harvest
 {
-    public static double NeedPerWeek(CityGame game) => game.Stats.Population * game.Config.GrainPerPersonWeek;
+    public static double NeedPerWeek(CityGame game) =>
+        game.GrainRequired ? game.Stats.Population * game.Config.GrainPerPersonWeek : 0;
 
     /// <summary>The most weeks of grain the town can store: household bins plus whatever the working granaries hold.</summary>
     public static double StoreCapacity(CityGame game)
@@ -112,9 +113,10 @@ internal static class Harvest
     public static void RunWeek(CityGame game, WeekTally tally)
     {
         int population = game.Stats.Population;
-        if (population == 0)
+        if (population == 0 || !game.GrainRequired)
         {
             game.Hunger = 0;
+            game.BuyingGrain = false;
             return;
         }
 

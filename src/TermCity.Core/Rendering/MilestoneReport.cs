@@ -37,7 +37,9 @@ public static class MilestoneReport
             };
             if (building.Capacity > 0) rows.Add(Row("Capacity", ChoiceHelpContent.CapacityText(building)));
             if (building.Radius > 0) rows.Add(Row("Coverage",
-                $"{building.Radius * 2 + 1} x {building.Radius * 2 + 1} cells at strength {building.Strength}/100; fades to zero at radius {building.Radius * AreaFalloff.Extent:0.##}"));
+                $"Timely range {building.Radius} walking cells; target {building.ResponseTargetDays:0.00} days; " +
+                $"strength {building.Strength}/100; no distance cutoff"));
+            if (building.StaffingCapacity > 0) rows.Add(Row("Staffing", $"{building.StaffingCapacity:N0} residents at full funding"));
             if (building.Pollution != 0) rows.Add(Row("Air", building.Pollution > 0 ? "Produces smoke pollution" : "Reduces nearby pollution"));
             if (building.SeatRank > 0) rows.Add(Row("Seat of power", $"Rank {building.SeatRank}"));
             if (building.Pilgrims > 0) rows.Add(Row("Pilgrims", $"{building.Pilgrims} per feast"));
@@ -46,7 +48,7 @@ public static class MilestoneReport
         if (milestone.Population is 500 or 5_000)
             groups.Add(new("REDEVELOPMENT", [Row("Unlocks", milestone.Population == 500
                 ? "Burgage-house redevelopment with a lord's seat and good land value."
-                : "Tenement redevelopment with a keep, cobbles and good land value.")]));
+                : "Tenement redevelopment with a keep, room and good land value.")]));
         if (groups.Count == 1)
             groups.Add(new("UNLOCKED BUILDINGS", [Row("Availability", "All earlier buildings remain available.")]));
         return new(milestone.Name, groups);

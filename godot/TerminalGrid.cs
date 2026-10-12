@@ -110,7 +110,8 @@ public sealed class TerminalGrid
         Resize(_width, _height, session.ZoomLevel > 0 ? 2 : 1);
         session.SetViewport(Math.Max(1, (int)(_width / PixelWidth)), Math.Max(1, (int)(_height / PixelHeight)));
         VectorRoads = true;
-        var sampler = new BlockSampler(session.Game) { Overlay = session.Overlay, VectorRoads = VectorRoads };
+        var sampler = new BlockSampler(session.Game)
+            { Overlay = session.Overlay, VectorRoads = VectorRoads, BuildingSprites = true };
         var hillGlyphs = session.Game.Map.Content.Terrains
             .Where(terrain => terrain.Generator is HillGenerator)
             .SelectMany(terrain => terrain.Glyphs).ToHashSet();
@@ -127,7 +128,8 @@ public sealed class TerminalGrid
                 _cells[y * Columns + x] = session.Game.Map.InBounds(position)
                     ? session.ZoomLevel < 0
                         ? sampler.Sample(position.X, position.Y, session.Stride, out road)
-                        : CellRenderer.Render(session.Game, position.X, position.Y, session.Overlay, VectorRoads)
+                        : CellRenderer.Render(session.Game, position.X, position.Y, session.Overlay, VectorRoads,
+                            buildingSprites: true)
                     : null;
                 if (session.ZoomLevel >= 0)
                 {
@@ -172,7 +174,7 @@ public sealed class TerminalGrid
                 Background = Rgb.Hex(preview.IsValid(session.Game, position.X, position.Y) ? 0x2a7849 : 0x8c2d37),
             };
         }
-        if (session.HasCursor && !session.BuildingToolActive && block.Contains(session.Cursor))
+        if (session.HasCursor && !session.FixedPlacementToolActive && block.Contains(session.Cursor))
         {
             visual = visual with { Foreground = Rgb.Hex(0x000000), Background = Rgb.Hex(0xffdc5a) };
         }

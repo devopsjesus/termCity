@@ -60,6 +60,7 @@ public static class SanFranciscoMap
                 bool lake = Ellipse(u, v, 28, 90, 2, 3); // Lake Merced
                 bool elevated = land && Hills.Any(h => Ellipse(u, v, h.X, h.Y, h.Rx, h.Ry));
                 map.SetTerrain(x, y, !land || lake ? water : elevated ? hill : grass);
+                if (!land && !lake) map.SetSeaWater(x, y, true);
                 if (land && !lake && IsPark(u, v) && CellHash.Pick(x, y, 4) != 0)
                     map.SetFeature(x, y, tree);
             }

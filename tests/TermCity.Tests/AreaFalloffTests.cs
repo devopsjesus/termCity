@@ -7,18 +7,22 @@ namespace TermCity.Tests;
 public class AreaFalloffTests
 {
     [Fact]
-    public void CommonsCoverageMatchesPreviewCircleInScreenPixels()
+    public void CommonsTravelCoverageIsNotLimitedByPreviewCircle()
     {
         var game = TestCity.Flat(rules: CityRules.Full);
         game.HighestMilestone = 500;
         var green = game.Map.Content.Buildings.Get("Village Green");
-        Assert.True(game.PlaceBuilding(green, new(80, 18, 1, 1)).Success);
+        game.Map.SetBuildingFootprint(green, new(80, 18, green.Width, green.Height));
+        game.Touch();
         for (int dy = -7; dy <= 7; dy++)
             for (int dx = -11; dx <= 11; dx++)
             {
                 double distance = Math.Sqrt(Math.Pow(dx * RoadCurves.CellWidth, 2) +
                     Math.Pow(dy * RoadCurves.CellHeight, 2)) / RoadCurves.CellWidth;
-                int expected = (int)Math.Round(green.Strength * AreaFalloff.Strength(distance / green.Radius));
+                int index = game.Map.Index(80 + dx, 18 + dy);
+                int expected = Math.Max(1, (int)Math.Round(green.Strength *
+                    Math.Min(1, green.ResponseTargetDays / Math.Max(1 / TravelRoutes.UnitsPerDay,
+                        game.Services.ResponseDays(ServiceKind.Recreation, index)))));
                 Assert.Equal(expected, game.Services.Coverage(ServiceKind.Recreation, game.Map.Index(80 + dx, 18 + dy)));
                 Assert.Equal((float)(AreaOfEffect.OverlayAlpha * AreaFalloff.Strength(distance / green.Radius)),
                     AreaOfEffect.FadeAlpha(distance / green.Radius));
@@ -59,17 +63,18 @@ public class AreaFalloffTests
     [InlineData("Apothecary", ServiceKind.Health)]
     [InlineData("Market Cross", ServiceKind.Trade)]
     [InlineData("Guildhall", ServiceKind.Trade)]
-    public void ServicesStayFullInsideRadiusAndFadeBeyond(string name, ServiceKind kind)
+    public void ServicesReachBeyondTheirTimelyResponseRadius(string name, ServiceKind kind)
     {
         var game = TestCity.Flat(rules: CityRules.Full);
         game.HighestMilestone = 10_000;
         var building = game.Map.Content.Buildings.Get(name);
-        Assert.True(game.PlaceBuilding(building, new(80, 18, 1, 1)).Success);
+        game.Map.SetBuildingFootprint(building, new(80, 18, building.Width, building.Height));
+        game.Touch();
         int At(int distance) => game.Services.Coverage(kind, game.Map.Index(80 + distance, 18));
         Assert.Equal(building.Strength, At(0));
-        Assert.Equal(building.Strength, At(building.Radius));
-        Assert.InRange(At(building.Radius + 1), 1, building.Strength - 1);
-        Assert.Equal(0, At((int)Math.Ceiling(building.Radius * AreaFalloff.Extent)));
+        Assert.InRange(At(building.Radius), 1, building.Strength);
+        Assert.True(At(building.Radius + 1) <= At(building.Radius));
+        Assert.True(At((int)Math.Ceiling(building.Radius * AreaFalloff.Extent)) > 0);
     }
 
     [Fact]
@@ -108,10 +113,10 @@ public class AreaFalloffTests
     {
         var game = TestCity.Flat();
         var market = game.Map.Content.Buildings.Get("Market Cross");
-        Assert.Equal(18, market.Radius);
+        Assert.Equal(27, market.Radius);
         Assert.Equal(80, market.Strength);
         Assert.Equal(6_000, market.Cost);
         Assert.Equal(60, market.WeeklyUpkeep);
-        Assert.Equal(22.5, market.Radius * AreaFalloff.Extent);
+        Assert.Equal(33.75, market.Radius * AreaFalloff.Extent);
     }
 }

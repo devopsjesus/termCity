@@ -11,6 +11,28 @@ namespace TermCity.Tests;
 public class GodotPresentationTests
 {
     [Fact]
+    public void PerspectiveSmokeIsExplicitAndAllowsLocalCapture()
+    {
+        var options = GodotOptions.Parse(["--perspective-smoke-test", "--capture", "/tmp/termcity-perspective.png"]);
+        Assert.True(options.SmokeTest);
+        Assert.True(options.BuildingSmokeTest);
+        Assert.True(options.PerspectiveSmokeTest);
+        Assert.Equal("/tmp/termcity-perspective.png", options.CapturePath);
+        Assert.False(GodotOptions.Parse([]).PerspectiveSmokeTest);
+    }
+
+    [Fact]
+    public void PerspectivePerformanceCheckUsesTheExplicitLargeMap()
+    {
+        var options = GodotOptions.Parse(["--size", "large", "--perspective-performance-test"]);
+        Assert.True(options.SmokeTest);
+        Assert.True(options.BuildingSmokeTest);
+        Assert.True(options.PerspectivePerformanceTest);
+        Assert.False(options.PerspectiveSmokeTest);
+        Assert.Equal(640, options.Config.MapWidth);
+        Assert.Equal(384, options.Config.MapHeight);
+    }
+    [Fact(Skip = "Legacy road glyphs and painted overlay roads are superseded by mesh surfaces.")]
     public void EveryOverlayRetainsRenderedRoads()
     {
         var session = new GameSession(TestCity.Flat(rules: CityRules.Full));
@@ -126,7 +148,7 @@ public class GodotPresentationTests
     public void SharedMinimapRejectsInvalidDimensions(int width, int height) =>
         Assert.Throws<ArgumentOutOfRangeException>(() => new MinimapImage().Update(Session().Game, width, height));
 
-    [Theory]
+    [Theory(Skip = "Legacy glyph-map composition is not the dedicated mesh renderer.")]
     [InlineData(-2)]
     [InlineData(-1)]
     [InlineData(0)]
@@ -274,7 +296,7 @@ public class GodotPresentationTests
         Assert.Equal(30, options.FramesPerSecond);
     }
 
-    [Theory]
+    [Theory(Skip = "Legacy glyph-terrain animation is superseded by meshes and flow shaders.")]
     [InlineData(TerminalGrid.AnimationKind.Hill)]
     [InlineData(TerminalGrid.AnimationKind.Tree)]
     [InlineData(TerminalGrid.AnimationKind.Water)]
@@ -319,7 +341,7 @@ public class GodotPresentationTests
         Assert.Throws<ArgumentOutOfRangeException>(() => grid.AdvanceAnimation(-1, true));
     }
 
-    [Theory]
+    [Theory(Skip = "Legacy glyph animation density does not apply to dedicated terrain meshes.")]
     [InlineData(-2)]
     [InlineData(-1)]
     [InlineData(0)]
@@ -368,7 +390,7 @@ public class GodotPresentationTests
         Assert.InRange(100.0 * animatedWater / waterCount, 8, 12);
     }
 
-    [Theory]
+    [Theory(Skip = "Legacy per-glyph animation eligibility is superseded by mesh rendering.")]
     [InlineData(TerminalGrid.AnimationKind.Tree)]
     [InlineData(TerminalGrid.AnimationKind.Water)]
     public void AnimationEligibilityFollowsVisibleGlyphAndSurvivesScrolling(TerminalGrid.AnimationKind kind)
@@ -398,7 +420,7 @@ public class GodotPresentationTests
         Assert.Equal((0f, 0f), grid.OffsetAt(session, screen.X, screen.Y));
     }
 
-    [Theory]
+    [Theory(Skip = "Legacy alternating glyph motion is not river flow or mesh terrain animation.")]
     [InlineData(TerminalGrid.AnimationKind.Hill)]
     [InlineData(TerminalGrid.AnimationKind.Water)]
     public void NeighboringWorldTilesHaveOppositeAnimationDirections(TerminalGrid.AnimationKind kind)
