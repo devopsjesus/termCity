@@ -66,7 +66,7 @@ public class FullRulesTests
         var well = Civic(game, "Town Well");
         Assert.True(game.PlaceBuilding(woodlot, new CellRect(10, 18, 1, 1)).Success);
         Assert.True(game.PlaceBuilding(well, new CellRect(30, 5, 1, 1)).Success);
-        Assert.True(game.Designate(new CellRect(40, 18, 20, 1), ZoneType.Residential).Success);
+        Assert.True(game.Designate(new CellRect(40, 18, 20, 2), ZoneType.Residential).Success);
         TestCity.Advance(game, 10);
         Assert.True(game.Stats.Population > 0);
         Assert.Equal(well.Capacity, game.Services.Water.Supply);
@@ -159,6 +159,7 @@ public class FullRulesTests
         var game = Town();
         Power(game);
         TestCity.Advance(game, 40);
+        game.HighestPopulation = Math.Max(game.HighestPopulation, CityProgression.CareUnlockPopulation);
         double before = game.Indicators.Crime;
         Assert.True(game.PlaceBuilding(Civic(game, "Sheriff's Hall"), new CellRect(70, 19, 1, 1)).Success);
         game.Map.BuildingEstablishedDays.Clear();

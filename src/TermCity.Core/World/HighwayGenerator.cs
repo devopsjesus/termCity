@@ -725,6 +725,9 @@ public static class HighwayGenerator
         /// </summary>
         private bool Valid(IReadOnlyList<Pos> cells, IReadOnlyList<Pos> bends, Node a, Node? b, int maxWater, int maxRun, bool separate = false)
         {
+            if (cells.Count == 0 || !InBounds(cells[0].X, cells[0].Y) || !InBounds(cells[^1].X, cells[^1].Y) ||
+                !Open(cells[0].X, cells[0].Y) || !Open(cells[^1].X, cells[^1].Y))
+                return false;
             int water = 0, run = 0;
             for (int n = 0; n < cells.Count; n++)
             {
@@ -882,8 +885,11 @@ public static class HighwayGenerator
                     }
                 }
 
-                foreach (var p in best!)
+                int firstLand = best!.FindIndex(p => Open(p.X, p.Y));
+                int lastLand = best.FindLastIndex(p => Open(p.X, p.Y));
+                for (int index = firstLand; firstLand >= 0 && index <= lastLand; index++)
                 {
+                    var p = best[index];
                     _map.SetRoad(p.X, p.Y, _highway);
                 }
             }

@@ -294,8 +294,8 @@ public static class RoadCurves
         if (!closed)
         {
             // A dead end runs on to the edge of its cell.
-            corners[0] = Extend(corners, 0, masks[cells[0]]);
-            corners[^1] = Extend(corners, corners.Count - 1, masks[cells[^1]]);
+            corners[0] = Extend(map, corners, 0, masks[cells[0]]);
+            corners[^1] = Extend(map, corners, corners.Count - 1, masks[cells[^1]]);
             corners = Straighten(corners, new bool[corners.Count]);
         }
         else
@@ -588,7 +588,7 @@ public static class RoadCurves
         return (xs.Take(1).ToArray(), ys.Take(1).ToArray());
     }
 
-    private static (double X, double Y) Extend(List<(double X, double Y)> corners, int end, int mask)
+    private static (double X, double Y) Extend(GameMap map, List<(double X, double Y)> corners, int end, int mask)
     {
         var point = corners[end];
         if (System.Numerics.BitOperations.PopCount((uint)mask) > 1 || corners.Count < 2)
@@ -597,7 +597,12 @@ public static class RoadCurves
         }
 
         var inner = corners[end == 0 ? 1 : end - 1];
-        double dx = Math.Sign(point.X - inner.X) * CellWidth / 2.0, dy = Math.Sign(point.Y - inner.Y) * CellHeight / 2.0;
+        int directionX = Math.Sign(point.X - inner.X), directionY = Math.Sign(point.Y - inner.Y);
+        int cellX = (int)Math.Floor(point.X / CellWidth), cellY = (int)Math.Floor(point.Y / CellHeight);
+        int nextX = cellX + directionX, nextY = cellY + directionY;
+        if (map.TerrainAt(cellX, cellY).Buildable && map.InBounds(nextX, nextY) && !map.TerrainAt(nextX, nextY).Buildable)
+            return point;
+        double dx = directionX * CellWidth / 2.0, dy = directionY * CellHeight / 2.0;
         return (point.X + dx, point.Y + dy);
     }
 

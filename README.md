@@ -131,7 +131,10 @@ the service mapping and ideas for the future are in [docs/MEDIEVAL.md](docs/MEDI
   roughly one commercial cell is supported per 20 homes.
 - **Industrial (I):** factories and workshops; roughly one industrial cell per 10 homes.
 - Zoning is free. Growth needs clear multi-cell plots on walkable land, not road connectivity.
-  Cottages, stalls and workshops use 2x1 or 3x1 plots; higher-density buildings are larger.
+  Vacant plots use a small translucent checkerboard in green residential, blue commercial, or gold industrial;
+  it disappears when buildings grow or the land is dezoned.
+  New full-rules homes use varied 2x2–4x4 plots, fitting smaller plots when space is constrained.
+  Stalls/workshops and classic sandbox cottages retain their 2x1 or 3x1 plots.
   Weekly growth caps increase with city size. Remote walking arrivals are slower.
   A single R/C/I click reserves the minimum complete plot. Press P to resume after
   zoning; F8 and the cell inspector explain cramped plots or stalled settlement.
@@ -156,6 +159,8 @@ The game menu, quit confirmation, guide, and other regular dialogs remain center
 on the map, adjusted to stay on screen when space is limited.
 The **Add** button, with green text on a gray background, starts building placement or road-line drawing on the map.
 Building placement hides the yellow cursor highlight, leaving only green/red placement indicators.
+During building placement, **[ / ]** rotates the building 90° left/right, including its footprint.
+The placed building keeps its facing through save/load. Outside placement, these keys rotate the map.
 The icon rail has one shared double-line outer border and a single white outline around each icon.
 Buildings are listed vertically in single-bordered choices sized to fit their names,
 with one enclosing single-white border around the complete list,
@@ -176,6 +181,10 @@ Its initial viewing angle faces buildings toward screen-right.
 **TILT** cycles through 20, 35 and 50 degrees. Rotation changes the viewing angle, not the buildings'
 architecture or simulation footprint. Larger plots expand buildings/courtyards horizontally,
 not their tower height. Selection, placement, panning and building clicks use the camera projection.
+The minimap stays flat and square. Its entire contents rotate 90 degrees with the map;
+the white indicator traces the camera's actual ground footprint and changes angle/shape with
+the view. Tilting changes that indicator, not the minimap's shape. Clicks and drags still
+navigate to the corresponding world location.
 The tilted view's normal **1x** framing is 80% closer than the initial 3D view; **2x** doubles that baseline.
 This changes map magnification, not the size of the sidebar or dialogs.
 Perspective panning includes half a viewport of space beyond map boundaries, so any edge
@@ -189,14 +198,18 @@ Shallow-angle minor-road junctions slow travel. The Roads menu also offers a
 prebuilt **Traffic Circle**: a 5x5 cobbled ring with a grassy center.
 Water crossings and short, deep gaps between hills have bridge decks and supports.
 Rivers have consistent downstream flow with gentle gradients; water never inherits
-hill terrace levels. Flow animation respects pause and reduced-motion settings.
+hill terrace levels. Coarse downstream motion remains visible with low effects at normal
+and close zoom, including while paused. Effects-off and reduced-motion settings still stop it.
 Rocks vary between boulders, slabs, standing stones, split pairs, scattered stones
 and layered outcrops. Trees and rocks stay clear of the visible curved road bed.
 The 3D map renders at native panel resolution with edge antialiasing; pixel textures remain nearest-filtered.
 3D service range guides are circular screen-space overlays, unaffected by camera tilt or terminal-cell aspect.
 Grass and water use visible coarse, restrained-color blocks rather than smooth gradients,
 bright pixel flecks or thin wave lines. Tree canopies have clustered pixel-leaf textures and
-layered cubic foliage matching the buildings. Riverbanks use a smoothed
+layered cubic foliage matching the buildings. Woodland mixes spreading oaks, rounded
+and tall broad-leaf crowns, and two stepped pine silhouettes, with stable variations
+in height, width and leaf palette. Tree positions and gameplay remain unchanged.
+Riverbanks use a smoothed
 visual water contour instead of cell-shaped teeth; logical terrain and bridge rules are unchanged.
 The visual direction takes cues from late-1990s medieval strategy games: original
 pixel-textured stone, warm timber framing, thatch/slate roofs, and subdued countryside colors.
@@ -209,6 +222,11 @@ Watch House, Apothecary, Chapel and Tavern now use roomier **2x1** plots; costs 
 outputs are unchanged. Existing saved 1x1 versions retain their original footprints.
 The minimap and text map retain representative glyphs.
 Grass, water, shorelines, raised hills, trees and rocks use the same shaded pixel-art treatment.
+Water edges use whole-cell blocky steps matching the hill terraces; roads retain
+their existing curves and widths. Dry bank road endings stay ordinary roads,
+not partial bridges, and their endcaps stop inside the last dry cell before water.
+Coarse blue river patches travel downstream even while
+gameplay is paused; effects-off and reduced-motion modes still freeze them.
 Highway loops straighten grid staircases just like open roads, without repeated ripples.
 Click any opaque part of a building, including raised roofs and overhangs, to select it;
 right-click opens Building Status. Overlapping buildings pick front-to-back.
@@ -334,7 +352,12 @@ clipped at the right/bottom edges. The map/sidebar gap is also 12 logical pixels
 Cell details appear in the bottom status line, alongside dimensions/counts for selections larger
 than one cell and any current message.
 
-About 10% of visible hills, trees, and water animate at 80 BPM (one step every 0.75 seconds).
+In the perspective map, water keeps its stationary coarse blue texture. Sparse chunky ripples
+travel downstream along rounded cell-to-cell tracks at 0.75 cells per second, updated eight times
+per second. Most water pixels stay still; rivers continue flowing while gameplay is paused.
+Effects-off and reduced motion freeze the decorative flow, and lakes/sea do not receive river ripples.
+
+In the legacy cell view, about 10% of visible hills, trees, and water animate at 80 BPM (one step every 0.75 seconds).
 Hills move vertically; trees and water move horizontally. The chosen tiles remain stable while
 scrolling, adjacent tiles move oppositely, and only glyphs move: backgrounds and hit targets stay fixed.
 Bridges do not animate. Terrain decoration continues while gameplay is paused; cars, pedestrians,

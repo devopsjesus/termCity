@@ -7,6 +7,51 @@ namespace TermCity.Tests;
 
 public class RoadMeshLayoutTests
 {
+    [Theory]
+    [InlineData(-1, 0)]
+    [InlineData(1, 0)]
+    [InlineData(0, -1)]
+    [InlineData(0, 1)]
+    public void ShoreRoadDeadEndPaddingStopsBeforeWaterInEveryDirection(int directionX, int directionY)
+    {
+        var map = new GameMap(24, 24, new GameContent());
+        map.SetTerrain(12 + directionX, 12 + directionY, map.Content.Terrains.Get("Water"));
+        for (int step = 0; step < 4; step++)
+            map.SetRoad(12 - directionX * step, 12 - directionY * step, true);
+        var path = Assert.Single(RoadCurves.Extract(map, (_, _) => true));
+        var ends = new[]
+        {
+            new Vector2((float)path.Xs[0] / RoadCurves.CellWidth, (float)path.Ys[0] / RoadCurves.CellHeight),
+            new Vector2((float)path.Xs[^1] / RoadCurves.CellWidth, (float)path.Ys[^1] / RoadCurves.CellHeight)
+        };
+        Assert.Contains(ends, point => Vector2.DistanceSquared(point, new(12.5f, 12.5f)) < 0.000001f);
+        var layout = new RoadMeshLayout(map, [path]);
+        Assert.All(layout.Segments, segment => Assert.False(segment.Bridge));
+        Assert.Equal(4, map.RoadCells.Count);
+        Assert.False(map.HasRoad(12 + directionX, 12 + directionY));
+    }
+
+    [Fact]
+    public void DryRoadDeadEndsOnNarrowBanksDoNotBecomeHalfBuiltBridges()
+    {
+        var map = new GameMap(24, 24, new GameContent());
+        for (int row = 0; row < map.Height; row++)
+            for (int column = 8; column < map.Width; column++)
+                map.SetTerrain(column, row, map.Content.Terrains.Get("Water"));
+        map.SetTerrain(8, 12, map.Content.Terrains.Get("Meadow"));
+        var path = new RoadPath(map.Content.Roads.Default, true, false,
+            [3.5 * RoadCurves.CellWidth, 8.5 * RoadCurves.CellWidth],
+            [12.5 * RoadCurves.CellHeight, 12.5 * RoadCurves.CellHeight]);
+        Assert.True(TerrainSprite.WaterSurface(map, 8.5, 12.5) >= ShorelineLayout.WaterThreshold);
+        var layout = new RoadMeshLayout(map, [path]);
+        Assert.All(layout.Segments, segment => Assert.False(segment.Bridge));
+        Assert.All(layout.Segments, segment =>
+        {
+            Assert.Equal(0, segment.HeightA);
+            Assert.Equal(0, segment.HeightB);
+        });
+    }
+
     private static RoadPath Path(GameMap map, bool closed, params Vector2[] points) =>
         new(map.Content.Roads.Default, true, closed, points.Select(p => (double)p.X * 12).ToArray(),
             points.Select(p => (double)p.Y * 22).ToArray());
@@ -71,6 +116,28 @@ public class RoadMeshLayoutTests
             Assert.Equal(terrace, layout.SupportedShoulderHeight(new(x, 32.92f), terrace), 5);
         }
         Assert.True(layout.Segments.Count < 45, "Level stretches must still coalesce for cached terrain rendering.");
+    }
+
+    [Fact]
+    public void RoadsAlongUpperCoastalTerracesStayAtTheTerraceHeight()
+    {
+        var map = new GameMap(32, 32, new GameContent());
+        for (int row = 4; row < 28; row++)
+            for (int column = 4; column < 16; column++)
+                map.SetTerrain(column, row, map.Content.Terrains.Get("Hill"));
+        for (int row = 0; row < map.Height; row++)
+            for (int column = 16; column < map.Width; column++)
+                map.SetTerrain(column, row, map.Content.Terrains.Get("Water"));
+        float level = TerrainSprite.Elevation(map, 14, 15);
+        Assert.True(level > TerrainSprite.HillBaseHeight);
+        var layout = new RoadMeshLayout(map, [Path(map, false, new(14.99f, 10.5f), new(14.99f, 20.5f))]);
+        Assert.NotEmpty(layout.Segments);
+        foreach (var segment in layout.Segments)
+        {
+            Assert.False(segment.Bridge);
+            Assert.Equal(level, segment.HeightA, 5);
+            Assert.Equal(level, segment.HeightB, 5);
+        }
     }
 
     [Theory]

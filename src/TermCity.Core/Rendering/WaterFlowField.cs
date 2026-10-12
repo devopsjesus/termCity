@@ -79,10 +79,41 @@ public sealed class WaterFlowField
                     }
             bool classifiedRiver = component.Any(cell => map.RiverLayer[cell]);
             int riverStart = broadBody ? classifiedRiver ? 3 : 6 : 0;
+            int ChannelCost(int cell, int next)
+            {
+                int column = cell % map.Width, row = cell / map.Width;
+                int directionX = next % map.Width - column, directionY = next / map.Width - row;
+                int cost = Math.Abs(width[next] - width[cell]) * 8;
+                for (int step = 2; step <= 4; step++)
+                {
+                    int aheadX = column + directionX * step, aheadY = row + directionY * step;
+                    if (!map.InBounds(aheadX, aheadY)) break;
+                    int ahead = map.Index(aheadX, aheadY);
+                    if (!water[ahead])
+                    {
+                        cost += width[cell] + 4;
+                        break;
+                    }
+                    cost += Math.Abs(width[ahead] - width[cell]);
+                }
+                return cost;
+            }
             foreach (int cell in component)
             {
                 bool river = !map.SeaLayer[cell] && (!classifiedRiver || map.RiverLayer[cell]) &&
                     distance[cell] > riverStart;
+                if (river && downstream[cell] >= 0)
+                {
+                    int bestCost = ChannelCost(cell, downstream[cell]);
+                    foreach (int next in Neighbors(cell))
+                    {
+                        if (!water[next] || distance[next] != distance[cell] - 1) continue;
+                        int cost = ChannelCost(cell, next);
+                        if (cost >= bestCost) continue;
+                        bestCost = cost;
+                        downstream[cell] = next;
+                    }
+                }
                 var direction = downstream[cell] < 0 ? new Pos(0, 0) :
                     map.PosOf(downstream[cell]).Offset(-(cell % map.Width), -(cell / map.Width));
                 float level = -0.16f + Math.Min(0.12f, Math.Max(0, distance[cell] - 3) * 0.001f);

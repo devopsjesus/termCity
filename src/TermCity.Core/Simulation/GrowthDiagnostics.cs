@@ -39,8 +39,9 @@ public static class GrowthDiagnostics
         var capacity = Capacity(game, zone, eligible);
         if (capacity.Status != GrowthStatus.Ready) return capacity;
         var building = game.Map.Content.Buildings.ForZone(zone);
+        var size = game.MinimumGrowthSize(zone);
         if (building is not null && game.VacantPlots(zone).Count == 0)
-            return Result(GrowthStatus.NeedsSpace, $"Needs a clear {building.Width}x{building.Height} zoned plot.", eligible, game);
+            return Result(GrowthStatus.NeedsSpace, $"Needs a clear {size.Width}x{size.Height} zoned plot.", eligible, game);
         return capacity;
     }
 
@@ -58,8 +59,9 @@ public static class GrowthDiagnostics
         var capacity = Capacity(game, zone, 1);
         if (capacity.Status != GrowthStatus.Ready) return capacity;
         var type = game.Map.Content.Buildings.ForZone(zone);
+        var size = game.MinimumGrowthSize(zone);
         if (type is not null && !game.VacantPlots(zone).Any(area => area.Contains(x, y)))
-            return Result(GrowthStatus.NeedsSpace, $"Needs a clear {type.Width}x{type.Height} zoned plot.", 0, game);
+            return Result(GrowthStatus.NeedsSpace, $"Needs a clear {size.Width}x{size.Height} zoned plot.", 0, game);
         return capacity;
     }
 

@@ -236,7 +236,7 @@ public class GodotPresentationTests
         Assert.Equal(Rgb.Hex(0xffdc5a), grid.VisualAt(session, 3, 1)!.Value.Background);
         session.PreviewRoad();
         Assert.Equal(Rgb.Hex(0x2a7849), grid.VisualAt(session, 1, 1)!.Value.Background);
-        session.Game.Map.SetTerrain(start.X, start.Y, session.Game.Map.Content.Terrains.Get("Water"));
+        session.Game.Map.SetZone(start.X, start.Y, ZoneType.Residential);
         session.Game.Touch();
         Assert.Equal(Rgb.Hex(0x8c2d37), grid.VisualAt(session, 1, 1)!.Value.Background);
         Assert.Equal(Rgb.Hex(0xffdc5a), grid.VisualAt(session, 3, 1)!.Value.Background);

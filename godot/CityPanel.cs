@@ -12,6 +12,8 @@ public partial class CityPanel : Control
     public Action<int> ZoomBy { get; set; } = null!;
     public Action TiltMap { get; set; } = null!;
     public Action RotateMap { get; set; } = null!;
+    public Func<(float Azimuth, float Elevation)?> CameraOrientation { get; set; } = () => null;
+    public Func<Vector2[]?> CameraFootprint { get; set; } = () => null;
     public CityMinimap Minimap { get; private set; } = null!;
     private readonly Dictionary<ZoneType, ProgressBar> _demand = [];
     private readonly Dictionary<ZoneType, Control[]> _demandHover = [];
@@ -43,7 +45,7 @@ public partial class CityPanel : Control
         _top.AddThemeConstantOverride("v_separation", 4);
         _content.AddChild(_top);
         var overview = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        Minimap = new CityMinimap { Session = Session };
+        Minimap = new CityMinimap { Session = Session, CameraOrientation = CameraOrientation, CameraFootprint = CameraFootprint };
         Minimap.SetHeight(120);
         var cameraControls = new HBoxContainer
         {
@@ -64,7 +66,7 @@ public partial class CityPanel : Control
             Text = "ROTATE",
             FocusMode = FocusModeEnum.None,
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
-            TooltipText = "Rotate 90° clockwise; [ left / ] right"
+            TooltipText = "Rotate map 90° clockwise; [ / ] rotate a building during placement, otherwise the map"
         };
         tilt.Pressed += () => { if (!Blocked) TiltMap(); };
         rotate.Pressed += () => { if (!Blocked) RotateMap(); };
@@ -301,7 +303,7 @@ public partial class CityPanel : Control
         _fitting = true;
         try
         {
-            float mapHeight = Size.X * Session.Game.Map.Height * 1.5f / Session.Game.Map.Width;
+            float mapHeight = Size.X;
             bool compact = Size.Y < mapHeight + 300;
             _top.Columns = 1;
             int columns = compact ? 4 : 2;

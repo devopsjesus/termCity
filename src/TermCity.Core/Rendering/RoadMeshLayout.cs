@@ -52,10 +52,8 @@ public sealed class RoadMeshLayout
             {
                 int x = Math.Clamp((int)MathF.Floor(point.X), 0, map.Width - 1);
                 int y = Math.Clamp((int)MathF.Floor(point.Y), 0, map.Height - 1);
-                bool isWater = !map.TerrainAt(x, y).Buildable ||
-                    TerrainSprite.WaterDensity(map, x, y) > 0 &&
-                    TerrainSprite.WaterSurface(map, point.X, point.Y) >= ShorelineLayout.WaterThreshold;
-                return (isWater ? 0.17f : TerrainSprite.CoastalLandSurface(map, x, y, point.X, point.Y), isWater);
+                bool isWater = !map.TerrainAt(x, y).Buildable;
+                return (isWater ? 0.17f : TerrainSprite.Elevation(map, x, y), isWater);
             }
             void Add(Vector2 point)
             {

@@ -7,6 +7,68 @@ namespace TermCity.Tests;
 
 public class WaterFlowTests
 {
+    [Theory]
+    [InlineData(false, 8)]
+    [InlineData(false, 9)]
+    [InlineData(true, 8)]
+    [InlineData(true, 9)]
+    public void WideRiverRipplesTravelAlongBothBanksInsteadOfAcrossTheChannel(bool horizontal, int width)
+    {
+        var map = new GameMap(48, 48, new GameContent());
+        var water = map.Content.Terrains.Get("Water");
+        for (int along = 0; along < 48; along++)
+            for (int across = 12; across < 12 + width; across++)
+            {
+                int column = horizontal ? along : across, row = horizontal ? across : along;
+                map.SetTerrain(column, row, water);
+                map.SetRiverWater(column, row, true);
+            }
+        var flow = new WaterFlowField(map);
+        var expected = horizontal ? new Pos(-1, 0) : new Pos(0, 1);
+        for (int along = 10; along < 34; along++)
+            for (int across = 12; across < 12 + width; across++)
+            {
+                int column = horizontal ? along : across, row = horizontal ? across : along;
+                Assert.Equal(expected, flow.At(column, row).Direction);
+                var track = RiverRippleLayout.At(map, flow, column, row);
+                Assert.Equal(expected, track.Incoming);
+                Assert.Equal(expected, track.Outgoing);
+                Assert.Equal(flow.At(column, row).Distance - 1,
+                    flow.At(column + expected.X, row + expected.Y).Distance);
+            }
+    }
+
+    [Fact]
+    public void WideBentRiverFollowsItsCourseBeforeAndAfterTheTurn()
+    {
+        var map = new GameMap(48, 48, new GameContent());
+        var water = map.Content.Terrains.Get("Water");
+        for (int row = 0; row <= 28; row++)
+            for (int column = 12; column <= 20; column++)
+            {
+                map.SetTerrain(column, row, water);
+                map.SetRiverWater(column, row, true);
+            }
+        for (int row = 20; row <= 28; row++)
+            for (int column = 12; column < 48; column++)
+            {
+                map.SetTerrain(column, row, water);
+                map.SetRiverWater(column, row, true);
+            }
+        var flow = new WaterFlowField(map);
+        for (int column = 12; column <= 20; column++) Assert.Equal(new Pos(0, 1), flow.At(column, 10).Direction);
+        for (int row = 20; row <= 28; row++) Assert.Equal(new Pos(1, 0), flow.At(34, row).Direction);
+        for (int row = 0; row < 48; row++)
+            for (int column = 0; column < 48; column++)
+            {
+                var current = flow.At(column, row);
+                if (!current.River) continue;
+                var next = flow.At(column + current.Direction.X, row + current.Direction.Y);
+                Assert.Equal(current.Distance - 1, next.Distance);
+                Assert.InRange(current.Level - next.Level, 0, 0.00101f);
+            }
+    }
+
     [Fact]
     public void NarrowRiverFlowsToItsOutletWithoutCyclesOrTerraceDrops()
     {

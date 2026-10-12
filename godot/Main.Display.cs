@@ -394,6 +394,10 @@ public partial class Main
         city.AddChild(_linePreview);
         _panel = new CityPanel { Session = Session, ZoomBy = delta => Map.ZoomBy(delta),
             TiltMap = Map.TiltMap, RotateMap = Map.RotateMap,
+            CameraOrientation = () => Map.PerspectiveEnabled && Map.Perspective is { } camera
+                ? (camera.Azimuth, camera.Elevation) : null,
+            CameraFootprint = () => Map.PerspectiveEnabled && Map.Perspective is { } camera
+                ? camera.GroundViewCorners() : null,
             SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsVertical = SizeFlags.ExpandFill };
         var sidebar = new TerminalFrame { VisibleContentPadding = RailPadding };
         sidebar.AddChild(_panel);

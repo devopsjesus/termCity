@@ -7,6 +7,90 @@ namespace TermCity.Tests;
 public class ShorelineLayoutTests
 {
     [Fact]
+    public void BankColorCoversEveryStraightAndSteppedWaterEdge()
+    {
+        var map = new GameMap(24, 24, new GameContent());
+        for (int column = 0; column < map.Width; column++)
+        {
+            int edge = 8 + column / 4 % 2;
+            for (int row = edge; row < map.Height; row++)
+                map.SetTerrain(column, row, map.Content.Terrains.Get("Water"));
+            Assert.True(ShorelineLayout.BankCell(map, column, edge - 1));
+        }
+        for (int row = 0; row < map.Height; row++)
+            for (int column = 0; column < map.Width; column++)
+            {
+                bool expected = map.TerrainAt(column, row).Buildable &&
+                    new[] { (column - 1, row), (column + 1, row), (column, row - 1), (column, row + 1) }
+                        .Any(neighbor => map.InBounds(neighbor.Item1, neighbor.Item2) &&
+                            !map.TerrainAt(neighbor.Item1, neighbor.Item2).Buildable);
+                Assert.Equal(expected, ShorelineLayout.BankCell(map, column, row));
+            }
+    }
+
+    [Fact]
+    public void BankColorExcludesDiagonalOnlyContactsAndOffMapAtlasPadding()
+    {
+        var map = new GameMap(24, 24, new GameContent());
+        map.SetTerrain(0, 0, map.Content.Terrains.Get("Water"));
+        map.SetTerrain(1, 0, map.Content.Terrains.Get("Hill"));
+        Assert.False(ShorelineLayout.BankCell(map, 0, 0));
+        Assert.True(ShorelineLayout.BankCell(map, 1, 0));
+        Assert.True(ShorelineLayout.BankCell(map, 0, 1));
+        Assert.False(ShorelineLayout.BankCell(map, 1, 1));
+        Assert.False(ShorelineLayout.BankCell(map, 2, 0));
+        Assert.False(ShorelineLayout.BankCell(map, -1, 0));
+        Assert.False(ShorelineLayout.BankCell(map, 0, -1));
+        Assert.False(ShorelineLayout.BankCell(map, map.Width, 0));
+        Assert.False(ShorelineLayout.BankCell(map, 0, map.Height));
+    }
+
+    [Fact]
+    public void BlockyShorelinesUseWholeTerrainBlocksWithoutChangingRoadProfiles()
+    {
+        var map = new GameMap(24, 24, new GameContent());
+        for (int row = 0; row < map.Height; row++)
+            for (int column = Math.Max(1, row / 2); column < map.Width; column++)
+                map.SetTerrain(column, row, map.Content.Terrains.Get("Water"));
+        map.SetTerrain(8, 16, map.Content.Terrains.Get("Hill"));
+        var path = new RoadPath(map.Content.Roads.Default, true, false, [6 * 12d, 14 * 12d], [16 * 22d, 16 * 22d]);
+        var before = new RoadMeshLayout(map, [path]).Segments.ToArray();
+        var elevations = Enumerable.Range(0, map.Width * map.Height)
+            .Select(index => TerrainSprite.Elevation(map, index % map.Width, index / map.Width)).ToArray();
+        for (int row = 0; row < map.Height; row++)
+            for (int column = 0; column < map.Width; column++)
+            {
+                var patch = Assert.Single(ShorelineLayout.BlockyCell(map, column, row));
+                Assert.Equal(!map.TerrainAt(column, row).Buildable, patch.Water);
+                Assert.Equal(1, Area(patch.Polygon), 5);
+                Assert.All(patch.Polygon, point =>
+                {
+                    Assert.Equal(MathF.Round(point.X), point.X);
+                    Assert.Equal(MathF.Round(point.Y), point.Y);
+                });
+                for (int edge = 0; edge < patch.Polygon.Length; edge++)
+                {
+                    var start = patch.Polygon[edge];
+                    var end = patch.Polygon[(edge + 1) % patch.Polygon.Length];
+                    Assert.True(start.X == end.X || start.Y == end.Y);
+                }
+                Assert.Equal(elevations[map.Index(column, row)], TerrainSprite.Elevation(map, column, row));
+            }
+        var after = new RoadMeshLayout(map, [path]).Segments.ToArray();
+        Assert.Equal(before.Length, after.Length);
+        for (int segment = 0; segment < before.Length; segment++)
+        {
+            Assert.Equal(before[segment].A, after[segment].A);
+            Assert.Equal(before[segment].B, after[segment].B);
+            Assert.Equal(before[segment].HeightA, after[segment].HeightA);
+            Assert.Equal(before[segment].HeightB, after[segment].HeightB);
+            Assert.Equal(before[segment].Bridge, after[segment].Bridge);
+            Assert.Equal(before[segment].Road, after[segment].Road);
+            Assert.Equal(before[segment].Corridor, after[segment].Corridor);
+        }
+    }
+
+    [Fact]
     public void ShorelinePartitionsCellsWithoutOverlappingLandAndWater()
     {
         var map = new GameMap(24, 24, new GameContent());

@@ -108,11 +108,47 @@ to built cells. `SetRoad`, `SetZone` and `ClearCell` maintain them; loading rebu
 `BuildingType.Width/Height` define player-placement footprints. `PlanBuildings` tiles the
 expanded selection, rejecting blocked buildings atomically. `GameMap.BuildingFootprints` and a
 sparse cell-owner lookup associate occupied cells with one building; `ServiceCells` contains
-only its anchor. Zoned buildings also register complete footprints: cottages, stalls and workshops
-start at 2x1 or 3x1; denser types need larger plots. Households live only at the anchor,
+only its anchor. Zoned buildings also register complete footprints: new full-rules homes
+use 2x2–4x4 plots; stalls/workshops and classic cottages retain 2x1 or 3x1 plots.
+Households live only at the anchor,
 and population, jobs, taxes, supply demand and pollution count each building once.
 Land is walkable without road access. Area effects originate at the anchor.
 Saves retain explicit footprints; service buildings without them are rejected on load.
+`BuildingType.FootprintAt` swaps width/height for odd quarter-turn rotations. Placement validation,
+quotes, hill costs and confirmation all use that same rotated footprint. Building previews retain
+their rotation when moved; `[` / `]` rotate the building while placing it, not the map.
+Nonzero orientations are stored sparsely by anchor in `GameMap.BuildingRotations`, persisted as an
+optional save dictionary and removed with the building. Older saves default to zero rotation.
+The perspective renderer rotates the original model around its footprint center without stretching
+its proportions; roofs, walls and picking volumes share the transform. Foundations follow the
+actual occupied terrain cells, not the rotated model's local coordinates.
+
+Vacant zones reuse `CellRenderer.RenderZone` for the foreground/background palettes,
+reachability dimming and active map-overlay tint, not its legacy shade glyph. The perspective
+renderer uses a cached 8x8 texture with solid 2x2-pixel checker blocks, repeated as four checks
+per world-cell side. Terrain-following surfaces are independent of cursor selection or placement
+indicators. Colored checks alpha-blend at 58% opacity; alternating gaps remain about 11% opaque.
+The terrain stays visible without stippling, fine linework or a heavy solid backing.
+`ZoneOverlayArtwork` shares the legacy colors, including dimming and overlay tints. Occupied and
+dezoned cells have no vacant overlay.
+Perspective smoke checks real zoning/dezoning actions, saved designations and actual marker pixels
+at all four camera headings, including raised plots; it also checks building fronts and picking
+at all four building orientations.
+
+Residential perspective models use `HouseAppearance.At` for deterministic palette, proportion,
+roof-direction and pitch variants, with occasional low wings and broad chimneys. Original medieval
+artwork uses cached 32x32 textures: irregular plaster patches, shaded thatch bundles, staggered
+clay/slate roof courses and masonry. Four-pixel clusters and eight-pixel-deep solid courses
+replace narrow thatch scores, tile highlights and mortar seams; no fine lines or squiggles.
+Broad timber corners/eaves, plaster gables, recessed window surrounds, stone sills and solid roof
+caps provide depth without the generic fine facade framing. Appearance depends on anchor and
+building level, so reloads do not shuffle house variants. Other building models are unchanged.
+On hills, residential foundations follow the inset house/wing walls and intersect the existing
+terrain as stepped stone lower levels. Deep exposed sides have lower windows; shallow changes
+remain masonry footings. Houses no longer receive full-plot wood supports or floating plot slabs.
+Upper floors remain level, and terrain, simulation capacity, placement rules and costs are unchanged.
+Perspective smoke checks lower-level support/picking at four camera headings, rotated foundation
+alignment and unchanged terrain heights, and captures a hillside house for visual inspection.
 
 `GameContent` combines terrain, feature, building and road registries. Types receive compact byte
 IDs in memory; saves resolve their names instead, allowing content reorderings.
@@ -214,6 +250,9 @@ These are hand-shaped, north-up regional approximations, not GIS/current land-us
 The layouts include city-specific coastlines/rivers/hills/parks and road-served occupied R/C/I
 districts. They keep the medieval setting's vocabulary and economy. Households use independent scenario RNG stages.
 Scenario road strokes cross water only when the crossing has land approaches at both ends.
+Crossings are checked against the accepted road plan, including both banks, before any
+new water cells are committed; a rejected bank cannot leave half a bridge. Random highway
+routes reject wet endpoints, and fallback straight highways omit leading/trailing open water.
 Water-starting/ending road spurs are skipped, street grids stay on buildable land and cannot
 branch directly onto bridge water cells. Chicago and St. Louis highway bends stay off their rivers,
 while deliberate bridges (including Golden Gate and Bay Bridge) remain. These rules apply to
@@ -235,8 +274,12 @@ New games capture the local starting year; saves must contain it.
 Growth is planned weekly and distributed across days. Clear multi-cell zoned plots fill up to their daily
 allocation. Candidates are sorted before random selection so results remain stable after loading
 sparse indexes. Base weekly caps are 3 homes, 1 shop and 1 factory, plus 2% of existing capacity.
-Single-cell session zoning expands to the registered minimum growth footprint, clamped inside
-the map. Core `Designate` retains exact selection semantics. Cell/zone diagnostics distinguish
+Single-cell session zoning expands to the minimum growth footprint, clamped inside
+the map. Full-rules residential clicks reserve 2x2; deterministic coordinate-based preferences
+choose wider/deeper homes up to 4x4 when clear zoned land permits, then fit down to 2x2.
+Narrow strips cannot grow new full-rules homes. Existing small homes and classic growth remain
+compatible; building capacity and household counts do not scale with plot area.
+Core `Designate` retains exact selection semantics. Cell/zone diagnostics distinguish
 incomplete plots from low attraction and missing starter fuel/water dispatch.
 Commercial/industrial growth unlocks at 10 occupied residential buildings, with one supported shop per
 20 homes and one factory per 10 homes.
@@ -278,8 +321,15 @@ breadth-first fields avoid building interiors and unbridged water; building rout
 also form in roadless settlements and begin at both building perimeters.
 Repeated traffic compacts segments at wear 3; wear caps at 12. Paths are not roads,
 cost nothing, do not require edge connectivity, and survive saves and undo.
-`FootpathLayout` joins path segments to adjacent paths, roads and building edges,
-including turns and junctions, in both perspective and overhead rendering.
+Perspective footpaths follow the same cached building/road journeys that sims wear, rather than
+joining every adjacent worn cell. `FootpathLayout.Strokes` clips unworn gaps and rounds corners
+inside their traveled cells, so neighboring routes do not acquire artificial ladder rungs.
+Terrain-following mesh ribbons replace overlapping rectangular bars. `RibbonSections` samples
+the centerline and smoothly flares its width at road contacts; targets project onto the actual
+road centerline, including diagonal roads. Ribbons are clipped against the road polygons, so
+their curved mouths meet the road edge without painting dirt over it. Free ends and abandoned
+wear use rounded dirt patches. Routing, wear, costs and save data are unchanged;
+the overhead glyph renderer retains its existing cardinal connectivity.
 Roads remain useful travel boosts, not prerequisites for settlement or redevelopment.
 
 `Changed` notifies possible UI changes; `MapVersion` advances only for map-visible changes.
@@ -650,9 +700,17 @@ standing and employment rows duplicated elsewhere. Demand tooltips contain all p
 keyboard users get the identical formatter through F7, F8 and the full-rules health report.
 City body text targets 16 logical pixels (three larger than the previous body setting); section
 headers stay at 18. Constrained layouts adapt the body size without changing the header font.
-`CityPanel` prioritizes an aspect-correct minimap at the full content width, adjusting text spacing
+`CityPanel` prioritizes a square minimap at the full content width, adjusting text spacing
 and using paired City rows when height is constrained. Minimap and Demand remain full-width blocks.
 The minimap has no section header; its zoom controls sit directly above it.
+`MinimapProjection` maps the entire overview into a fixed square and rotates its
+contents in quarter turns relative to the initial camera heading. The overview
+does not inherit camera tilt or become a diamond. `GroundViewCorners` projects
+the four viewport corners onto the ground plane; the white indicator traces that
+footprint rather than the session's axis-aligned view rectangle. Its edges clip
+to the square without changing angle. Click/drag navigation uses the inverse
+quarter-turn transform. Heading and tilt changes reuse the cached `MinimapImage`
+and texture rather than resampling terrain. The legacy cell view stays north-up.
 CITY and DEMAND headings retain larger 22-point text while the sidebar fits.
 The zoom section has a single square white border on black with a 1-pixel inset
 on all sides, leaving no extra gutter beyond the border.
@@ -856,9 +914,9 @@ A cached breadth-first
 distance from each hill region's boundary determines height; terrain edits invalidate
 the cache, and save/load derives identical terraces from the saved terrain layout.
 Coastal singleton/sliver caps collapse visually without changing logical terrain.
-Higher terrace tops ease down toward the lowest bank level near water; dry
-shoreline fragments inherit the lowest adjoining land level rather than borrowing
-the highest inland terrace. Bank walls and picking use those same surfaces.
+Higher terrace tops keep level edges beside water rather than easing down toward
+the next terrace; bank faces close the vertical step. Smoothed shoreline-cap
+classification and road profiles remain unchanged by the blocky visible shore.
 Perspective roads are dedicated meshes, not pixels painted onto terrain.
 The sidebar's TILT and ROTATE buttons sit above the minimap zoom controls.
 Each button has its own single white border on black; there is no overhead toggle.
@@ -926,6 +984,9 @@ Deck edges have solid 0.12-unit vertical fascia following the exact top mesh,
 not an infinitely thin sheet. Railings use thicker 0.13-by-0.18-unit members and
 posts spaced two world cells along each continuous span, with restrained
 unstriped wood/stone colors rather than fine bright railing textures.
+Deck-side triangles are retained in the ground-picking cache. Rails and posts use exact transformed
+box intersections; the nearest visible hit resolves to a road cell on the owning bridge path,
+instead of selecting adjacent water. Graphical/headless smoke covers railing clicks at four headings.
 Abutment excavation checks the clipped deck corridor's vertices and edge
 midpoints, not only the logical cell center, so a sloped or curved bridge approach
 cannot retain hill grass that protrudes through one edge of the carriageway.
@@ -954,46 +1015,74 @@ downgraded. Placement is one undoable action and saves as ordinary road cells.
 
 `WaterFlowField` derives deterministic downstream directions toward broad water
 bodies/outlets. Each river step reduces distance to its outlet, preventing
-cycles; adjacent water levels change by at most 0.001 units, with total channel
+cycles. Equal-distance routes prefer similar bank clearance and a short
+bank-aware lookahead, so ripples travel along the channel rather than across
+it toward an arbitrary shortest-path parent. Outlet distances, classification
+and rendered water levels are unchanged by this direction preference.
+Adjacent water levels change by at most 0.001 units, with total channel
 relief capped at 0.12. Lakes stay level and no waterfalls are generated by
 default. Water heights never use hill levels, and shoreline blue does not spill
 onto raised hilltops. Generated/scenario river identity is retained in an optional
 compressed save layer, so a wide river does not become a still lake simply because
 its center is several cells from the bank. River paths drain toward classified
-sea or broad non-river bodies. A cached flow atlas carries downstream directions
-and outlet-distance phase; coarse four-pixel patches carry a gentle 2–4% brightness
-change downstream at 0.4 world cells per second, with four updates per second.
-Pause, effects-off and
-reduced-motion modes freeze them without rebuilding terrain geometry.
+sea or broad non-river bodies. A cached flow atlas carries incoming/outgoing directions
+and outlet-distance phase. `RiverRippleLayout` defines quadratic tracks joining
+water-cell edge midpoints, rounding turns without moving the shoreline or terrain.
+Sparse chunky ripple accents travel downstream at 0.75 world cells per second,
+with eight updates per second and one active cell per eight distance steps.
+The coarse base-water texture stays stationary; most pixels do not animate. The existing
+muted water palette remains unchanged. All cached chunks use the same rendered
+flow clock, including chunks first revealed by panning.
+Decorative river motion continues while gameplay is paused, without advancing the simulation.
+Effects-off and reduced-motion modes freeze it without rebuilding terrain geometry.
+Road shoulders share one canonical height for each world-space vertex, including cell/chunk
+boundaries, so terrace seams cannot create brown wedges inside the tan incline. Terrace-remnant
+cleanup is limited to the shoreline's land polygons; water beneath bridge approaches is never
+replaced by an elevated shoulder. Natural generated crossings are scanned for background gaps
+at four headings, in addition to constructed bridge, shoreline and hill-road fixtures.
 Render-on-demand retains two actual settling frames before disabling the viewport
 on the following tick, so a flow-clock update cannot be canceled before drawing.
 Terrain/road/bank triangle buffers upload their vertex attributes in batches
 rather than issuing native calls for every vertex.
 
+`TreeAppearance` supplies deterministic model parts for oak, rounded, tall and spreading
+broad-leaf crowns and two tapered, overlapping-tier pine silhouettes. Coordinates select
+the shape, proportions and broad-leaf palette; pines use darker evergreen colors.
+`PerspectiveCity` batches these parts through the same box/material path for natural
+features and planted service-building trees, retaining preview tint, rotation and picking.
+Foliage keeps the existing nearest-filtered four-pixel texture clusters. Feature generation,
+save data, terrain and legacy glyphs are unchanged.
+
 Tests tied solely to retired painted roads, ASCII map elements, highway merge
 ramps and glyph-terrain animation have explicit skip reasons. Dedicated mesh,
 partition coverage, geometry, selection, traffic-circle, bridge and flow tests
 remain active; gameplay, saves and terminal UI tests are not disabled.
-`ShorelineLayout` partitions coastal cells at the visible 0.38 water-density
-contour using shared half-cell samples and matching edge crossings. Land tops
-retain their level terrace height up to that contour; a vertical earthy face
-drops straight to the gently flowing water. Land and water polygons are disjoint,
-so hills do not slope or clip into the channel. Water-to-water boundaries never
-produce earth walls. Ground mesh surface markers keep water blue and land green
-where contour geometry and the cached raster atlas differ at shoreline pixels.
+The perspective mesh uses `ShorelineLayout.BlockyCell`: whole-cell, axis-aligned
+land/water blocks matching the hill terraces. Land tops retain their own level
+height; closed earthy faces descend to the water at block boundaries.
+Water-to-water boundaries never produce earth walls. The smoothed density field
+and `ShorelineLayout.Cell` remain unchanged for coastal-cap suppression and
+feature clearance, so changing the visible water
+edge does not change road centerlines, terrain costs or saved-map data.
+Road bridge classification follows logical whole-cell water too: dry bank
+protrusions must not acquire short one-sided bridge decks from smoothed density.
+Dead-end curve padding stays inside its dry cell when the outward neighbor is
+water; other road curves and actual complete crossings retain their geometry.
+Ground mesh surface markers keep water blue and land green independently of raster atlas colors.
 Perspective atlases disable baked shoreline sand/blending: grass and water stay
-pure, with the contour mesh defining their boundary instead of a pixel stair-step
-tan fringe. Freshwater banks use a dark earthy transition limited to the
-0.28–0.34 density band, rather than broad tan vertex-color gradients.
+pure, with the block mesh defining their boundary. Bank tint uses a binary
+`ShorelineLayout.BankCell` mask for land cardinally adjoining logical water,
+sampled at cell centers. Straight and stepped edges share the same earthy
+palette rather than varying with the old smoothed density field. Diagonal-only
+contacts and off-map atlas padding do not receive bank tint.
 Only classified sea/ocean coasts have sandy beaches: selected 12-cell coastal
 regions extend sand up to 3.5 cells inland, with a 0.25-cell inland transition.
 The narrow water-edge slope is separate from the level sandy area. Rivers and
 lakes never receive beaches. Sea identity is recorded by the water generator's
 body IDs and coastal scenario definitions, persisted as an optional compressed
 save layer; older saves without it remain valid and do not guess sea identity.
-An 18×18 padded, cell-centered shoreline atlas supplies smooth density and coast
-distance sampling independently of mesh tessellation, keeping material boundaries
-short without triangular color wedges.
+An 18×18 padded, cell-centered shoreline atlas supplies density and coast distance
+independently of mesh tessellation, without triangular color wedges.
 Raised hills retain cliffs; beaches do not change buildability or river flow.
 Beach vertices carry an explicit land/sand marker even below ground
 zero so they cannot be misclassified as water. Coastal building foundations

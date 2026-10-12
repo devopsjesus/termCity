@@ -9,6 +9,18 @@ public static class ShorelineLayout
     public const double WaterThreshold = 0.38;
     public sealed record Patch(Vector2[] Polygon, bool Water);
 
+    public static IReadOnlyList<Patch> BlockyCell(GameMap map, int x, int y) =>
+        [new([new(x, y), new(x + 1, y), new(x + 1, y + 1), new(x, y + 1)], !map.TerrainAt(x, y).Buildable)];
+
+    public static bool BankCell(GameMap map, int x, int y)
+    {
+        if (!map.InBounds(x, y) || !map.TerrainAt(x, y).Buildable) return false;
+        foreach (var (dx, dy) in (ReadOnlySpan<(int, int)>)[(-1, 0), (1, 0), (0, -1), (0, 1)])
+            if (map.InBounds(x + dx, y + dy) && !map.TerrainAt(x + dx, y + dy).Buildable)
+                return true;
+        return false;
+    }
+
     public static float BeachStrength(float x, float y)
     {
         const float region = 12;

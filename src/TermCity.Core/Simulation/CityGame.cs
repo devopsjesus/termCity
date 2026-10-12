@@ -839,7 +839,21 @@ public sealed class CityGame
                 Map.ZoneAt(cell.X, cell.Y) == zone && Map.BuildingAt(cell.X, cell.Y) is null &&
                 Map.TerrainAt(cell.X, cell.Y).Buildable && !Map.HasRoad(cell.X, cell.Y) &&
                 !network.RoadOverlapsCell(Map.Index(cell.X, cell.Y)));
-            if (!Available(footprint))
+            if (zone == ZoneType.Residential && Config.FullRules)
+            {
+                int preferredWidth = 2 + CellHash.Pick(p.X + 17, p.Y, 3);
+                int preferredHeight = 2 + CellHash.Pick(p.X, p.Y + 29, 3);
+                footprint = default;
+                for (int plotWidth = preferredWidth; plotWidth >= 2; plotWidth--)
+                    for (int plotHeight = preferredHeight; plotHeight >= 2; plotHeight--)
+                    {
+                        var candidate = new CellRect(p.X, p.Y, plotWidth, plotHeight);
+                        if (candidate.Area <= footprint.Area || !Available(candidate)) continue;
+                        footprint = candidate;
+                    }
+                if (footprint.Area == 0) continue;
+            }
+            else if (!Available(footprint))
             {
                 footprint = new(p.X, p.Y, building.Width, building.Height);
                 if (!Available(footprint)) continue;
@@ -878,8 +892,8 @@ public sealed class CityGame
         return (int)Math.Round(Config.RoadCostPerCell * Math.Max(0, type.CostMultiplier - existing) * terrain);
     }
 
-    public int BuildingCostAt(BuildingType type, int x, int y) =>
-        (int)Math.Round(type.Cost * new CellRect(x, y, type.Width, type.Height).Cells()
+    public int BuildingCostAt(BuildingType type, int x, int y, int rotation = 0) =>
+        (int)Math.Round(type.Cost * type.FootprintAt(x, y, rotation).Cells()
             .Average(p => Map.TerrainAt(p.X, p.Y).BuildCostModifier));
 
     public bool CanBuildOn(int x, int y) =>
@@ -893,9 +907,10 @@ public sealed class CityGame
         if (type is null) return [];
         var claimed = new HashSet<int>();
         var plots = new List<CellRect>();
+        var size = MinimumGrowthSize(zone);
         foreach (int index in Map.ZoneCells(zone).Order())
         {
-            var area = new CellRect(index % Map.Width, index / Map.Width, type.Width, type.Height);
+            var area = new CellRect(index % Map.Width, index / Map.Width, size.Width, size.Height);
             if (!area.Cells().All(p => Map.InBounds(p) && Map.ZoneAt(p.X, p.Y) == zone &&
                 Map.BuildingAt(p.X, p.Y) is null && !Map.HasRoad(p.X, p.Y) && Map.TerrainAt(p.X, p.Y).Buildable &&
                 !Network.RoadOverlapsCell(Map.Index(p.X, p.Y)) && !claimed.Contains(Map.Index(p.X, p.Y))))
@@ -904,6 +919,13 @@ public sealed class CityGame
             foreach (var p in area.Cells()) claimed.Add(Map.Index(p.X, p.Y));
         }
         return plots;
+    }
+
+    internal (int Width, int Height) MinimumGrowthSize(ZoneType zone)
+    {
+        var type = Map.Content.Buildings.ForZone(zone);
+        return zone == ZoneType.Residential && Config.FullRules
+            ? (2, 2) : (type?.Width ?? 1, type?.Height ?? 1);
     }
 
     /// <summary>A road can go on open, unbuilt ground, or replace a smaller road type (an upgrade); see <see cref="RoadRules"/>.</summary>
@@ -932,14 +954,14 @@ public sealed class CityGame
     }
 
     /// <summary>Open ground, and for a pump, the shore.</summary>
-    public bool CanPlaceBuilding(BuildingType type, int x, int y)
+    public bool CanPlaceBuilding(BuildingType type, int x, int y, int rotation = 0)
     {
-        var footprint = new CellRect(x, y, type.Width, type.Height);
+        var footprint = type.FootprintAt(x, y, rotation);
         return CityProgression.IsUnlocked(this, type) && footprint.Cells().All(p => CanBuildOn(p.X, p.Y)) &&
             (!type.RequiresWaterNearby || footprint.Cells().Any(p => Map.NearWater(p.X, p.Y, 1)));
     }
 
-    public string? BuildingPlacementError(BuildingType type, int x, int y)
+    public string? BuildingPlacementError(BuildingType type, int x, int y, int rotation = 0)
     {
         if (!type.PlayerPlaceable)
         {
@@ -951,7 +973,7 @@ public sealed class CityGame
             return $"{type.Name} is locked until City Grew! at {CityProgression.RequiredPopulation(type):N0} souls.";
         }
 
-        var footprint = new CellRect(x, y, type.Width, type.Height);
+        var footprint = type.FootprintAt(x, y, rotation);
         if (footprint.Cells().Any(p => !Map.InBounds(p)))
         {
             return $"Move the {type.Name} fully inside the map.";
@@ -987,7 +1009,7 @@ public sealed class CityGame
                 : "You are out of gold: no more buildings can be placed.";
         }
 
-        int cost = BuildingCostAt(type, x, y);
+        int cost = BuildingCostAt(type, x, y, rotation);
         return cost > Money
             ? $"Not enough gold: {type.Name} costs {Fmt.Money(cost)} but you have {Fmt.Money(Money)}."
             : null;
@@ -1004,25 +1026,29 @@ public sealed class CityGame
         return $"{type.Name} cannot be reached over land; water crossings need a bridge.";
     }
 
-    public CellRect BuildingPlacementArea(BuildingType type, CellRect area) =>
-        new(area.X, area.Y, Math.Max(area.Width, type.Width), Math.Max(area.Height, type.Height));
-
-    public IReadOnlyList<CellRect> PlanBuildings(BuildingType type, CellRect area)
+    public CellRect BuildingPlacementArea(BuildingType type, CellRect area, int rotation = 0)
     {
-        area = BuildingPlacementArea(type, area);
+        var footprint = type.FootprintAt(area.X, area.Y, rotation);
+        return new(area.X, area.Y, Math.Max(area.Width, footprint.Width), Math.Max(area.Height, footprint.Height));
+    }
+
+    public IReadOnlyList<CellRect> PlanBuildings(BuildingType type, CellRect area, int rotation = 0)
+    {
+        area = BuildingPlacementArea(type, area, rotation);
+        var footprint = type.FootprintAt(area.X, area.Y, rotation);
         var plan = new List<CellRect>();
-        for (int y = area.Y; y + type.Height - 1 <= area.Bottom; y += type.Height)
-            for (int x = area.X; x + type.Width - 1 <= area.Right; x += type.Width)
-                if (CanPlaceBuilding(type, x, y)) plan.Add(new(x, y, type.Width, type.Height));
+        for (int y = area.Y; y + footprint.Height - 1 <= area.Bottom; y += footprint.Height)
+            for (int x = area.X; x + footprint.Width - 1 <= area.Right; x += footprint.Width)
+                if (CanPlaceBuilding(type, x, y, rotation)) plan.Add(type.FootprintAt(x, y, rotation));
         return plan;
     }
 
-    public Quote QuoteBuilding(BuildingType type, CellRect area)
+    public Quote QuoteBuilding(BuildingType type, CellRect area, int rotation = 0)
     {
-        var plan = PlanBuildings(type, area);
+        var plan = PlanBuildings(type, area, rotation);
         int cells = plan.Sum(p => p.Area);
-        return new(cells, plan.Sum(p => BuildingCostAt(type, p.X, p.Y)),
-            BuildingPlacementArea(type, area).Cells().Count(Map.InBounds) - cells);
+        return new(cells, plan.Sum(p => BuildingCostAt(type, p.X, p.Y, rotation)),
+            BuildingPlacementArea(type, area, rotation).Cells().Count(Map.InBounds) - cells);
     }
 
     private Quote QuoteCells(CellRect area, Func<int, int, bool> valid, Func<int, int, int> cost) =>
@@ -1129,7 +1155,7 @@ public sealed class CityGame
         return ActionResult.Ok($"Built {quote.Cells} {type.Name.ToLowerInvariant()} cell(s) for {Fmt.Money(quote.Cost)}." + SkippedNote(quote), quote.Cost, quote.Cells);
     }
 
-    public ActionResult PlaceBuilding(BuildingType type, CellRect area)
+    public ActionResult PlaceBuilding(BuildingType type, CellRect area, int rotation = 0)
     {
         if (!type.PlayerPlaceable)
         {
@@ -1143,17 +1169,18 @@ public sealed class CityGame
             return ActionResult.Fail($"{type.Name} is locked until City Grew! at {CityProgression.RequiredPopulation(type):N0} souls; you have {Stats.Population:N0}.");
         }
 
-        var quote = QuoteBuilding(type, area);
+        var quote = QuoteBuilding(type, area, rotation);
         var check = CheckSpend(quote, type.Name.ToLowerInvariant());
         if (check is not null)
         {
             return check;
         }
 
-        var plan = PlanBuildings(type, area);
+        var plan = PlanBuildings(type, area, rotation);
         foreach (var footprint in plan)
         {
             Map.SetBuildingFootprint(type, footprint);
+            if (rotation != 0) Map.BuildingRotations[Map.Index(footprint.X, footprint.Y)] = rotation;
             if (type.IsService)
                 Map.BuildingEstablishedDays[Map.Index(footprint.X, footprint.Y)] = ElapsedDays;
         }

@@ -32,6 +32,10 @@ commands.
 
 ## Map and artwork direction
 
+- Do not use stippling, scattered dots, squiggles or fine-line textures for map
+  artwork or area overlays. Vacant areas use a small, regular checkerboard of
+  broad translucent color blocks, with clear zone colors and visible terrain
+  between the stronger checks.
 - Keep the medieval setting with an original, restrained, block-built pixel-art
   style. Classic city builders and medieval strategy games are inspiration for
   perspective, palette and atmosphere only: never import, trace or reproduce
@@ -54,11 +58,14 @@ commands.
   smooth featureless gradients, dense bright flecks or thin squiggly wave lines.
   Tree foliage should have clustered pixel textures matching the buildings,
   not plain untextured cubes or noisy single-pixel highlights.
-  Smooth rendered riverbanks rather than expose cell staircases, while keeping
-  logical water, buildability and bridge rules intact.
+  Render water's edges as whole-cell blocky steps matching the hill terraces,
+  with closed earthy bank faces. Keep logical water, buildability, bridge rules,
+  road curves, widths and grades intact.
 - Hills should rise through prominent blocky terraces, with the same grass
   surface on top as the base terrain and brown, layered cliff faces. Ground
   building plots on level foundations when they span different terrace heights.
+  Keep upper terrace tops and edges level, including beside rivers; do not taper
+  upper blocks down to the next terrace. Preserve the blocky shoreline style.
 - Roads in perspective use dedicated centerline meshes, with shoulders,
   terrain cutouts and cut/fill walls derived from the same offset edges.
   Preserve disjoint junction surfaces, shared grades, actual-triangle picking,
@@ -113,7 +120,7 @@ commands.
   implementation, bug checks, tests and performance analytics quietly. Prefer
   headless validation; do not open graphical smoke windows overnight. Preserve
   existing user game windows. Suppress already-scheduled audio alerts as well.
-  Night mode is currently **OFF** (disabled October 11, 2026). The normal
+  Night mode is currently **OFF** (disabled October 12, 2026). The normal
   build/test/preview announcement rules below are active.
 
 - For renderer changes, inspect a graphical capture and test rotation, zoom,

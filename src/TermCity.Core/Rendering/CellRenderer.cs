@@ -30,10 +30,10 @@ public static class CellRenderer
 
         if (zone != ZoneType.None)
         {
-            var info = Zones.Get(zone);
-            bg = info.Background;
-            fg = game.Network.IsServed(map, x, y) ? info.Foreground : info.Foreground.Scale(0.5);
-            glyph = info.EmptyGlyph;
+            var visual = RenderZone(game, x, y);
+            bg = visual.Background;
+            fg = visual.Foreground;
+            glyph = visual.Glyph;
         }
         else if (map.FeatureAt(x, y) is { } feature && TerrainSprite.NaturalFeatureVisible(game, x, y))
         {
@@ -79,6 +79,15 @@ public static class CellRenderer
         }
 
         return new CellVisual(glyph, fg, bg);
+    }
+
+    public static CellVisual RenderZone(CityGame game, int x, int y, MapOverlay overlay = MapOverlay.Off)
+    {
+        var info = Zones.Get(game.Map.ZoneAt(x, y));
+        var foreground = game.Network.IsServed(game.Map, x, y) ? info.Foreground : info.Foreground.Scale(0.5);
+        var background = overlay == MapOverlay.Off ? info.Background :
+            MapOverlays.Tint(game, overlay, x, y, info.Background) ?? info.Background;
+        return new(info.EmptyGlyph, foreground, background);
     }
 
     /// <summary>Which of the four neighbours are roads: north = 1, east = 2, south = 4, west = 8.</summary>

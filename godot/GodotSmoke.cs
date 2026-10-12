@@ -28,6 +28,9 @@ internal static class GodotSmoke
         host.Map.SetPerspective(true);
         var view = host.Map.Perspective!;
         session.ClearSelection();
+        await VerifyBankColors(host, capturePath);
+        await VerifyNaturalInclineBanks(host, capturePath);
+        await VerifyNaturalBridgeBanks(host, capturePath);
         var area = map.BuildingFootprints.Values.First(a => map.BuildingAt(a.X, a.Y)!.Name == "Castle");
         var anchor = new Pos(area.X, area.Y);
         if (CityGame.DebugToolsAvailable)
@@ -128,12 +131,13 @@ internal static class GodotSmoke
         session.CenterOn(houseAnchor);
         host.Map.RefreshCells();
         view.Sync(session, host.Map.Size);
-        var glazing = view.BuildingVolumes(houseAnchor, 0x304b53);
-        var framing = view.BuildingVolumes(houseAnchor, 0x79634b);
-        Require(glazing.Count > 0 && framing.Count > 0, "Timber houses must retain visible windows and framing.");
+        var glazing = view.BuildingVolumes(houseAnchor, 0x35494b);
+        var houseAppearance = HouseAppearance.At(houseAnchor.X, houseAnchor.Y, map.BuildingAt(houseAnchor.X, houseAnchor.Y)!.Level);
+        Require(glazing.Count > 0 && view.BuildingVolumes(houseAnchor, houseAppearance.WallColor).Count > 0,
+            "Houses must retain broad visible windows and their stable varied wall palette.");
         foreach (var window in glazing)
-            foreach (var beam in framing)
-                Require(!window.Intersects(beam), "Actual window geometry must not overlap timber posts or floor bands.");
+            Require(new[] { window.Size.X, window.Size.Y, window.Size.Z }.OrderDescending().Take(2).Min() >= 0.17f,
+                "House windows must be broad shapes rather than fine-line detail.");
         view.Tilt();
         Require(view.Elevation == 50, "TILT must provide an alternate camera elevation.");
         view.Tilt();
@@ -227,7 +231,8 @@ internal static class GodotSmoke
         Require(session.CameraX > -session.VisibleCellsX / 2 && session.CameraY > -session.VisibleCellsY / 2,
             "Dragging over off-map ground must still move the camera.");
         VerifySmoothPerspectivePanning(host);
-        VerifyTerraceFoundations(host);
+        await VerifyTerraceFoundations(host, capturePath);
+        await VerifyZoneRendering(host, capturePath);
         await VerifyClosedTerrainEdges(host, capturePath);
         await VerifyRiverBeaches(host, capturePath);
         await VerifyShoreRoadSeams(host, capturePath);
@@ -235,11 +240,111 @@ internal static class GodotSmoke
         await VerifyDiagonalHillCuts(host, capturePath);
         await VerifyBridgeRendering(host, capturePath);
         await VerifyTrafficCirclePlacement(host, capturePath);
+        await VerifyMinimapRotation(host, capturePath);
         await VerifyWaterFlowMotion(host, capturePath);
+        await VerifyTreeVariation(host, capturePath);
+        await VerifyFootpathRoadJoins(host, capturePath);
         session.PlaceCursor(new(map.Width / 2 + 23, map.Height / 2 + 14));
         session.CenterOn(new(map.Width / 2, map.Height / 2));
         host.Map.Invalidate(true);
         GD.Print("TERMCITY_PERSPECTIVE_RENDER_OK");
+    }
+
+    private static async Task VerifyFootpathRoadJoins(Main host, string? capturePath)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        var view = host.Map.Perspective!;
+        var origin = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf).Where(position =>
+            position.X >= 4 && position.X < map.Width - 13 && position.Y >= 4 && position.Y < map.Height - 13 &&
+            new CellRect(position.X, position.Y, 9, 9).Cells().All(cell => session.Game.CanBuildOn(cell.X, cell.Y)))
+            .OrderBy(position => Math.Abs(position.X - map.Width / 2) + Math.Abs(position.Y - map.Height / 2)).First();
+        var fixture = new CellRect(origin.X, origin.Y, 9, 9);
+        var original = fixture.Cells().Select(cell => (Cell: cell, Terrain: map.TerrainAt(cell.X, cell.Y),
+            Feature: map.FeatureAt(cell.X, cell.Y), Zone: map.ZoneAt(cell.X, cell.Y))).ToArray();
+        foreach (var cell in fixture.Cells())
+        {
+            map.SetTerrain(cell.X, cell.Y, map.Content.Terrains.Get("Meadow"));
+            map.SetFeature(cell.X, cell.Y, null);
+            map.SetZone(cell.X, cell.Y, ZoneType.None);
+        }
+        for (int offset = 1; offset <= 7; offset++)
+            map.SetRoad(origin.X + offset, origin.Y + 2, map.Content.Roads.Get(DefaultRoads.KingsRoadName));
+        var anchor = new Pos(origin.X + 4, origin.Y + 5);
+        var well = map.Content.Buildings.Get("Town Well");
+        map.SetBuildingFootprint(well, well.FootprintAt(anchor.X, anchor.Y));
+        session.ClearSelection();
+        session.PlaceCursor(anchor);
+        session.SetZoom(1);
+        session.Game.Touch();
+        host.Map.RefreshCells();
+        session.CenterOn(new(origin.X + 4, origin.Y + 4));
+        view.ResetCameraOffset();
+        view.Sync(session, host.Map.Size);
+        Image? baseline = null;
+        if (DisplayServer.GetName() != "headless")
+        {
+            await RenderedFrame(host);
+            baseline = view.Texture.GetImage();
+        }
+        for (int day = 0; day < 10; day++) session.Game.AdvanceDay();
+        host.Map.RefreshCells();
+        session.CenterOn(new(origin.X + 4, origin.Y + 4));
+        view.ResetCameraOffset();
+        view.Sync(session, host.Map.Size);
+        var stroke = FootpathLayout.Strokes(map).First(path => path.EndsAtRoad &&
+            Math.Abs(path.Points[^1].Y - (origin.Y + 2.5f)) < 0.01f &&
+            path.Points[^1].X >= origin.X + 1 && path.Points[^1].X <= origin.X + 8 &&
+            path.Points.Any(point => Math.Abs(point.X - (anchor.X + 0.5f)) < 0.01f && point.Y > origin.Y + 3));
+        var roads = new RoadVectorLayer();
+        roads.Sync(session.Game);
+        var layout = new RoadMeshLayout(map, roads.Paths);
+        var sections = FootpathLayout.RibbonSections(stroke, layout);
+        Require(view.FootpathTrianglesDrawn > 0 && layout.InRoadInterior(sections[^1].Center),
+            "Real sim-generated trails must render terrain-following ribbons that reach the actual road.");
+        if (baseline is not null)
+        {
+            using (baseline)
+            {
+                await RenderedFrame(host);
+                using var image = view.Texture.GetImage();
+                if (capturePath is not null)
+                    Require(image.SavePng(Path.ChangeExtension(capturePath, ".paths.png")) == Error.Ok,
+                        "Smoothed road/path intersection screenshot must save successfully.");
+                var contact = sections.Where(section => !layout.InRoadInterior(section.Center))
+                    .OrderBy(section => System.Numerics.Vector2.DistanceSquared(section.Center, sections[^1].Center)).First();
+                foreach (var edge in new[] { contact.Left, contact.Right })
+                {
+                    var pointer = view.ScreenPoint(new(edge.X, view.RenderedGroundHeight(map, edge.X, edge.Y) + 0.014f, edge.Y));
+                    bool dirt = false;
+                    for (int offsetY = -2; offsetY <= 2; offsetY++)
+                        for (int offsetX = -2; offsetX <= 2; offsetX++)
+                        {
+                            int pixelX = (int)pointer.X + offsetX, pixelY = (int)pointer.Y + offsetY;
+                            if (pixelX < 0 || pixelY < 0 || pixelX >= image.GetWidth() || pixelY >= image.GetHeight()) continue;
+                            var pixel = image.GetPixel(pixelX, pixelY);
+                            dirt |= pixel.R > pixel.G * 1.08f && pixel.G > pixel.B * 1.1f;
+                        }
+                    Require(dirt, $"Both flared edges of a generated trail must meet the visible road without a grass gap: {edge}, screen {pointer}, wear {stroke.Wear}, triangles {view.FootpathTrianglesDrawn}.");
+                }
+                var roadPoint = sections[^1].Center;
+                var roadPointer = view.ScreenPoint(new(roadPoint.X, layout.HeightAt(roadPoint), roadPoint.Y));
+                var before = baseline.GetPixel((int)roadPointer.X, (int)roadPointer.Y);
+                var after = image.GetPixel((int)roadPointer.X, (int)roadPointer.Y);
+                Require(new Vector3(before.R - after.R, before.G - after.G, before.B - after.B).Length() < 0.03f,
+                    "Generated trail ribbons must stop at the road edge, not paint a dirt stripe over its surface.");
+            }
+        }
+        map.SetBuilding(anchor.X, anchor.Y, null);
+        foreach (var entry in original)
+        {
+            map.SetRoad(entry.Cell.X, entry.Cell.Y, false);
+            map.SetTerrain(entry.Cell.X, entry.Cell.Y, entry.Terrain);
+            map.SetFeature(entry.Cell.X, entry.Cell.Y, entry.Feature);
+            map.SetZone(entry.Cell.X, entry.Cell.Y, entry.Zone);
+        }
+        session.Game.Touch();
+        GD.Print("TERMCITY_FOOTPATH_ROAD_JOINS_OK");
     }
 
     private static async Task VerifyWaterFlowMotion(Main host, string? capturePath)
@@ -249,32 +354,45 @@ internal static class GodotSmoke
         var view = host.Map.Perspective!;
         int originalZoom = session.ZoomLevel;
         var river = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf)
-            .First(p => map.TerrainAt(p.X, p.Y).Name == "Water" && TerrainSprite.Flow(map).At(p.X, p.Y).River);
+            .Where(p => map.TerrainAt(p.X, p.Y).Name == "Water" && TerrainSprite.Flow(map).At(p.X, p.Y).River)
+            .OrderBy(p => Math.Abs(p.X - map.Width / 2) + Math.Abs(p.Y - map.Height / 2)).First();
         session.PlaceCursor(river);
-        session.SetZoom(1);
-        host.Map.Invalidate(true);
-        host.Map.RefreshCells();
-        session.CenterOn(river);
-        bool paused = session.Game.Paused, motion = view.WaterMotionEnabled;
-        session.Game.Paused = false;
-        view.WaterMotionEnabled = true;
-        view.Sync(session, host.Map.Size);
-        double before = view.WaterFlowClock;
-        view._Process(0.3);
-        Require(view.WaterFlowClock > before, "Visible rivers must advance downstream flow while the city is running.");
-        if (capturePath is not null && DisplayServer.GetName() != "headless")
+        var settings = host.Map.Effects!.Settings;
+        var originalEffects = (settings.Enabled, settings.ReducedMotion, settings.Intensity);
+        bool paused = session.Game.Paused;
+        session.Game.Paused = true;
+        settings.Level = EffectLevel.Low;
+        settings.ReducedMotion = false;
+        foreach (int zoom in new[] { 0, 1 })
         {
+            session.SetZoom(zoom);
+            host.Map.Invalidate(true);
+            host.Map.RefreshCells();
+            session.CenterOn(river);
+            view.ResetCameraOffset();
+            view.Sync(session, host.Map.Size);
+            double clock = view.WaterFlowClock;
+            view._Process(0.3);
+            Require(view.WaterFlowClock > clock, "Visible rivers must advance downstream flow with low effects at both playable zooms.");
+            if (capturePath is null || DisplayServer.GetName() == "headless") continue;
             for (int frame = 0; frame < 3; frame++)
                 await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
             await RenderedFrame(host);
             using var first = view.Texture.GetImage();
-            view._Process(1.5);
+            double firstClock = view.WaterFlowRenderClock;
+            double firstDays = session.Game.ElapsedDays;
+            int firstBuilds = view.GeometryBuilds;
+            await host.ToSignal(host.GetTree().CreateTimer(1.5), SceneTreeTimer.SignalName.Timeout);
             for (int frame = 0; frame < 2; frame++)
                 await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
             await RenderedFrame(host);
             using var second = view.Texture.GetImage();
-            if (first.SavePng(Path.ChangeExtension(capturePath, ".flow-before.png")) != Error.Ok ||
-                second.SavePng(Path.ChangeExtension(capturePath, ".flow-after.png")) != Error.Ok)
+            double travel = (view.WaterFlowRenderClock - firstClock) * 0.75;
+            Require(travel > 0.5 && session.Game.ElapsedDays == firstDays && view.GeometryBuilds == firstBuilds,
+                "Real rendered river frames must advance while paused, without advancing gameplay or rebuilding geometry.");
+            string suffix = zoom == 0 ? ".flow-normal" : ".flow";
+            if (first.SavePng(Path.ChangeExtension(capturePath, suffix + "-before.png")) != Error.Ok ||
+                second.SavePng(Path.ChangeExtension(capturePath, suffix + "-after.png")) != Error.Ok)
                 throw new IOException("River-flow screenshots failed.");
             int moving = 0, blue = 0;
             for (int y = 0; y < first.GetHeight(); y += 2)
@@ -284,28 +402,533 @@ internal static class GodotSmoke
                     if (a.B <= a.G * 1.05f || a.B <= a.R * 1.3f) continue;
                     blue++;
                     if (Math.Abs(a.B - b.B) > 1f / 255) moving++;
-                    Require(Math.Abs(a.B - b.B) < 0.05f, "River motion must remain subtle, not flash or shimmer brightly.");
+                    Require(Math.Abs(a.B - b.B) < 0.11f, "Traveling water clusters must remain within the existing muted blue palette.");
                 }
-            Require(moving > 20, $"Directional river flow must visibly move coarse water patches; changed samples: {moving}, " +
-                $"water samples: {blue}, river {river}, flow {TerrainSprite.Flow(map).At(river.X, river.Y)}, clock {view.WaterFlowClock}.");
+            VerifyDownstreamRipples(map, view, river, first, second, firstClock, view.WaterFlowRenderClock, zoom);
+            Require(moving > 20 && moving < blue * 0.30f, $"Sparse river ripples must move visibly while most water pixels remain stationary; changed samples: {moving}, " +
+                $"water samples: {blue}, zoom {zoom}, river {river}, flow {TerrainSprite.Flow(map).At(river.X, river.Y)}, clock {view.WaterFlowClock}.");
+            GD.Print($"TERMCITY_WATER_FLOW_ZOOM_{zoom}_OK changed={moving} water={blue}");
         }
         session.Game.Paused = true;
         view.Sync(session, host.Map.Size);
-        before = view.WaterFlowClock;
+        double before = view.WaterFlowClock;
+        double elapsedDays = session.Game.ElapsedDays;
+        int geometryBuilds = view.GeometryBuilds;
         view._Process(0.3);
-        Require(view.WaterFlowClock == before, "Paused cities must not advance river flow.");
+        Require(view.WaterFlowClock > before, "Paused cities must keep decorative river flow moving without advancing gameplay.");
+        Require(session.Game.ElapsedDays == elapsedDays && view.GeometryBuilds == geometryBuilds,
+            "Paused river animation must not advance gameplay or rebuild the terrain.");
+        before = view.WaterFlowClock;
         session.Game.Paused = false;
-        view.WaterMotionEnabled = false;
+        settings.Level = EffectLevel.Off;
+        host.Map.RefreshCells();
         view.Sync(session, host.Map.Size);
         view._Process(0.3);
         Require(view.WaterFlowClock == before, "Reduced-motion/effects-off mode must suppress water animation.");
+        settings.Level = EffectLevel.Low;
+        settings.ReducedMotion = true;
+        host.Map.RefreshCells();
+        view.Sync(session, host.Map.Size);
+        view._Process(0.3);
+        Require(view.WaterFlowClock == before, "Reduced motion must suppress river animation even when effects are otherwise enabled.");
         session.Game.Paused = paused;
-        view.WaterMotionEnabled = motion;
+        (settings.Enabled, settings.ReducedMotion, settings.Intensity) = originalEffects;
         session.SetZoom(originalZoom);
         host.Map.Invalidate(true);
         host.Map.RefreshCells();
         view.Sync(session, host.Map.Size);
         GD.Print("TERMCITY_WATER_FLOW_OK");
+    }
+
+    private static void VerifyDownstreamRipples(GameMap map, PerspectiveCity view, Pos river,
+        Image first, Image second, double firstClock, double secondClock, int zoom)
+    {
+        int samples = 0, movingMatches = 0;
+        var flow = TerrainSprite.Flow(map);
+        double travel = (secondClock - firstClock) * RiverRippleLayout.Speed;
+        for (int row = Math.Max(0, river.Y - 8); row <= Math.Min(map.Height - 1, river.Y + 8); row++)
+            for (int column = Math.Max(0, river.X - 8); column <= Math.Min(map.Width - 1, river.X + 8); column++)
+            {
+                if (map.TerrainAt(column, row).Buildable) continue;
+                var track = RiverRippleLayout.At(map, flow, column, row);
+                if (track.Position(firstClock) is not { } initial) continue;
+                double phase = (firstClock * RiverRippleLayout.Speed + track.Distance) % RiverRippleLayout.Spacing;
+                int endX = column, endY = row;
+                for (int step = 0; step < (int)Math.Floor(phase + travel); step++)
+                {
+                    var direction = flow.At(endX, endY).Direction;
+                    endX += direction.X;
+                    endY += direction.Y;
+                    if (!map.InBounds(endX, endY)) break;
+                }
+                if (!map.InBounds(endX, endY) || map.TerrainAt(endX, endY).Buildable) continue;
+                var downstream = RiverRippleLayout.At(map, flow, endX, endY);
+                if (downstream.Position(secondClock) is not { } final) continue;
+                var start = new Vector2(column + initial.X, row + initial.Y);
+                var end = new Vector2(endX + final.X, endY + final.Y);
+                var beforePoint = view.ScreenPoint(new(start.X, view.RenderedGroundHeight(map, start.X, start.Y), start.Y));
+                var afterPoint = view.ScreenPoint(new(end.X, view.RenderedGroundHeight(map, end.X, end.Y), end.Y));
+                if (beforePoint.X < 1 || beforePoint.X >= first.GetWidth() - 1 || beforePoint.Y < 1 || beforePoint.Y >= first.GetHeight() - 1 ||
+                    afterPoint.X < 1 || afterPoint.X >= second.GetWidth() - 1 || afterPoint.Y < 1 || afterPoint.Y >= second.GetHeight() - 1)
+                    continue;
+                var original = first.GetPixel((int)beforePoint.X, (int)beforePoint.Y);
+                var moved = second.GetPixel((int)afterPoint.X, (int)afterPoint.Y);
+                var leftBehind = second.GetPixel((int)beforePoint.X, (int)beforePoint.Y);
+                var destinationBefore = first.GetPixel((int)afterPoint.X, (int)afterPoint.Y);
+                if (!Blue(original) || !Blue(moved) || !Blue(leftBehind) || !Blue(destinationBefore)) continue;
+                samples++;
+                if (original.G > leftBehind.G + 0.012f && moved.G > destinationBefore.G + 0.012f) movingMatches++;
+            }
+        Require(samples >= 3 && movingMatches > samples * 0.55f,
+            $"Sparse ripple centers must travel along downstream tracks, not brighten in place: zoom {zoom}, samples {samples}, tracked {movingMatches}.");
+        GD.Print($"TERMCITY_DOWNSTREAM_RIPPLES_OK zoom={zoom} samples={samples} tracked={movingMatches}");
+        static bool Blue(Color color) => color.B > color.G * 1.05f && color.B > color.R * 1.3f;
+    }
+
+    private static async Task VerifyMinimapRotation(Main host, string? capturePath)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        var view = host.Map.Perspective!;
+        var center = new Pos(map.Width / 2, map.Height / 2);
+        float originalAzimuth = view.Azimuth;
+        session.CenterOn(center);
+        host.Minimap.QueueRedraw();
+        for (int frame = 0; frame < 3; frame++) await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+        var originalPicture = host.Minimap.Picture;
+        int initialTextureBuilds = host.Minimap.TextureBuilds;
+        for (int heading = 0; heading < 4; heading++)
+        {
+            view.Rotate(Mathf.PosMod(originalAzimuth + heading * 90 - view.Azimuth, 360));
+            host.Map.RefreshCells();
+            view.Sync(session, host.Map.Size);
+            host.Minimap.QueueRedraw();
+            for (int frame = 0; frame < 3; frame++) await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            int textureBuilds = host.Minimap.TextureBuilds;
+            var origin = host.Minimap.ScreenPoint(center);
+            var picture = host.Minimap.Picture;
+            Require(picture.Size.X == picture.Size.Y && picture == originalPicture,
+                "The minimap must remain a fixed square at every camera heading.");
+            int turns = (int)Math.Round(Mathf.PosMod(view.Azimuth - PerspectiveCity.InitialAzimuth, 360) / 90f);
+            var projection = new MinimapProjection(map.Width, map.Height, turns);
+            Require(host.Minimap.MapPointToScreen(Vector2.Zero).DistanceTo(picture.Position +
+                new Vector2(projection.Fraction(System.Numerics.Vector2.Zero).X,
+                    projection.Fraction(System.Numerics.Vector2.Zero).Y) * picture.Size) < 0.01f,
+                "The full square minimap contents must rotate once per camera quarter turn.");
+            VerifyFootprint();
+            var beforeTilt = host.Minimap.ViewOutline;
+            var beforePicture = host.Minimap.Picture;
+            view.Tilt();
+            view.Sync(session, host.Map.Size);
+            host.Minimap.QueueRedraw();
+            for (int frame = 0; frame < 3; frame++) await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            var afterTilt = host.Minimap.ViewOutline;
+            Require(host.Minimap.Picture == beforePicture && afterTilt.Where((corner, index) => corner.DistanceTo(beforeTilt[index]) > 0.5f).Any(),
+                "Tilt must reshape the view indicator without tilting or resizing the square minimap.");
+            VerifyFootprint();
+            view.Tilt();
+            view.Tilt();
+            view.Sync(session, host.Map.Size);
+            host.Minimap.QueueRedraw();
+
+            void VerifyFootprint()
+            {
+                var outline = host.Minimap.ViewOutline;
+                var expected = new[] { Vector2.Zero, new Vector2(host.Map.Size.X, 0), host.Map.Size, new Vector2(0, host.Map.Size.Y) };
+                for (int corner = 0; corner < 4; corner++)
+                {
+                    var fraction = (outline[corner] - picture.Position) / picture.Size;
+                    var world = projection.MapPoint(new(fraction.X, fraction.Y));
+                    Require(view.ScreenPoint(new(world.X, 0, world.Y)).DistanceTo(expected[corner]) < 0.2f,
+                        "The white indicator must trace the actual displayed camera footprint, not a rotated session bounding box.");
+                }
+            }
+            var destination = new Pos(center.X + map.Width / 8, center.Y - map.Height / 8);
+            host.Minimap.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
+                { ButtonIndex = MouseButton.Left, Pressed = true, Position = host.Minimap.ScreenPoint(destination) });
+            Require(session.CameraX + session.VisibleCellsX / 2 == destination.X &&
+                session.CameraY + session.VisibleCellsY / 2 == destination.Y, "Rotated minimap clicks must reach the selected world cell.");
+            host.Minimap.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseMotion { Position = origin });
+            host.Minimap.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton { ButtonIndex = MouseButton.Left, Pressed = false });
+            Require(session.CameraX + session.VisibleCellsX / 2 == center.X && session.CameraY + session.VisibleCellsY / 2 == center.Y,
+                "Rotated minimap dragging must retain the inverse world transform.");
+            Require(host.Minimap.TextureBuilds == textureBuilds, "Camera rotation/navigation must reuse the cached minimap texture.");
+            if (capturePath is not null && DisplayServer.GetName() != "headless")
+            {
+                await RenderedFrame(host);
+                using var image = host.GetViewport().GetTexture().GetImage();
+                Require(image.SavePng(Path.ChangeExtension(capturePath, $".minimap-{heading}.png")) == Error.Ok,
+                    "Rotated minimap capture failed.");
+                var outline = host.Minimap.ViewOutline;
+                for (int edge = 0; edge < 4; edge++)
+                {
+                    var midpoint = (outline[edge] + outline[(edge + 1) % 4]) / 2;
+                    Require(picture.HasPoint(midpoint), "The centered fixture must keep all four indicator edges inside the square.");
+                    var global = host.Minimap.GlobalPosition + midpoint;
+                    var scale = new Vector2(image.GetWidth() / host.Size.X, image.GetHeight() / host.Size.Y);
+                    var pixel = global * scale;
+                    bool white = false;
+                    for (int offsetY = -2; offsetY <= 2; offsetY++)
+                        for (int offsetX = -2; offsetX <= 2; offsetX++)
+                        {
+                            var color = image.GetPixel((int)pixel.X + offsetX, (int)pixel.Y + offsetY);
+                            white |= color.R > 0.9f && color.G > 0.9f && color.B > 0.9f;
+                        }
+                    Require(white, "All four camera-footprint edges must have visible white indicator pixels.");
+                }
+            }
+        }
+        Require(host.Minimap.TextureBuilds == initialTextureBuilds,
+            "Camera heading and tilt changes must not rebuild the minimap terrain texture.");
+        view.Rotate(Mathf.PosMod(originalAzimuth - view.Azimuth, 360));
+        host.Map.RefreshCells();
+        host.Minimap.QueueRedraw();
+        GD.Print("TERMCITY_MINIMAP_ROTATION_OK headings=4 click-drag=camera-aligned cached=true");
+    }
+
+    private static async Task VerifyNaturalInclineBanks(Main host, string? capturePath)
+    {
+        if (capturePath is null || DisplayServer.GetName() == "headless") return;
+        var session = host.Session;
+        var map = session.Game.Map;
+        var view = host.Map.Perspective!;
+        var vectors = new RoadVectorLayer();
+        vectors.Sync(session.Game);
+        var layout = new RoadMeshLayout(map, vectors.Paths);
+        var inclines = layout.Segments.Where(segment => !segment.Bridge &&
+            Math.Max(segment.HeightA, segment.HeightB) > 0.1f)
+            .SelectMany(segment => new[] { 0.25f, 0.5f, 0.75f }
+                .Select(amount => System.Numerics.Vector2.Lerp(segment.A, segment.B, amount)))
+            .Where(center => center.X > 12 && center.Y > 12 && center.X < map.Width - 12 && center.Y < map.Height - 12)
+            .OrderBy(center => System.Numerics.Vector2.DistanceSquared(center,
+                map.Width > 320 ? new(250, 54) : new(99, 149)))
+            .GroupBy(center => ((int)center.X / 6, (int)center.Y / 6)).Select(group => group.First()).Take(6).ToArray();
+        Require(inclines.Length > 0, "The generated map must exercise natural road inclines.");
+        int originalZoom = session.ZoomLevel;
+        session.SetZoom(1);
+        host.Map.RefreshCells();
+        for (int incline = 0; incline < inclines.Length; incline++)
+        {
+            var center = inclines[incline];
+            session.CenterOn(new((int)center.X, (int)center.Y));
+            host.Map.RefreshCells();
+            for (int heading = 0; heading < 4; heading++)
+            {
+                view.Sync(session, host.Map.Size);
+                for (int frame = 0; frame < 3; frame++)
+                    await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+                await RenderedFrame(host);
+                using var image = view.Texture.GetImage();
+                Require(image.SavePng(Path.ChangeExtension(capturePath, $".natural-incline-{incline}-{heading}.png")) == Error.Ok,
+                    "The natural incline capture must save successfully.");
+                for (int pixelY = 40; pixelY < image.GetHeight() - 40; pixelY++)
+                    for (int pixelX = 40; pixelX < image.GetWidth() - 40; pixelX++)
+                    {
+                        var color = image.GetPixel(pixelX, pixelY);
+                        if (Math.Abs(color.R - 20 / 255f) <= 0.005f && Math.Abs(color.G - 34 / 255f) <= 0.005f &&
+                            Math.Abs(color.B - 28 / 255f) <= 0.005f)
+                            throw new InvalidOperationException(
+                                $"Natural incline banks must not expose black background at {center}, heading {heading}, pixel {pixelX},{pixelY}, " +
+                                $"ground hit {view.GroundPoint(new(pixelX + 0.5f, pixelY + 0.5f))}.");
+                    }
+                view.Rotate(90);
+            }
+        }
+        session.SetZoom(originalZoom);
+        host.Map.RefreshCells();
+        GD.Print($"TERMCITY_NATURAL_INCLINE_BANKS_OK inclines={inclines.Length}");
+    }
+
+    private static async Task VerifyNaturalBridgeBanks(Main host, string? capturePath)
+    {
+        if (capturePath is null || DisplayServer.GetName() == "headless") return;
+        var session = host.Session;
+        var map = session.Game.Map;
+        var view = host.Map.Perspective!;
+        var vectors = new RoadVectorLayer();
+        vectors.Sync(session.Game);
+        var layout = new RoadMeshLayout(map, vectors.Paths);
+        var approaches = layout.Segments.Where(segment => segment.Bridge)
+            .Select(segment => (segment.Path, Midpoint: (segment.A + segment.B) / 2))
+            .Where(sample => sample.Midpoint.X >= 5 && sample.Midpoint.X < map.Width - 5 &&
+                sample.Midpoint.Y >= 5 && sample.Midpoint.Y < map.Height - 5 &&
+                TerrainSprite.WaterSurface(map, sample.Midpoint.X, sample.Midpoint.Y) is >= 0.38f and < 0.95f)
+            .GroupBy(sample => sample.Path).Select(group => group.First()).Take(6).ToArray();
+        Require(approaches.Length > 0, "The generated-map fixture must contain a real river bridge approach.");
+        int originalZoom = session.ZoomLevel;
+        for (int index = 0; index < approaches.Length; index++)
+        {
+            var center = approaches[index].Midpoint;
+            var anchor = new Pos((int)center.X, (int)center.Y);
+            session.PlaceCursor(anchor);
+            session.SetZoom(1);
+            host.Map.Invalidate(true);
+            host.Map.RefreshCells();
+            session.CenterOn(anchor);
+            view.ResetCameraOffset();
+            for (int turn = 0; turn < 4; turn++)
+            {
+                view.Sync(session, host.Map.Size);
+                await RenderedFrame(host);
+                using var image = view.Texture.GetImage();
+                Require(image.SavePng(Path.ChangeExtension(capturePath, $".natural-bridge-{index}-{turn}.png")) == Error.Ok,
+                    "Generated bridge approach capture must save.");
+                for (float pz = center.Y - 2; pz <= center.Y + 2; pz += 0.025f)
+                    for (float px = center.X - 2; px <= center.X + 2; px += 0.025f)
+                    {
+                        if (TerrainSprite.WaterSurface(map, px, pz) < ShorelineLayout.WaterThreshold) continue;
+                        var pointer = view.ScreenPoint(new(px,
+                            TerrainSprite.WaterCornerLevel(map, (int)px, (int)pz), pz));
+                        int imageX = (int)pointer.X, imageY = (int)pointer.Y;
+                        if (imageX < 1 || imageY < 1 || imageX >= image.GetWidth() - 1 || imageY >= image.GetHeight() - 1) continue;
+                        var color = image.GetPixel(imageX, imageY);
+                        Require(color.G > 0.15f || color.B > 0.15f,
+                            $"Generated bridge banks must not expose black gaps at {px},{pz}, bridge {index}, heading {turn}: {color}, " +
+                            $"pixel {imageX},{imageY}, surface hit {view.GroundPoint(new(imageX + 0.5f, imageY + 0.5f))}, " +
+                            $"terrain {map.TerrainAt((int)px, (int)pz).Name}, rendered {view.RenderedGroundHeight(map, px, pz)}.");
+                    }
+                view.Rotate(90);
+            }
+        }
+        session.SetZoom(originalZoom);
+        host.Map.Invalidate(true);
+        host.Map.RefreshCells();
+        GD.Print($"TERMCITY_NATURAL_BRIDGE_BANKS_OK approaches={approaches.Length}");
+    }
+
+    private static async Task VerifyTreeVariation(Main host, string? capturePath)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        var view = host.Map.Perspective!;
+        int originalZoom = session.ZoomLevel;
+        var origin = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf).Where(p =>
+            p.X >= 4 && p.X < map.Width - 16 && p.Y >= 4 && p.Y < map.Height - 12 &&
+            new CellRect(p.X, p.Y, 13, 9).Cells().All(cell => session.Game.CanBuildOn(cell.X, cell.Y)))
+            .OrderBy(p => Math.Abs(p.X - map.Width / 2) + Math.Abs(p.Y - map.Height / 2)).First();
+        var area = new CellRect(origin.X, origin.Y, 13, 9);
+        var original = area.Cells().Select(p => (Position: p, Feature: map.FeatureAt(p.X, p.Y))).ToArray();
+        foreach (var cell in area.Cells()) map.SetFeature(cell.X, cell.Y, null);
+        foreach (var shape in Enum.GetValues<TreeShape>())
+        {
+            var target = new Pos(origin.X + 2 + (int)shape % 3 * 4, origin.Y + 2 + (int)shape / 3 * 4);
+            var cell = area.Cells().Where(p => TreeAppearance.At(p.X * 5 + 2, p.Y * 5 + 2).Shape == shape)
+                .OrderBy(p => Math.Abs(p.X - target.X) + Math.Abs(p.Y - target.Y)).First();
+            map.SetFeature(cell.X, cell.Y, map.Content.Features.Get("Tree"));
+        }
+        session.Game.Touch();
+        session.PlaceCursor(origin);
+        session.SetZoom(0);
+        host.Map.RefreshCells();
+        session.CenterOn(new(origin.X + 6, origin.Y + 4));
+        view.ResetCameraOffset();
+        view.Sync(session, host.Map.Size);
+        Require(view.TreeShapesDrawn.SetEquals(Enum.GetValues<TreeShape>()),
+            "The perspective woodland must render all four broad-leaf crowns and both pine silhouettes.");
+        if (capturePath is not null && DisplayServer.GetName() != "headless")
+        {
+            await RenderedFrame(host);
+            using var image = view.Texture.GetImage();
+            Require(image.SavePng(Path.ChangeExtension(capturePath, ".trees.png")) == Error.Ok,
+                "Tree variation screenshot must save successfully.");
+        }
+        foreach (var entry in original) map.SetFeature(entry.Position.X, entry.Position.Y, entry.Feature);
+        session.Game.Touch();
+        session.SetZoom(originalZoom);
+        host.Map.RefreshCells();
+        view.Sync(session, host.Map.Size);
+        GD.Print("TERMCITY_TREE_VARIATION_OK");
+    }
+
+    private static async Task VerifyZoneRendering(Main host, string? capturePath)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        var view = host.Map.Perspective!;
+        var origin = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf).Where(p =>
+            p.X >= 4 && p.X < map.Width - 14 && p.Y >= 4 && p.Y < map.Height - 8 &&
+            new CellRect(p.X, p.Y, 11, 7).Cells().All(cell => session.Game.CanBuildOn(cell.X, cell.Y)))
+            .OrderBy(p => Math.Abs(p.X - map.Width / 2) + Math.Abs(p.Y - map.Height / 2)).First();
+        var fixture = new CellRect(origin.X, origin.Y, 11, 7);
+        var original = fixture.Cells().Select(p => (Position: p, Terrain: map.TerrainAt(p.X, p.Y),
+            Feature: map.FeatureAt(p.X, p.Y), Sea: map.IsSea(p.X, p.Y), River: map.IsRiver(p.X, p.Y))).ToArray();
+        for (int index = 0; index < Zones.Placeable.Count; index++)
+        {
+            var area = new CellRect(origin.X + 1 + index * 3, origin.Y + 1, 2, 2);
+            foreach (var cell in area.Cells())
+            {
+                map.SetTerrain(cell.X, cell.Y, map.Content.Terrains.Get(index == 0 ? "Meadow" : "Hill"));
+                map.SetFeature(cell.X, cell.Y, map.Content.Features.Get("Tree"));
+            }
+            session.BeginDrag(new(area.X, area.Y));
+            session.UpdateDrag(new(area.Right, area.Bottom));
+            session.EndSelection();
+            var result = session.Zone(Zones.Placeable[index]);
+            Require(result.Success && result.Cells == area.Area, "Real zoning actions must designate every vacant test plot.");
+            Require(area.Cells().All(cell => map.FeatureAt(cell.X, cell.Y) is null), "Zoning must clear trees from the plots.");
+        }
+        session.ClearSelection();
+        session.PlaceCursor(origin);
+        session.SetZoom(1);
+        host.Map.RefreshCells();
+        session.CenterOn(new(origin.X + 5, origin.Y + 2));
+        view.ResetCameraOffset();
+        view.Sync(session, host.Map.Size);
+        Require(view.ZonePlotsDrawn >= 12, "Vacant residential, commercial and industrial plots must remain visible after clearing selection.");
+        var restored = SaveGameStore.Deserialize(SaveGameStore.Serialize(session.Game));
+        foreach (var zone in Zones.Placeable)
+            Require(restored.Map.ZoneCells(zone).Count == map.ZoneCells(zone).Count, "Visible zone designations must survive saving and loading.");
+        if (DisplayServer.GetName() != "headless")
+        {
+            var designations = fixture.Cells().Where(cell => map.ZoneAt(cell.X, cell.Y) != ZoneType.None)
+                .Select(cell => (Cell: cell, Zone: map.ZoneAt(cell.X, cell.Y))).ToArray();
+            for (int turn = 0; turn < 4; turn++)
+            {
+                foreach (var designation in designations) map.SetZone(designation.Cell.X, designation.Cell.Y, ZoneType.None);
+                session.Game.Touch();
+                view.Sync(session, host.Map.Size);
+                await RenderedFrame(host);
+                using var terrainImage = view.Texture.GetImage();
+                foreach (var designation in designations) map.SetZone(designation.Cell.X, designation.Cell.Y, designation.Zone);
+                session.Game.Touch();
+                for (int index = 0; index < Zones.Placeable.Count; index++)
+                {
+                    view.Sync(session, host.Map.Size);
+                    await RenderedFrame(host);
+                    using var image = view.Texture.GetImage();
+                    var zone = Zones.Placeable[index];
+                    var artwork = CellRenderer.RenderZone(session.Game, origin.X + 1 + index * 3, origin.Y + 1);
+                    var foreground = new Vector3(artwork.Foreground.R, artwork.Foreground.G, artwork.Foreground.B) / 255;
+                    var background = new Vector3(artwork.Background.R, artwork.Background.G, artwork.Background.B) / 255;
+                    bool visible = false;
+                    bool transparentGap = false;
+                    float x = origin.X + 1 + index * 3 + 0.5f, z = origin.Y + 1.5f;
+                    var pointer = view.ScreenPoint(new(x, view.RenderedGroundHeight(map, x, z) + 0.018f, z));
+                    for (int dy = -5; dy <= 5; dy++)
+                        for (int dx = -5; dx <= 5; dx++)
+                        {
+                            int px = (int)pointer.X + dx, py = (int)pointer.Y + dy;
+                            if (px < 0 || py < 0 || px >= image.GetWidth() || py >= image.GetHeight()) continue;
+                            var pixel = image.GetPixel(px, py);
+                            var terrain = terrainImage.GetPixel(px, py);
+                            var terrainColor = new Vector3(terrain.R, terrain.G, terrain.B);
+                            var color = new Vector3(pixel.R, pixel.G, pixel.B);
+                            for (int sample = 0; sample <= 20; sample++)
+                            {
+                                float coverage = sample / 20f;
+                                float alpha = PerspectiveCity.ZoneOverlayOpacity *
+                                    Mathf.Lerp(ZoneOverlayArtwork.BackgroundCoverage, 1, coverage);
+                                var expected = terrainColor.Lerp(background.Lerp(foreground, coverage), alpha);
+                                if (color.DistanceTo(expected) >= 0.025f) continue;
+                                visible |= coverage > 0.4f;
+                                transparentGap |= coverage < 0.1f;
+                            }
+                        }
+                    if (turn == 0 && index == 0 && capturePath is not null)
+                    {
+                        var error = image.SavePng(Path.ChangeExtension(capturePath, ".zones.png"));
+                        if (error != Error.Ok) throw new IOException($"Zone screenshot failed: {error}.");
+                    }
+                    Require(visible && transparentGap, $"{zone} checkerboard must show both broad colored checks and transparent gaps, including raised plots, after turn {turn}: pointer {pointer}, image {image.GetSize()}.");
+                }
+                view.Rotate(90);
+            }
+        }
+        view.Sync(session, host.Map.Size);
+        int designatedPlots = view.ZonePlotsDrawn;
+        session.BeginDrag(origin);
+        session.UpdateDrag(new(fixture.Right, fixture.Bottom));
+        session.EndSelection();
+        Require(session.Dezone().Success, "Vacant zone plots must be removable through the normal UI action.");
+        session.ClearSelection();
+        host.Map.RefreshCells();
+        view.Sync(session, host.Map.Size);
+        Require(view.ZonePlotsDrawn == designatedPlots - 12, "Dezoning must remove the rendered plot markers immediately.");
+        var building = map.Content.Buildings.Get("Fire Watch");
+        var buildingAnchor = new Pos(origin.X + 1, origin.Y + 1);
+        for (int rotation = 0; rotation < 4; rotation++)
+        {
+            session.PlaceCursor(buildingAnchor);
+            map.SetBuildingFootprint(building, building.FootprintAt(buildingAnchor.X, buildingAnchor.Y, rotation));
+            if (rotation != 0) map.BuildingRotations[map.Index(buildingAnchor.X, buildingAnchor.Y)] = rotation;
+            session.Game.Touch();
+            host.Map.RefreshCells();
+            view.Sync(session, host.Map.Size);
+            var area = map.BuildingFootprintAt(buildingAnchor.X, buildingAnchor.Y);
+            var center = new Vector3(area.X + area.Width / 2f, 0, area.Y + area.Height / 2f);
+            var door = view.BuildingVolumes(buildingAnchor, 0x584738).Single();
+            var doorCenter = door.Position + door.Size / 2;
+            var facing = rotation switch
+            {
+                1 => Vector3.Left,
+                2 => Vector3.Forward,
+                3 => Vector3.Right,
+                _ => Vector3.Back,
+            };
+            var expectedDoor = center + facing * (building.Height * 0.78f / 2 + 0.016f);
+            Require(new Vector2(doorCenter.X - expectedDoor.X, doorCenter.Z - expectedDoor.Z).Length() < 0.001f,
+                "Actual placed building fronts must rotate in 90-degree steps, including half turns.");
+            Require(host.Map.TryPickBuilding(view.ScreenPoint(doorCenter), out var pickedBuilding) && pickedBuilding == buildingAnchor,
+                "Picking must follow the rotated visible building faces.");
+            Require(session.Demolish().Success, "Rotated buildings must be removable through their actual footprint.");
+        }
+        session.ClearSelection();
+        GD.Print("TERMCITY_BUILDING_ROTATION_OK");
+        var cottage = map.Content.Buildings.Get("Cottage");
+        var houses = Enumerable.Range(0, 6).Select(index =>
+            new Pos(origin.X + 1 + index % 3 * 3, origin.Y + 1 + index / 3 * 3)).ToArray();
+        foreach (var anchor in houses)
+        {
+            var footprint = new CellRect(anchor.X, anchor.Y, 2, 2);
+            foreach (var cell in footprint.Cells()) map.SetZone(cell.X, cell.Y, ZoneType.Residential);
+            map.SetBuildingFootprint(cottage, footprint);
+        }
+        session.Game.Touch();
+        session.PlaceCursor(origin);
+        session.SetZoom(0);
+        host.Map.RefreshCells();
+        session.CenterOn(new(origin.X + 5, origin.Y + 3));
+        view.ResetCameraOffset();
+        view.Sync(session, host.Map.Size);
+        var wallColors = new HashSet<int>();
+        foreach (var anchor in houses)
+        {
+            var appearance = HouseAppearance.At(anchor.X, anchor.Y, cottage.Level);
+            Require(view.BuildingVolumes(anchor, appearance.WallColor).Count > 0,
+                "Rendered homes must use their stable varied wall palette.");
+            Require(view.BuildingVolumes(anchor, HouseAppearance.TimberColor).Count >= 10 &&
+                view.BuildingVolumes(anchor, HouseAppearance.StoneColor).Count >= 1 &&
+                view.BuildingVolumes(anchor, HouseAppearance.SillColor).Count >= 2 &&
+                view.BuildingVolumes(anchor, appearance.RoofCapColor).Count == 1,
+                "Medieval homes must have broad timber corners/eaves, recessed window surrounds and masonry bases/sills.");
+            wallColors.Add(appearance.WallColor);
+            var door = view.BuildingVolumes(anchor, 0x514637).Single();
+            Require(host.Map.TryPickBuilding(view.ScreenPoint(door.Position + door.Size / 2), out var pickedHouse) && pickedHouse == anchor,
+                $"Varied house fronts must remain pickable: expected {anchor}, picked {pickedHouse}.");
+        }
+        Require(wallColors.Count >= 2, "A neighborhood must contain visibly different house palettes.");
+        if (capturePath is not null && DisplayServer.GetName() != "headless")
+        {
+            await RenderedFrame(host);
+            using var image = view.Texture.GetImage();
+            Require(image.SavePng(Path.ChangeExtension(capturePath, ".houses.png")) == Error.Ok,
+                "House variation screenshot must save successfully.");
+        }
+        foreach (var anchor in houses)
+        {
+            map.SetBuilding(anchor.X, anchor.Y, null);
+            foreach (var cell in cottage.FootprintAt(anchor.X, anchor.Y).Cells()) map.SetZone(cell.X, cell.Y, ZoneType.None);
+        }
+        GD.Print("TERMCITY_HOUSE_VARIATION_OK");
+        foreach (var entry in original)
+        {
+            map.SetTerrain(entry.Position.X, entry.Position.Y, entry.Terrain);
+            map.SetFeature(entry.Position.X, entry.Position.Y, entry.Feature);
+            map.SetSeaWater(entry.Position.X, entry.Position.Y, entry.Sea);
+            map.SetRiverWater(entry.Position.X, entry.Position.Y, entry.River);
+        }
+        session.Game.Touch();
+        GD.Print("TERMCITY_ZONE_RENDER_OK");
     }
 
     private static async Task VerifyBridgeRendering(Main host, string? capturePath)
@@ -376,6 +999,8 @@ internal static class GodotSmoke
                             Math.Abs(sample.Top.Y - sample.Bottom.Y - 0.12f) < 0.001f &&
                             Math.Abs(sample.Top.Y - bridgeLayout.HeightAt(new(sample.Top.X, sample.Top.Z))) < 0.001f,
                             "Bridge decks must have solid vertical edge faces meeting their actual top surface.");
+                        Require(chunk.Faces.Values.Any(faces => faces.Contains(sample.Top) && faces.Contains(sample.Bottom)),
+                            "Bridge side faces must be retained for picking, not just rendered.");
                         solidEdges++;
                         sidePixels.Add(sample.Top.Lerp(sample.Bottom, 0.5f));
                     }
@@ -393,6 +1018,46 @@ internal static class GodotSmoke
             var pointer = view.ScreenPoint(new(x + 0.5f, deck, y + 0.5f));
             Require(host.Map.TryMapPosition(pointer, out var picked) && picked == new Pos(x, y),
                 "Bridge deck picking must select the visible road, not the terrain beneath it.");
+            for (int turn = 0; turn < 4; turn++)
+            {
+                view.Sync(session, host.Map.Size);
+                int railsPicked = 0;
+                foreach (var rail in view.BridgeRails)
+                {
+                    if (rail.Transform.Basis.Z.Length() < 0.4f) continue;
+                    var point = rail.Transform * new Vector3(0, 0.5f, 0);
+                    if (Math.Abs(point.X - x - 0.5f) > 1.5f || Math.Abs(point.Z - y - 0.5f) > 1.5f) continue;
+                    var railPointer = view.ScreenPoint(point);
+                    if (!new Rect2(Vector2.Zero, host.Map.Size).HasPoint(railPointer)) continue;
+                    Require(view.GroundPoint(railPointer).DistanceTo(point) < 0.08f,
+                        $"Picking must follow the actual rotated bridge railing, not the deck or water, after turn {turn}.");
+                    Require(host.Map.TryMapPosition(railPointer, out var railCell) && map.HasRoad(railCell.X, railCell.Y),
+                        "Clicking a bridge railing must select its logical road, not adjacent water or ground.");
+                    railsPicked++;
+                }
+                Require(railsPicked > 0, "Each bridge rotation must exercise visible railing clicks.");
+                if (water && capturePath is not null && DisplayServer.GetName() != "headless")
+                {
+                    await RenderedFrame(host);
+                    using var bankImage = view.Texture.GetImage();
+                    Require(bankImage.SavePng(Path.ChangeExtension(capturePath, $".bridge-bank-{turn}.png")) == Error.Ok,
+                        "Bridge-bank diagnostic screenshot must save.");
+                    for (float pz = y - 2; pz <= y + 3; pz += 0.025f)
+                        for (float px = x - 3; px <= x + 4; px += 0.025f)
+                        {
+                            if (TerrainSprite.WaterSurface(map, px, pz) < ShorelineLayout.WaterThreshold) continue;
+                            var waterPointer = view.ScreenPoint(new(px,
+                                TerrainSprite.WaterCornerLevel(map, (int)px, (int)pz), pz));
+                            int ix = (int)waterPointer.X, iy = (int)waterPointer.Y;
+                            if (ix < 1 || iy < 1 || ix >= bankImage.GetWidth() - 1 || iy >= bankImage.GetHeight() - 1) continue;
+                            var pixel = bankImage.GetPixel(ix, iy);
+                            Require(pixel.G > 0.15f || pixel.B > 0.15f,
+                                $"Water below bridge approaches must not expose black gaps at {px},{pz}, heading {turn}: {pixel}.");
+                        }
+                }
+                view.Rotate(90);
+            }
+            view.Sync(session, host.Map.Size);
             for (int frame = 0; frame < 5; frame++)
                 await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
             if (capturePath is not null && DisplayServer.GetName() != "headless")
@@ -555,6 +1220,47 @@ internal static class GodotSmoke
             "Steep road-cut banks must expose shaded earth instead of stretched grass.");
         Require(view.ExposedCutCenters.Any(p => p.Z < y + 0.45f) && view.ExposedCutCenters.Any(p => p.Z > y + 0.55f),
             "A hill road must expose tight cut faces on both sides of the carriageway.");
+        var inclineVectors = new RoadVectorLayer();
+        inclineVectors.Sync(session.Game);
+        var inclineLayout = new RoadMeshLayout(map, inclineVectors.Paths);
+        var inclineMeshes = new RoadSurfaceMeshes(inclineLayout);
+        for (int chunkY = fixture.Y / TerrainSprite.ChunkCells; chunkY <= fixture.Bottom / TerrainSprite.ChunkCells; chunkY++)
+            for (int chunkX = fixture.X / TerrainSprite.ChunkCells; chunkX <= fixture.Right / TerrainSprite.ChunkCells; chunkX++)
+            {
+                var chunk = inclineMeshes.Build(session, chunkX, chunkY);
+                using var ground = chunk.Ground;
+                using var roads = chunk.Roads;
+                using var banks = chunk.Banks;
+                using var groundArrays = ground.SurfaceGetArrays(0);
+                var groundVertices = groundArrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                for (int triangle = 0; triangle < groundVertices.Length; triangle += 3)
+                {
+                    var center = (groundVertices[triangle] + groundVertices[triangle + 1] + groundVertices[triangle + 2]) / 3;
+                    int cellX = (int)Math.Floor(center.X), cellY = (int)Math.Floor(center.Z);
+                    if (!fixture.Contains(new(cellX, cellY)) || !map.TerrainAt(cellX, cellY).Buildable ||
+                        !inclineLayout.AtCell(cellX, cellY).Any(segment => segment.HeightA != segment.HeightB)) continue;
+                    Require(!inclineLayout.InGroundCorridor(new(center.X, center.Z)),
+                        $"Incline shoulders must use earth rather than grass, on both sides of the road at {center}.");
+                }
+                if (banks is null) continue;
+                using var arrays = banks.SurfaceGetArrays(0);
+                var vertices = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                for (int triangle = 0; triangle < vertices.Length; triangle += 3)
+                {
+                    var midpoint = (vertices[triangle] + vertices[triangle + 1] + vertices[triangle + 2]) / 3;
+                    if (midpoint.X < fixture.X || midpoint.X > fixture.Right + 1 ||
+                        midpoint.Z < fixture.Y || midpoint.Z > fixture.Bottom + 1) continue;
+                    var delta = vertices[triangle + 1] - vertices[triangle];
+                    if (new Vector2(delta.X, delta.Z).LengthSquared() < 0.000001f)
+                        delta = vertices[triangle + 2] - vertices[triangle];
+                    var normal = new Vector2(-delta.Z, delta.X).Normalized() * 0.002f;
+                    if (normal.LengthSquared() == 0) continue;
+                    var point = new Vector2(midpoint.X, midpoint.Z);
+                    Require(!inclineLayout.InGroundCorridor(new(point.X + normal.X, point.Y + normal.Y)) ||
+                        !inclineLayout.InGroundCorridor(new(point.X - normal.X, point.Y - normal.Y)),
+                        $"Terrace faces must not jut through the continuous tan road shoulder at {midpoint}.");
+                }
+            }
         foreach (var cell in fixture.Cells())
             if (TerrainSprite.Elevation(map, cell.X, cell.Y) > 0 &&
                 TerrainSprite.WaterSurface(map, cell.X, cell.Y) == 0 &&
@@ -860,7 +1566,7 @@ internal static class GodotSmoke
         GD.Print("TERMCITY_SMOOTH_PANNING_OK");
     }
 
-    private static void VerifyTerraceFoundations(Main host)
+    private static async Task VerifyTerraceFoundations(Main host, string? capturePath)
     {
         var session = host.Session;
         var map = session.Game.Map;
@@ -878,10 +1584,69 @@ internal static class GodotSmoke
         float highest = area.Cells().Max(p => TerrainSprite.Elevation(map, p.X, p.Y));
         float lowest = area.Cells().Min(p => TerrainSprite.Elevation(map, p.X, p.Y));
         var anchor = new Pos(area.X, area.Y);
-        Require(highest > lowest && view.BuildingVolumes(anchor).Any(bounds =>
-            Math.Abs(bounds.Size.X - 1) < 0.001f && Math.Abs(bounds.Size.Z - 1) < 0.001f &&
+        Require(highest > lowest && view.BuildingVolumes(anchor, HouseAppearance.StoneColor).Any(bounds =>
             bounds.Position.Y <= lowest && bounds.End.Y >= highest),
-            "Buildings spanning terraces must have a supporting foundation from the lower terrain to the level floor.");
+            "Hillside houses must have a stone lower level embedded into the slope up to the upper floor.");
+        Require(view.BuildingVolumes(anchor, 0x79634b).Count == 0 && view.BuildingVolumes(anchor, 0x61734c).Count == 0,
+            "Hillside houses must not stand on full-cell wooden podiums or floating plot slabs.");
+        var appearance = HouseAppearance.At(anchor.X, anchor.Y, map.BuildingAt(anchor.X, anchor.Y)!.Level);
+        float houseLeft = area.X + area.Width * (1 - appearance.Width) / 2 - 0.023f;
+        float houseRight = area.X + area.Width * (1 + appearance.Width) / 2 + 0.023f;
+        float houseBack = area.Y + area.Height * (1 - appearance.Depth) / 2 - 0.023f;
+        float houseFront = area.Y + area.Height * (1 + appearance.Depth) / 2 + 0.023f;
+        var lowerLevels = view.BuildingVolumes(anchor, HouseAppearance.StoneColor)
+            .Where(bounds => bounds.Position.Y < highest - 0.05f).ToArray();
+        Require(lowerLevels.Length > 0 && lowerLevels.All(bounds =>
+            bounds.Position.X >= houseLeft && bounds.End.X <= houseRight &&
+            bounds.Position.Z >= houseBack && bounds.End.Z <= houseFront),
+            "Lower stone levels must follow the inset house walls, not fill the entire reserved plot.");
+        var groundSamples = area.Cells().Select(cell => new Vector2(cell.X + 0.5f, cell.Y + 0.5f)).ToArray();
+        var terrainHeights = groundSamples.Select(sample => view.RenderedGroundHeight(map, sample.X, sample.Y)).ToArray();
+        for (int turn = 0; turn < 4; turn++)
+        {
+            view.Sync(session, host.Map.Size);
+            Require(groundSamples.Select(sample => view.RenderedGroundHeight(map, sample.X, sample.Y))
+                .SequenceEqual(terrainHeights), "Hillside houses must leave rendered terrain heights untouched.");
+            if (turn == 0 && capturePath is not null && DisplayServer.GetName() != "headless")
+            {
+                await RenderedFrame(host);
+                using var image = view.Texture.GetImage();
+                Require(image.SavePng(Path.ChangeExtension(capturePath, ".hillside.png")) == Error.Ok,
+                    "Split-level hillside house screenshot must save successfully.");
+            }
+            var wall = lowerLevels.OrderBy(bounds => bounds.Position.Y).First();
+            Require(host.Map.TryPickBuilding(view.ScreenPoint(wall.Position + wall.Size / 2), out var lowerHouse) &&
+                lowerHouse == anchor, "The exposed hillside lower level must remain pickable at every camera heading.");
+            view.Rotate(90);
+        }
+        var houseType = map.BuildingAt(anchor.X, anchor.Y)!;
+        int originalRotation = map.BuildingRotations.GetValueOrDefault(map.Index(anchor.X, anchor.Y));
+        for (int rotation = 0; rotation < 4; rotation++)
+        {
+            map.SetBuilding(anchor.X, anchor.Y, null);
+            var rotatedArea = houseType.FootprintAt(anchor.X, anchor.Y, rotation);
+            map.SetBuildingFootprint(houseType, rotatedArea);
+            map.BuildingRotations[map.Index(anchor.X, anchor.Y)] = rotation;
+            session.Game.Touch();
+            host.Map.RefreshCells();
+            view.Sync(session, host.Map.Size);
+            float floor = rotatedArea.Cells().Max(cell => TerrainSprite.Elevation(map, cell.X, cell.Y));
+            var walls = view.BuildingVolumes(anchor, appearance.WallColor);
+            var supports = view.BuildingVolumes(anchor, HouseAppearance.StoneColor)
+                .Where(bounds => bounds.Position.Y < floor - 0.05f).ToArray();
+            Require(supports.All(support => walls.Any(wall =>
+                support.Position.X >= wall.Position.X - 0.024f && support.End.X <= wall.End.X + 0.024f &&
+                support.Position.Z >= wall.Position.Z - 0.024f && support.End.Z <= wall.End.Z + 0.024f)),
+                "Split-level stone foundations must follow the actual rotated house and wing walls.");
+            Require(view.BuildingVolumes(anchor, 0x79634b).Count == 0 && view.BuildingVolumes(anchor, 0x61734c).Count == 0,
+                "Rotated hillside houses must not regain a full-plot podium.");
+            Require(groundSamples.Select(sample => view.RenderedGroundHeight(map, sample.X, sample.Y))
+                .SequenceEqual(terrainHeights), "Rotating a hillside house must not reshape its terrain.");
+        }
+        map.SetBuilding(anchor.X, anchor.Y, null);
+        map.SetBuildingFootprint(houseType, area);
+        if (originalRotation != 0) map.BuildingRotations[map.Index(anchor.X, anchor.Y)] = originalRotation;
+        session.Game.Touch();
         session.SelectCell(anchor);
         foreach (int zoom in new[] { -2, -1, 0, 1 })
         {
@@ -907,6 +1672,69 @@ internal static class GodotSmoke
         GD.Print("TERMCITY_TERRACE_FOUNDATIONS_OK");
     }
 
+    private static async Task VerifyBankColors(Main host, string? capturePath)
+    {
+        var session = host.Session;
+        var map = session.Game.Map;
+        var view = host.Map.Perspective!;
+        int originalZoom = session.ZoomLevel;
+        var origin = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf)
+            .Where(p => p.X >= 2 && p.Y >= 2 && p.X < map.Width - 13 && p.Y < map.Height - 11)
+            .OrderBy(p => Math.Abs(p.X - map.Width / 2) + Math.Abs(p.Y - map.Height / 2))
+            .First(p => new CellRect(p.X, p.Y, 11, 9).Cells().All(cell => session.Game.CanBuildOn(cell.X, cell.Y)));
+        var fixture = new CellRect(origin.X, origin.Y, 11, 9);
+        var original = fixture.Cells().Select(p => (Position: p, Terrain: map.TerrainAt(p.X, p.Y),
+            Feature: map.FeatureAt(p.X, p.Y), Sea: map.IsSea(p.X, p.Y), River: map.IsRiver(p.X, p.Y))).ToArray();
+        foreach (var cell in fixture.Cells())
+        {
+            int edge = origin.Y + 4 + (cell.X - origin.X) / 3 % 2;
+            map.SetTerrain(cell.X, cell.Y, map.Content.Terrains.Get(cell.Y >= edge ? "Water" : "Meadow"));
+            map.SetFeature(cell.X, cell.Y, null);
+            map.SetRiverWater(cell.X, cell.Y, cell.Y >= edge);
+        }
+        session.Game.Touch();
+        session.SetZoom(0);
+        host.Map.RefreshCells();
+        session.CenterOn(new(origin.X + 5, origin.Y + 4));
+        int samples = 0;
+        for (int heading = 0; heading < 4; heading++)
+        {
+            view.Sync(session, host.Map.Size);
+            for (int frame = 0; frame < 3; frame++)
+                await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            await RenderedFrame(host);
+            using var image = view.Texture.GetImage();
+            if (capturePath is not null)
+                Require(image.SavePng(Path.ChangeExtension(capturePath, $".bank-color-{heading}.png")) == Error.Ok,
+                    "Stepped-bank color captures must save successfully.");
+            foreach (var cell in fixture.Cells().Where(p => p.X > fixture.X && p.X < fixture.Right &&
+                p.Y > fixture.Y && p.Y < fixture.Bottom && ShorelineLayout.BankCell(map, p.X, p.Y)))
+            {
+                float centerX = cell.X + 0.5f, centerY = cell.Y + 0.5f;
+                var pointer = view.ScreenPoint(new(centerX, view.RenderedGroundHeight(map, centerX, centerY), centerY));
+                Require(pointer.X >= 0 && pointer.X < image.GetWidth() && pointer.Y >= 0 && pointer.Y < image.GetHeight(),
+                    "The entire bank color fixture must fit in the viewport at every heading.");
+                var color = image.GetPixel((int)pointer.X, (int)pointer.Y);
+                Require(color.R > color.G * 0.75f && color.G > color.B * 1.15f,
+                    $"Every block adjoining river water must share the earthy bank palette: {cell}, heading {heading}, {color}.");
+                samples++;
+            }
+            view.Rotate(90);
+        }
+        foreach (var entry in original)
+        {
+            map.SetTerrain(entry.Position.X, entry.Position.Y, entry.Terrain);
+            map.SetFeature(entry.Position.X, entry.Position.Y, entry.Feature);
+            map.SetSeaWater(entry.Position.X, entry.Position.Y, entry.Sea);
+            map.SetRiverWater(entry.Position.X, entry.Position.Y, entry.River);
+        }
+        session.Game.Touch();
+        session.SetZoom(originalZoom);
+        host.Map.RefreshCells();
+        Require(samples >= 36, "Bank color checks must cover straight and stepped shores at all four headings.");
+        GD.Print($"TERMCITY_BANK_COLORS_OK samples={samples}");
+    }
+
     private static async Task VerifyClosedTerrainEdges(Main host, string? capturePath)
     {
         var session = host.Session;
@@ -925,8 +1753,10 @@ internal static class GodotSmoke
         view.Sync(session, host.Map.Size);
         var bankVectors = new RoadVectorLayer();
         bankVectors.Sync(session.Game);
-        var bankMeshes = new RoadSurfaceMeshes(new RoadMeshLayout(map, bankVectors.Paths));
+        var bankLayout = new RoadMeshLayout(map, bankVectors.Paths);
+        var bankMeshes = new RoadSurfaceMeshes(bankLayout);
         int shoreSamples = 0;
+        int upperCoastalTriangles = 0;
         for (int cy = fixture.Y / TerrainSprite.ChunkCells; cy <= fixture.Bottom / TerrainSprite.ChunkCells; cy++)
             for (int cx = fixture.X / TerrainSprite.ChunkCells; cx <= fixture.Right / TerrainSprite.ChunkCells; cx++)
             {
@@ -934,6 +1764,26 @@ internal static class GodotSmoke
                 using var groundMesh = bank.Ground;
                 using var pavingMesh = bank.Roads;
                 using var cliffMesh = bank.Banks;
+                var vertices = groundMesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                for (int vertex = 0; vertex < vertices.Length; vertex += 3)
+                {
+                    var center = (vertices[vertex] + vertices[vertex + 1] + vertices[vertex + 2]) / 3;
+                    int cellX = (int)Math.Floor(center.X), cellY = (int)Math.Floor(center.Z);
+                    if (!fixture.Contains(new(cellX, cellY)) ||
+                        TerrainSprite.Elevation(map, cellX, cellY) <= TerrainSprite.HillBaseHeight ||
+                        TerrainSprite.WaterSurface(map, center.X, center.Z) >= ShorelineLayout.WaterThreshold ||
+                        bankLayout.InCorridor(new(center.X, center.Z)) ||
+                        bankMeshes.IsRemnant(map, new(center.X, center.Z))) continue;
+                    float level = TerrainSprite.Elevation(map, cellX, cellY);
+                    for (int corner = 0; corner < 3; corner++)
+                    {
+                        var point = vertices[vertex + corner];
+                        Require(Math.Abs(point.Y - level) < 0.001f,
+                            $"Upper ridge panels must remain level at their coastal edges, not slope down: {point}, expected {level}.");
+                        if (TerrainSprite.WaterSurface(map, point.X, point.Z) > 0.02)
+                            upperCoastalTriangles++;
+                    }
+                }
                 foreach (var sample in bank.ShoreSamples)
                 {
                     Require(sample.Top.X == sample.Bottom.X && sample.Top.Z == sample.Bottom.Z &&
@@ -941,8 +1791,17 @@ internal static class GodotSmoke
                         "Riverbanks must drop vertically at the contour, not slope into the water.");
                     shoreSamples++;
                 }
+                for (int sample = 0; sample < bank.ShoreSamples.Count; sample += 2)
+                {
+                    var start = bank.ShoreSamples[sample].Top;
+                    var end = bank.ShoreSamples[sample + 1].Top;
+                    Require(start.X == end.X && start.X == MathF.Round(start.X) ||
+                        start.Z == end.Z && start.Z == MathF.Round(start.Z),
+                        "Rendered water's edges must follow whole-cell block boundaries, not smoothed diagonals.");
+                }
             }
         Require(shoreSamples > 0, "The hill/river fixture must contain actual vertical shoreline walls.");
+        Require(upperCoastalTriangles > 0, "The ridge fixture must exercise upper terrace edges near water.");
         foreach (var p in fixture.Cells())
         {
             float center = view.RenderedGroundHeight(map, p.X + 0.5f, p.Y + 0.5f);
@@ -958,7 +1817,13 @@ internal static class GodotSmoke
                     "Coastal hill tops must stay level, not collapse into shoreline wedges.");
         }
         Require(view.CliffEdges.All(edge =>
-            TerrainSprite.WaterSurface(map, (edge.A.X + edge.B.X) / 2, (edge.A.Y + edge.B.Y) / 2) < 0.38),
+        {
+            var midpoint = (edge.A + edge.B) / 2;
+            var normal = new Vector2(-(edge.B - edge.A).Y, (edge.B - edge.A).X).Normalized() * 0.001f;
+            bool Land(Vector2 point) => map.InBounds((int)Math.Floor(point.X), (int)Math.Floor(point.Y)) &&
+                map.TerrainAt((int)Math.Floor(point.X), (int)Math.Floor(point.Y)).Buildable;
+            return Land(midpoint + normal) || Land(midpoint - normal);
+        }),
             "No land cliff may extend into the visible river surface.");
         if (DisplayServer.GetName() != "headless")
         {
@@ -993,6 +1858,22 @@ internal static class GodotSmoke
                 if (error != Error.Ok) throw new IOException($"Low-angle river-cliff screenshot failed: {error}.");
                 view.Tilt();
                 view.Sync(session, host.Map.Size);
+            }
+            foreach (int zoom in new[] { 0, 1 })
+            {
+                session.SetZoom(zoom);
+                host.Map.RefreshCells();
+                session.CenterOn(new(x - 1, y));
+                for (int heading = 0; heading < 4; heading++)
+                {
+                    view.Sync(session, host.Map.Size);
+                    await RenderedFrame(host);
+                    using var ridge = view.Texture.GetImage();
+                    if (capturePath is not null)
+                        Require(ridge.SavePng(Path.ChangeExtension(capturePath, $".ridge-{zoom}-{heading}.png")) == Error.Ok,
+                            "The level ridge capture must save successfully at each heading and zoom.");
+                    view.Rotate(90);
+                }
             }
         }
         foreach (var entry in terrains)
@@ -1078,7 +1959,7 @@ internal static class GodotSmoke
                 }
         void CompareEdge(int ax, int ay, int bx, int by, Vector2 point)
         {
-            if (TerrainSprite.WaterSurface(map, point.X, point.Y) >= ShorelineLayout.WaterThreshold) return;
+            if (!map.TerrainAt(ax, ay).Buildable || !map.TerrainAt(bx, by).Buildable) return;
             float a = EdgeHeight(beachFaces[map.Index(ax, ay)], point);
             float b = EdgeHeight(beachFaces[map.Index(bx, by)], point);
             Require(float.IsFinite(a) && float.IsFinite(b) && Math.Abs(a - b) < 0.001f,
@@ -1199,19 +2080,23 @@ internal static class GodotSmoke
                     using var ground = chunk.Ground;
                     using var roads = chunk.Roads;
                     using var banks = chunk.Banks;
-                    foreach (var sample in chunk.ShoreSamples)
+                    for (int sample = 0; sample < chunk.ShoreSamples.Count; sample += 2)
                     {
-                        var point = new System.Numerics.Vector2(sample.Top.X, sample.Top.Z);
-                        if (Math.Abs(sample.Top.Z - y) > 3 || Math.Abs(sample.Top.X - x - 0.8f) > 0.5f ||
-                            !layout.InGroundCorridor(point)) continue;
-                        int px = (int)Math.Floor(point.X), py = (int)Math.Floor(point.Y);
-                        float expected = layout.SupportedShoulderHeight(point, TerrainSprite.Elevation(map, px, py));
-                        Require(Math.Abs(sample.Top.Y - expected) < 0.001f,
-                            $"Shore walls must close against the actual road shoulder, not leave a thin gap: {sample.Top}, expected {expected}.");
+                        var start = chunk.ShoreSamples[sample].Top;
+                        var end = chunk.ShoreSamples[sample + 1].Top;
+                        var center = (start + end) / 2;
+                        if (Math.Abs(center.Z - y) > 3 || Math.Abs(center.X - x - 1) > 0.001f) continue;
+                        foreach (float amount in new[] { 0.25f, 0.5f, 0.75f })
+                        {
+                            var point = start.Lerp(end, amount);
+                            float expected = view.RenderedGroundHeight(map, point.X - 0.0001f, point.Z);
+                            Require(Math.Abs(point.Y - expected) < 0.001f,
+                                $"Block-bank walls beside the road must close against its actual land/shoulder surface: {point}, expected {expected}.");
+                        }
                         tested++;
                     }
                 }
-            Require(tested > 0, "The shoreline-road fixture must test the road/shore intersection itself.");
+            Require(tested > 0, "The shoreline-road fixture must test actual block-bank faces alongside the road.");
             for (int frame = 0; frame < 3; frame++)
                 await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
             if (capturePath is not null && DisplayServer.GetName() != "headless")
@@ -1466,12 +2351,27 @@ internal static class GodotSmoke
         Require(!Descendants(host).OfType<Label>().Any(l => l.Text.StartsWith("Arrows: move", StringComparison.Ordinal)),
             "Header still contains the movement guidance row.");
         var zoomIndicator = Descendants(host).OfType<Label>().Single(l => l.Name == "ZoomIndicator");
+        bool perspectiveEnabled = host.Map.PerspectiveEnabled;
+        host.Map.SetPerspective(true);
+        await Frames();
         float heading = host.Map.Perspective!.Azimuth;
         await KeyEvent(Key.Bracketleft, unicode: '[');
         Require(host.Map.Perspective.Azimuth == Mathf.PosMod(heading - 90, 360),
             "[ must rotate the map 90 degrees left.");
         await KeyEvent(Key.Bracketright, unicode: ']');
         Require(host.Map.Perspective.Azimuth == heading, "] must rotate the map 90 degrees right.");
+        var placementBuilding = session.Game.Map.Content.Buildings.Get("Town Well");
+        session.PreviewBuilding(placementBuilding);
+        await KeyEvent(Key.Bracketright, unicode: ']');
+        Require(session.Preview?.Rotation == 1 && session.Preview.Area.Width == placementBuilding.Height &&
+            session.Preview.Area.Height == placementBuilding.Width && host.Map.Perspective.Azimuth == heading,
+            "During building placement, ] must rotate the building and its footprint without rotating the map.");
+        await KeyEvent(Key.Bracketleft, unicode: '[');
+        Require(session.Preview?.Rotation == 0 && host.Map.Perspective.Azimuth == heading,
+            "During building placement, [ must restore the building orientation without rotating the map.");
+        session.ClearSelection();
+        host.Map.SetPerspective(perspectiveEnabled);
+        await Frames();
         Require(zoomIndicator.Text == session.ZoomLabel &&
             zoomIndicator.GetParent().GetChild<Button>(0).Text == "[-]" &&
             zoomIndicator.GetParent().GetChild<Button>(2).Text == "[+]",
@@ -2692,7 +3592,8 @@ internal static class GodotSmoke
             Pressed = true,
             Position = host.Minimap.Size / 2,
         });
-        host.Minimap.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseMotion { Position = host.Minimap.Size });
+        host.Minimap.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseMotion
+            { Position = host.Minimap.ScreenPoint(new(session.Game.Map.Width - 1, session.Game.Map.Height - 1)) });
         host.Minimap.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
         {
             ButtonIndex = MouseButton.Left,

@@ -102,7 +102,7 @@ public class ProgressionTests
     {
         var game = TestCity.Flat(rules: CityRules.Full);
         game.Paused = true;
-        game.Designate(new CellRect(10, 18, 30, 1), ZoneType.Residential);
+        game.Designate(new CellRect(10, 18, 30, 2), ZoneType.Residential);
         Assert.Contains("Woodlot", CityProgression.NextStep(game));
         Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Woodlot"), new CellRect(45, 18, 1, 1)).Success);
         Assert.Contains("Town Well", CityProgression.NextStep(game));

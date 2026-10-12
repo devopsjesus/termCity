@@ -85,9 +85,15 @@ public static class CityProgression
             return "1. Zone broad homesteads (R); leave service plots. Roads speed arrivals. F6: guide.";
         if (GrowthDiagnostics.ForZone(game, World.ZoneType.Residential).EligibleVacancies == 0 &&
             game.Stats.Residential.Occupied == 0)
-            return "2. Give cottages clear two-cell plots. Water crossings need bridges. F8 checks growth.";
+        {
+            var size = game.MinimumGrowthSize(World.ZoneType.Residential);
+            return $"2. Give cottages clear {size.Width}x{size.Height} plots. Water crossings need bridges. F8 checks growth.";
+        }
         if (game.Stats.Residential.Occupied == 0 && game.VacantPlots(World.ZoneType.Residential).Count == 0)
-            return "2. Cottages need adjacent zoned cells. Drag a wider area with R; P resumes settlement.";
+        {
+            var size = game.MinimumGrowthSize(World.ZoneType.Residential);
+            return $"2. Cottages need adjacent zoned cells in a {size.Width}x{size.Height} plot. Drag a wider area with R; P resumes settlement.";
+        }
         if (game.Config.FullRules && game.Services.ActiveCounts[(int)ServiceKind.Power] == 0)
             return "3. Build a Woodlot (8,000g) near homes: Enter > Services. Roads speed fuel deliveries.";
         if (game.Config.FullRules && game.Services.ActiveCounts[(int)ServiceKind.Water] == 0)

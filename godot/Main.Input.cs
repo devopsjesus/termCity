@@ -170,7 +170,11 @@ public partial class Main
         }
         if (Session.Preview is not null)
         {
-            if (Session.FixedPlacementToolActive && code is Key.Left or Key.Right or Key.Up or Key.Down)
+            if (Session.BuildingToolActive && code is Key.Bracketleft or Key.Bracketright)
+            {
+                Session.RotateBuildingPlacement(code == Key.Bracketleft ? -1 : 1);
+            }
+            else if (Session.FixedPlacementToolActive && code is Key.Left or Key.Right or Key.Up or Key.Down)
             {
                 int buildingDx = code == Key.Left ? -1 : code == Key.Right ? 1 : 0;
                 int buildingDy = code == Key.Up ? -1 : code == Key.Down ? 1 : 0;

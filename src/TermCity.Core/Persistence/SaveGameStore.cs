@@ -77,6 +77,7 @@ public static class SaveGameStore
             GuideDismissed = game.GuideDismissed,
             ZoneRemovals = new(map.ZoneRemovals),
             BuildingFootprints = map.BuildingFootprints.Values.ToList(),
+            BuildingRotations = new(map.BuildingRotations),
             Paths = Pack(map.PathLayer),
             Sea = Pack(EncodeFlags(map.SeaLayer)),
             Rivers = Pack(EncodeFlags(map.RiverLayer)),
@@ -165,16 +166,20 @@ public static class SaveGameStore
         }
 
         map.RebuildIndexes();
+        if (data.BuildingRotations.Values.Any(rotation => rotation is < 0 or > 3))
+            throw new InvalidDataException("Invalid building rotation.");
         var occupied = new HashSet<int>();
         foreach (var area in data.BuildingFootprints)
         {
             if (area.Width <= 0 || area.Height <= 0 || !map.InBounds(area.X, area.Y) ||
                 area.Width > map.Width - area.X || area.Height > map.Height - area.Y ||
                 map.BuildingAt(area.X, area.Y) is not { } building ||
-                (building.PlayerPlaceable && (area.Width != building.Width || area.Height != building.Height) &&
+                (building.PlayerPlaceable &&
+                    area != building.FootprintAt(area.X, area.Y, data.BuildingRotations.GetValueOrDefault(map.Index(area.X, area.Y))) &&
                     !(area.Width == 1 && area.Height == 1 && building.Width == 2 && building.Height == 1 &&
                         building.Name is "Watch House" or "Apothecary" or "Chapel" or "Tavern")) ||
-                (!building.PlayerPlaceable && (area.Width > 5 || area.Height > 3)))
+                (!building.PlayerPlaceable && (area.Width > 5 ||
+                    area.Height > (building.Zone == ZoneType.Residential ? 4 : 3))))
                 throw new InvalidDataException("Invalid building footprint.");
             if (building.DebugOnly && !CityGame.DebugToolsAvailable)
                 throw new InvalidDataException($"Save contains debug-only building '{building.Name}'; load it with a Debug build.");
@@ -190,6 +195,13 @@ public static class SaveGameStore
                     throw new InvalidDataException("Invalid or overlapping building footprint.");
             }
             map.RegisterBuildingFootprint(area);
+        }
+        foreach (var (index, rotation) in data.BuildingRotations)
+        {
+            if (index < 0 || index >= count || !map.BuildingFootprints.ContainsKey(index) ||
+                map.BuildingAt(index % map.Width, index / map.Width)?.PlayerPlaceable != true)
+                throw new InvalidDataException("Invalid building rotation anchor.");
+            if (rotation != 0) map.BuildingRotations.Add(index, rotation);
         }
         foreach (int index in map.ServiceCells)
             if (!occupied.Contains(index))
@@ -267,7 +279,7 @@ public static class SaveGameStore
             throw new InvalidDataException("Invalid saved calendar or speed.");
         if (data.Growth is null || data.Tally is null || data.Taxes is null ||
             data.BuildingFootprints is null || data.ZoneRemovals is null || data.Funding is null ||
-            data.BuildingEstablishedDays is null)
+            data.BuildingEstablishedDays is null || data.BuildingRotations is null)
             throw new InvalidDataException("Save file has missing city state.");
         if (!InRange(data.Taxes.Residential, 0, 0.3) || !InRange(data.Taxes.Commercial, 0, 0.3) ||
             !InRange(data.Taxes.Industrial, 0, 0.3) || data.Funding.Length != ServiceKinds.Count ||
@@ -469,6 +481,7 @@ public static class SaveGameStore
 
         public required Dictionary<int, ZoneRemoval> ZoneRemovals { get; set; }
         public required List<CellRect> BuildingFootprints { get; set; }
+        public Dictionary<int, int> BuildingRotations { get; set; } = [];
         public string? Paths { get; set; }
         public string? Sea { get; set; }
         public string? Rivers { get; set; }

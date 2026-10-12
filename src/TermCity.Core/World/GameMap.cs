@@ -44,7 +44,6 @@ public sealed class GameMap
     internal int[][]? BuildingPaths;
     internal byte[]? HillLevels;
     internal byte[]? CoastalHillCaps; // 0 unknown, 1 coastal, 2 collapsed, 3 inland.
-    internal byte[]? CoastalSlopeCells;
     internal double[]? WaterDensities;
     internal sbyte[]? CoastDistances;
     internal double[]? JunctionDelays;
@@ -62,6 +61,7 @@ public sealed class GameMap
     private readonly Dictionary<int, int> _buildingOwners = [];
 
     public IReadOnlyDictionary<int, CellRect> BuildingFootprints => _buildingFootprints;
+    public Dictionary<int, int> BuildingRotations { get; } = [];
 
     public int BuildingAnchor(int index) => _buildingOwners.GetValueOrDefault(index, index);
     public bool IsBuildingAnchor(int index) => BuildingAnchor(index) == index;
@@ -205,7 +205,6 @@ public sealed class GameMap
         TerrainVersion++;
         HillLevels = null;
         CoastalHillCaps = null;
-        CoastalSlopeCells = null;
         WaterDensities = null;
         WaterFlow = null;
         InvalidateTravel();
@@ -367,7 +366,9 @@ public sealed class GameMap
                 _serviceCells.Remove(cell);
             }
             BuildingEstablishedDays.Remove(owner);
+            BuildingRotations.Remove(owner);
         }
+        BuildingRotations.Remove(i);
         BuildingLayer[i] = building?.Id ?? 0;
         ZoneRemovals.Remove(i);
         if (building is { IsService: true })

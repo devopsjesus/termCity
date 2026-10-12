@@ -22,18 +22,20 @@ public class PixelTerrainAndPickingTests
     }
 
     [Fact]
-    public void CoastalTerracesEaseIntoTheBankRatherThanEndingAsTallSharpWalls()
+    public void SupportedCoastalTerracesRetainTheirDistinctLevelsAndLogicalTerrain()
     {
         var map = new GameMap(32, 32, new GameContent());
         for (int y = 4; y < 28; y++)
             for (int x = 4; x < 16; x++) map.SetTerrain(x, y, map.Content.Terrains.Get("Hill"));
         for (int y = 0; y < map.Height; y++)
             for (int x = 16; x < map.Width; x++) map.SetTerrain(x, y, map.Content.Terrains.Get("Water"));
-        float inland = TerrainSprite.CoastalLandSurface(map, 14, 15, 14.5f, 15.5f);
-        float bank = TerrainSprite.CoastalLandSurface(map, 14, 15, 14.99f, 15.5f);
-        Assert.True(inland > bank);
-        Assert.Equal(TerrainSprite.HillBaseHeight, bank, 5);
-        Assert.Equal(TerrainSprite.Elevation(map, 8, 15), TerrainSprite.CoastalLandSurface(map, 8, 15, 8.5f, 15.5f));
+        for (int column = 12; column < 16; column++)
+        {
+            float expected = TerrainSprite.HillBaseHeight +
+                Math.Min(15 - column, 3) * TerrainSprite.HillStepHeight;
+            Assert.Equal(expected, TerrainSprite.Elevation(map, column, 15), 5);
+            Assert.Equal("Hill", map.TerrainAt(column, 15).Name);
+        }
     }
 
     [Fact]

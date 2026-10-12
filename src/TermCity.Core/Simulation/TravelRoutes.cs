@@ -206,6 +206,50 @@ public sealed class TravelRoutes
         }
     }
 
+    internal static IEnumerable<int[]> FootpathJourneys(GameMap map)
+    {
+        foreach (var path in BetweenBuildings(map))
+        {
+            if (path.Length == 0) continue;
+            var journey = new List<int>();
+            int BuildingNeighbor(int cell)
+            {
+                var position = map.PosOf(cell);
+                foreach (var (deltaX, deltaY) in RoadNetwork.Neighbors)
+                    if (map.InBounds(position.X + deltaX, position.Y + deltaY) &&
+                        map.BuildingAt(position.X + deltaX, position.Y + deltaY) is not null)
+                        return map.Index(position.X + deltaX, position.Y + deltaY);
+                return -1;
+            }
+            int first = BuildingNeighbor(path[0]), last = BuildingNeighbor(path[^1]);
+            if (first >= 0) journey.Add(first);
+            journey.AddRange(path);
+            if (last >= 0) journey.Add(last);
+            yield return journey.ToArray();
+        }
+        if (map.RoadCount == 0) yield break;
+        var routes = NearestRoad(map);
+        foreach (var area in map.BuildingFootprints.Values)
+        {
+            int start = -1, ownerCell = -1;
+            double best = double.PositiveInfinity;
+            foreach (var position in area.Cells())
+                foreach (var (deltaX, deltaY) in RoadNetwork.Neighbors)
+                {
+                    if (!map.InBounds(position.X + deltaX, position.Y + deltaY)) continue;
+                    int cell = map.Index(position.X + deltaX, position.Y + deltaY);
+                    if (routes.Cost[cell] >= best) continue;
+                    best = routes.Cost[cell];
+                    start = cell;
+                    ownerCell = map.Index(position.X, position.Y);
+                }
+            if (start < 0) continue;
+            var journey = new List<int> { ownerCell };
+            for (int cell = start; cell >= 0; cell = routes.Next[cell]) journey.Add(cell);
+            yield return journey.ToArray();
+        }
+    }
+
     private static int[][] BetweenBuildings(GameMap map)
     {
         if (map.BuildingPaths is { } cached) return cached;

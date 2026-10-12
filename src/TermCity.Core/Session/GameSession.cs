@@ -524,9 +524,12 @@ public sealed partial class GameSession
     {
         HasCursor = true;
         var area = ActiveArea;
-        if (zone != ZoneType.None && area.Area == 1 && Game.Map.Content.Buildings.ForZone(zone) is { } type)
-            area = new(Math.Min(area.X, Game.Map.Width - type.Width),
-                Math.Min(area.Y, Game.Map.Height - type.Height), type.Width, type.Height);
+        if (zone != ZoneType.None && area.Area == 1 && Game.Map.Content.Buildings.ForZone(zone) is not null)
+        {
+            var size = Game.MinimumGrowthSize(zone);
+            area = new(Math.Min(area.X, Game.Map.Width - size.Width),
+                Math.Min(area.Y, Game.Map.Height - size.Height), size.Width, size.Height);
+        }
         return Execute(() =>
         {
             var result = Game.Designate(area, zone);

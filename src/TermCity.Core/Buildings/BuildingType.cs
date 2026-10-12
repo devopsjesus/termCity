@@ -37,6 +37,12 @@ public sealed class BuildingType : RegisteredType
     public int Width { get; init; } = 1;
     public int Height { get; init; } = 1;
 
+    public CellRect FootprintAt(int x, int y, int rotation = 0)
+    {
+        if (rotation is < 0 or > 3) throw new ArgumentOutOfRangeException(nameof(rotation));
+        return rotation % 2 == 0 ? new(x, y, Width, Height) : new(x, y, Height, Width);
+    }
+
     /// <summary>ASCII art at two columns and two rows per occupied map cell.</summary>
     public IReadOnlyList<string> FootprintArt { get; init; } = [];
 

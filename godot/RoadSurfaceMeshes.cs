@@ -73,7 +73,7 @@ internal sealed class RoadSurfaceMeshes
         var roadHeights = new Dictionary<Vector2, float>();
         var beachAmounts = new Dictionary<Vector2, float>();
         var bankAmounts = new Dictionary<Vector2, float>();
-        var shoulderHeights = new Dictionary<(int X, int Y, Vector2 Point), float>();
+        var shoulderHeights = new Dictionary<Vector2, float>();
         float BeachAmount(Vector2 point)
         {
             if (beachAmounts.TryGetValue(point, out float amount)) return amount;
@@ -103,9 +103,7 @@ internal sealed class RoadSurfaceMeshes
         float LandSurface(int x, int y, Vector2 point)
         {
             float level = LandHeight(x, y);
-            if (level > 0)
-                return level > TerrainSprite.HillBaseHeight && map.TerrainAt(x, y).Buildable
-                    ? TerrainSprite.CoastalLandSurface(map, x, y, point.X, point.Y, level) : level;
+            if (level > 0) return level;
             if (!BeachCell(map, x, y)) return level;
             float amount = BankAmount(point) * BeachAmount(point);
             return amount == 0 ? level : Mathf.Lerp(level, WaterHeight(x, y, point), amount);
@@ -134,12 +132,13 @@ internal sealed class RoadSurfaceMeshes
             roadHeights.Add(point, height);
             return height;
         }
-        float ShoulderHeight(int x, int y, Vector2 point)
+        float ShoulderHeight(Vector2 point)
         {
-            var key = (x, y, point);
-            if (shoulderHeights.TryGetValue(key, out float height)) return height;
-            height = _layout.SupportedShoulderHeight(ToNumerics(point), LandSurface(x, y, point));
-            shoulderHeights.Add(key, height);
+            if (shoulderHeights.TryGetValue(point, out float height)) return height;
+            int cellX = Math.Clamp((int)Math.Floor(point.X), 0, map.Width - 1);
+            int cellY = Math.Clamp((int)Math.Floor(point.Y), 0, map.Height - 1);
+            height = _layout.SupportedShoulderHeight(ToNumerics(point), LandSurface(cellX, cellY, point));
+            shoulderHeights.Add(point, height);
             return height;
         }
         bool CutAt(Vector2 point)
@@ -171,11 +170,10 @@ internal sealed class RoadSurfaceMeshes
                     ShorelineLayout.BankAmount(map, x + 1, y) > 0 || ShorelineLayout.BankAmount(map, x, y + 1) > 0 ||
                     ShorelineLayout.BankAmount(map, x + 1, y + 1) > 0 ||
                     ShorelineLayout.BankAmount(map, x + 0.5f, y + 0.5f) > 0);
-                bool coastalSlope = landLevel > TerrainSprite.HillBaseHeight && TerrainSprite.HasCoastalTerraceSlope(map, x, y);
                 bool conformEdges = nearby.Length > 0 && (nearby.Any(s => s.Bridge ||
                     s.HeightA != terrainLevel || s.HeightB != terrainLevel) ||
                     Remnants(map, x, y).Count > 0 || TerrainSprite.WaterSurface(map, x + 0.5, y + 0.5) > 0) ||
-                    slopedBank || coastalSlope;
+                    slopedBank;
                 var cellFaces = new List<Vector3>();
                 var surfaces = new List<(Vector2[] Polygon, TriangleBuffer Tool, Func<Vector2, float> Height,
                     Func<Vector2, Color> Color, bool TerrainTexture, bool? WaterSurface)>();
@@ -195,7 +193,7 @@ internal sealed class RoadSurfaceMeshes
                     {
                         foreach (var patch in shoreline)
                             Emit(Convert(patch.Polygon), ground,
-                                p => patch.Water ? WaterHeight(x, y, p) : beach || coastalSlope ? LandSurface(x, y, p) : landLevel,
+                                p => patch.Water ? WaterHeight(x, y, p) : beach ? LandSurface(x, y, p) : landLevel,
                                 _ => tint, true, patch.Water);
                     }
                     else
@@ -214,9 +212,7 @@ internal sealed class RoadSurfaceMeshes
                                     if (segment.Bridge) bridgeSurfaces.Add((clipped, segment.Type));
                                 }
                             unassignedCorridor = Difference(unassignedCorridor, footprint);
-                            if (!segment.Bridge)
-                                remaining = Difference(remaining, footprint);
-                            else if (BridgeCuts(map, x, y))
+                            if (!segment.Bridge || BridgeCuts(map, x, y))
                             {
                                 if (shoreline.Count == 1)
                                 {
@@ -254,20 +250,19 @@ internal sealed class RoadSurfaceMeshes
                             shoulders.AddRange(Geometry2D.IntersectPolygons(tile, remnant));
                             remaining = Difference(remaining, remnant);
                         }
-                        if (nearby.All(s => s.Bridge) && (!groundCut || shoreline.Count == 1 && shoreline[0].Water))
-                            expectedCellArea += corridors.Sum(Area);
-                        else if (nearby.Any(s => s.Bridge))
+                        if (nearby.Any(s => s.Bridge) || shoreline.Any(patch => patch.Water))
                             foreach (var corridor in corridors)
                                 foreach (var piece in remaining)
                                     expectedCellArea += Geometry2D.IntersectPolygons(corridor, piece).Sum(Area);
                         foreach (var piece in shoulders)
                         {
-                            if (terrainLevel > 0 || piece.Any(p => Math.Abs(GradedHeight(p) - GroundHeight(x, y, p)) >= 0.12f))
+                            if (terrainLevel > 0 || nearby.Any(segment => segment.HeightA != segment.HeightB) ||
+                                piece.Any(p => Math.Abs(GradedHeight(p) - GroundHeight(x, y, p)) >= 0.12f))
                             {
-                                Emit(piece, roads, p => ShoulderHeight(x, y, p), _ => new Color("#71634b") * tint, false);
+                                Emit(piece, roads, ShoulderHeight, _ => new Color("#71634b") * tint, false);
                                 roadVertices++;
                             }
-                            else Emit(piece, ground, p => ShoulderHeight(x, y, p), _ => tint, true);
+                            else Emit(piece, ground, ShoulderHeight, _ => tint, true);
                         }
                         foreach (var piece in remaining)
                             foreach (var patch in shoreline)
@@ -275,7 +270,7 @@ internal sealed class RoadSurfaceMeshes
                                     Geometry2D.IntersectPolygons(piece, Convert(patch.Polygon)).AsEnumerable())
                                 {
                                     Emit(polygon, ground, p => patch.Water ? WaterHeight(x, y, p) :
-                                        beach || coastalSlope ? LandSurface(x, y, p) : landLevel,
+                                        beach ? LandSurface(x, y, p) : landLevel,
                                         _ => tint, true, patch.Water);
                                     if (!patch.Water) cutPolygons.Add(polygon);
                                 }
@@ -305,7 +300,7 @@ internal sealed class RoadSurfaceMeshes
                 }
                 if (conformEdges)
                 {
-                    if (beach || coastalSlope)
+                    if (beach)
                     {
                         edgePoints.Add(new(x + 0.5f, y));
                         edgePoints.Add(new(x + 1, y + 0.5f));
@@ -318,14 +313,14 @@ internal sealed class RoadSurfaceMeshes
                     {
                         foreach (var polygon in Remnants(map, cell.Item1, cell.Item2))
                             foreach (var point in polygon) edgePoints.Add(point);
-                        if ((beach || coastalSlope) && map.InBounds(cell.Item1, cell.Item2))
+                        if (beach && map.InBounds(cell.Item1, cell.Item2))
                             foreach (var patch in Shoreline(map, cell.Item1, cell.Item2))
                                 foreach (var point in patch.Polygon) edgePoints.Add(new(point.X, point.Y));
                     }
                 }
                 foreach (var surface in surfaces)
                     EmitPrepared(surface.Polygon, surface.Tool, surface.Height, surface.Color, surface.TerrainTexture, surface.WaterSurface);
-                foreach (var polygon in cutPolygons) AddCutWalls(polygon, x, y);
+                AddCutWalls();
                 foreach (var edge in shoreEdges) AddShoreWall(edge.A, edge.B);
                 foreach (var surface in bridgeSurfaces) AddBridgeSides(surface.Polygon, surface.Type);
                 AddTerraceSide(new(x, y), new(x + 1, y), x, y - 1);
@@ -371,7 +366,7 @@ internal sealed class RoadSurfaceMeshes
                 void EmitPrepared(Vector2[] polygon, TriangleBuffer tool, Func<Vector2, float> height,
                     Func<Vector2, Color> color, bool terrainTexture, bool? waterSurface)
                 {
-                    if (terrainTexture && nearby.Length == 0 && shoreline.Count == 1 && !slopedBank && !coastalSlope)
+                    if (terrainTexture && nearby.Length == 0 && shoreline.Count == 1 && !slopedBank)
                     {
                         coveredArea += 1;
                         foreach (int index in new[] { 0, 3, 2, 0, 2, 1 })
@@ -520,36 +515,37 @@ internal sealed class RoadSurfaceMeshes
                                 roads.SetUV(new(vertex.X * RoadCurves.CellWidth / 32, vertex.Y * 8));
                                 roads.AddVertex(vertex);
                                 roadVertices++;
+                                cellFaces.Add(vertex);
                             }
                         }
                     }
                 }
 
-                void AddCutWalls(Vector2[] polygon, int cellX, int cellY)
+                void AddCutWalls()
                 {
                     if (nearby.Length == 0 || !groundCut) return;
-                    for (int i = 0; i < polygon.Length; i++)
+                    var edges = new HashSet<(Vector2 A, Vector2 B)>();
+                    foreach (var polygon in cutPolygons)
+                        for (int edge = 0; edge < polygon.Length; edge++)
+                        {
+                            var points = SplitEdge(polygon[edge], polygon[(edge + 1) % polygon.Length]);
+                            for (int part = 1; part < points.Length; part++)
+                            {
+                                var start = points[part - 1]; var end = points[part];
+                                if (!edges.Remove((end, start))) edges.Add((start, end));
+                            }
+                        }
+                    foreach (var (start, end) in edges)
                     {
-                        var a = polygon[i]; var b = polygon[(i + 1) % polygon.Length];
-                        var delta = b - a;
-                        if (delta.LengthSquared() < 0.000001f) continue;
+                        var delta = end - start;
+                        if (delta.LengthSquared() < 0.000001f || OnCellBoundary(start, end, x, y)) continue;
+                        var midpoint = (start + end) / 2;
+                        if (_layout.InRoadInterior(ToNumerics(midpoint))) continue;
                         var normal = new Vector2(-delta.Y, delta.X).Normalized() * 0.002f;
-                        var midpoint = (a + b) / 2;
-                        bool one = CutAt(midpoint + normal);
-                        bool other = CutAt(midpoint - normal);
-                        if (one == other)
-                        {
-                            if (one || !CutAt(midpoint)) continue;
+                        if (CutAt(midpoint + normal) == CutAt(midpoint - normal))
                             NarrowCutFacesClosed++;
-                        }
-                        if (OnCellBoundary(a, b, cellX, cellY)) continue;
-                        var points = SplitEdge(a, b);
-                        for (int j = 1; j < points.Length; j++)
-                        {
-                            var start = points[j - 1]; var end = points[j];
-                            AddWall(start, end, LandSurface(cellX, cellY, start), LandSurface(cellX, cellY, end),
-                                ShoulderHeight(cellX, cellY, start), ShoulderHeight(cellX, cellY, end), "cut");
-                        }
+                        AddWall(start, end, LandSurface(x, y, start), LandSurface(x, y, end),
+                            ShoulderHeight(start), ShoulderHeight(end), "cut");
                     }
                 }
 
@@ -585,8 +581,8 @@ internal sealed class RoadSurfaceMeshes
                         float topB = LandSurface(x, y, end);
                         if (excavated)
                         {
-                            topA = ShoulderHeight(x, y, start);
-                            topB = ShoulderHeight(x, y, end);
+                            topA = ShoulderHeight(start);
+                            topB = ShoulderHeight(end);
                         }
                         AddWall(start, end, topA, topB, WaterHeight(x, y, start), WaterHeight(x, y, end), "shore");
                     }
@@ -594,8 +590,11 @@ internal sealed class RoadSurfaceMeshes
 
                 void AddTerraceSide(Vector2 a, Vector2 b, int nx, int ny)
                 {
+                    bool currentWater = shoreline[0].Water;
+                    bool neighborWater = map.InBounds(nx, ny) && !map.TerrainAt(nx, ny).Buildable;
+                    if (currentWater) return;
                     if (!beach && map.InBounds(nx, ny) && LandHeight(x, y) == LandHeight(nx, ny) &&
-                        Remnants(map, x, y).Count == 0 && Remnants(map, nx, ny).Count == 0)
+                        !neighborWater && Remnants(map, x, y).Count == 0 && Remnants(map, nx, ny).Count == 0)
                         return;
                     var cuts = new List<float> { 0, 1 };
                     var neighborShoreline = map.InBounds(nx, ny) &&
@@ -638,16 +637,17 @@ internal sealed class RoadSurfaceMeshes
                         if (cuts[i] - cuts[i - 1] < 0.00001f) continue;
                         var start = a.Lerp(b, cuts[i - 1]); var end = a.Lerp(b, cuts[i]);
                         var midpoint = (start + end) / 2;
-                        if (TerrainSprite.WaterSurface(map, midpoint.X, midpoint.Y) >= 0.38) continue;
                         bool groundCorridor = _layout.InGroundCorridor(ToNumerics(midpoint));
                         bool currentCut = groundCorridor || CutForCell(x, y, midpoint);
                         bool neighborCut = map.InBounds(nx, ny) && (groundCorridor || CutForCell(nx, ny, midpoint));
-                        float ta = currentCut ? ShoulderHeight(x, y, start) : LandSurface(x, y, start);
-                        float tb = currentCut ? ShoulderHeight(x, y, end) : LandSurface(x, y, end);
-                        float ba = !map.InBounds(nx, ny) ? -0.04f : neighborCut ? ShoulderHeight(nx, ny, start) : LandSurface(nx, ny, start);
-                        float bb = !map.InBounds(nx, ny) ? -0.04f : neighborCut ? ShoulderHeight(nx, ny, end) : LandSurface(nx, ny, end);
+                        float ta = currentCut ? ShoulderHeight(start) : LandSurface(x, y, start);
+                        float tb = currentCut ? ShoulderHeight(end) : LandSurface(x, y, end);
+                        float ba = !map.InBounds(nx, ny) ? -0.04f : neighborWater ? WaterHeight(nx, ny, start) :
+                            neighborCut ? ShoulderHeight(start) : LandSurface(nx, ny, start);
+                        float bb = !map.InBounds(nx, ny) ? -0.04f : neighborWater ? WaterHeight(nx, ny, end) :
+                            neighborCut ? ShoulderHeight(end) : LandSurface(nx, ny, end);
                         if (ta <= ba + 0.00001f && tb <= bb + 0.00001f) continue;
-                        AddWall(start, end, ta, tb, ba, bb, "terrace");
+                        AddWall(start, end, ta, tb, ba, bb, neighborWater ? "shore" : "terrace");
                     }
                 }
 
@@ -737,7 +737,7 @@ internal sealed class RoadSurfaceMeshes
             _remnants.Add(index, NoRemnants);
             return NoRemnants;
         }
-        List<Vector2[]> pieces = [[new(x, y), new(x + 1, y), new(x + 1, y + 1), new(x, y + 1)]];
+        var pieces = Shoreline(map, x, y).Where(patch => !patch.Water).Select(patch => Convert(patch.Polygon)).ToList();
         foreach (var segment in nearby) pieces = Difference(pieces, _polygons[segment].Corridor);
         var remnants = new List<Vector2[]>();
         foreach (var raw in pieces)
@@ -821,7 +821,7 @@ internal sealed class RoadSurfaceMeshes
     {
         int index = map.Index(x, y);
         if (_shorelines.TryGetValue(index, out var cached)) return cached;
-        var patches = ShorelineLayout.Cell(map, x, y);
+        var patches = ShorelineLayout.BlockyCell(map, x, y);
         _shorelines.Add(index, patches);
         return patches;
     }

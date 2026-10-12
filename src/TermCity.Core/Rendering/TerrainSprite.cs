@@ -62,39 +62,6 @@ public sealed record TerrainSprite(int Width, int Height, int Lift, byte[] Pixel
         return map.CoastalHillCaps[index] == 2 ? 0 : level;
     }
 
-    public static float CoastalLandSurface(GameMap map, int x, int y, float worldX, float worldY) =>
-        CoastalLandSurface(map, x, y, worldX, worldY, Elevation(map, x, y));
-
-    public static bool HasCoastalTerraceSlope(GameMap map, int x, int y) =>
-        Elevation(map, x, y) > HillBaseHeight && map.CoastalHillCaps?[map.Index(x, y)] != 3 &&
-        CoastalSlopeCell(map, x, y);
-
-    private static bool CoastalSlopeCell(GameMap map, int x, int y)
-    {
-        map.CoastalSlopeCells ??= new byte[map.Width * map.Height];
-        int index = map.Index(x, y);
-        if (map.CoastalSlopeCells[index] == 0)
-        {
-            bool slope = false;
-            for (int row = 0; row < 3 && !slope; row++)
-                for (int column = 0; column < 3; column++)
-                    if (WaterSurface(map, x + column * 0.5, y + row * 0.5) > 0.02) { slope = true; break; }
-            map.CoastalSlopeCells[index] = slope ? (byte)2 : (byte)1;
-        }
-        return map.CoastalSlopeCells[index] == 2;
-    }
-
-    public static float CoastalLandSurface(GameMap map, int x, int y, float worldX, float worldY, float level)
-    {
-        if (level <= HillBaseHeight || map.CoastalHillCaps?[map.Index(x, y)] == 3 || !CoastalSlopeCell(map, x, y))
-            return level;
-        float density = (float)WaterSurface(map, worldX, worldY);
-        if (density <= 0.02f) return level;
-        float blend = Math.Clamp((0.12f - density) / 0.1f, 0, 1);
-        blend = blend * blend * (3 - 2 * blend);
-        return HillBaseHeight + (level - HillBaseHeight) * blend;
-    }
-
     public static int HillLevel(GameMap map, int x, int y)
     {
         if (map.HillLevels is null)

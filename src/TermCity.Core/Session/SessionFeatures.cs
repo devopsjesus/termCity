@@ -23,7 +23,7 @@ public enum PlacementKind
 public sealed record PlacementPreview(
     PlacementKind Kind, CellRect Area, Quote Quote, string Name, RoadType? Road = null, BuildingType? Building = null,
     IReadOnlySet<Pos>? Cells = null, IReadOnlySet<Pos>? ValidCells = null, RoadTemplate? Template = null,
-    IReadOnlyList<Pos>? RoadStroke = null)
+    IReadOnlyList<Pos>? RoadStroke = null, int Rotation = 0)
 {
     /// <summary>Whether the placement covers any cell of <paramref name="block"/>.</summary>
     public bool Touches(CellRect block) => Cells is null
@@ -114,7 +114,7 @@ public sealed partial class GameSession
     public string? FixedPlacementWarning => Preview?.Template is not null ? Preview.Summary + "; click or Enter to place."
         : BuildingPlacementWarning;
     public string? BuildingPlacementError => Preview?.Building is { } building
-        ? Game.BuildingPlacementError(building, Preview.Area.X, Preview.Area.Y)
+        ? Game.BuildingPlacementError(building, Preview.Area.X, Preview.Area.Y, Preview.Rotation)
         : null;
     public string? BuildingPlacementWarning => Preview?.Building is { } building
         ? Game.BuildingPlacementWarning(building, Preview.Area)
@@ -274,7 +274,7 @@ public sealed partial class GameSession
         HasCursor = true;
         Anchor = null;
         Selection = null;
-        RefreshBuildingPlacement(building);
+        RefreshBuildingPlacement(building, 0);
     }
 
     public void MoveBuildingPlacement(Pos position)
@@ -285,18 +285,25 @@ public sealed partial class GameSession
         }
 
         Cursor = Clamp(position);
-        RefreshBuildingPlacement(building);
+        RefreshBuildingPlacement(building, Preview.Rotation);
         FollowCursor();
     }
 
-    private void RefreshBuildingPlacement(BuildingType building)
+    public void RotateBuildingPlacement(int quarterTurns)
     {
-        var area = new CellRect(Cursor.X, Cursor.Y, building.Width, building.Height);
-        var validCells = Game.BuildingPlacementError(building, Cursor.X, Cursor.Y) is null
+        if (Preview?.Building is not { } building) return;
+        int rotation = ((Preview.Rotation + quarterTurns) % 4 + 4) % 4;
+        RefreshBuildingPlacement(building, rotation);
+    }
+
+    private void RefreshBuildingPlacement(BuildingType building, int rotation)
+    {
+        var area = building.FootprintAt(Cursor.X, Cursor.Y, rotation);
+        var validCells = Game.BuildingPlacementError(building, Cursor.X, Cursor.Y, rotation) is null
             ? area.Cells().ToHashSet()
             : [];
-        Preview = new(PlacementKind.Building, area, Game.QuoteBuilding(building, area),
-            $"{building.Name} ({building.Width}x{building.Height})", Building: building, ValidCells: validCells);
+        Preview = new(PlacementKind.Building, area, Game.QuoteBuilding(building, area, rotation),
+            $"{building.Name} ({area.Width}x{area.Height})", Building: building, ValidCells: validCells, Rotation: rotation);
         Changed?.Invoke();
     }
 
@@ -350,7 +357,7 @@ public sealed partial class GameSession
             PlacementKind.Road when preview.RoadStroke is { } stroke => Game.BuildRoad(stroke, preview.Road),
             PlacementKind.Road => preview.Cells is { } line
                 ? Game.BuildRoad(line, preview.Road) : Game.BuildRoad(preview.Area, preview.Road),
-            PlacementKind.Building when preview.Building is { } building => Game.PlaceBuilding(building, preview.Area),
+            PlacementKind.Building when preview.Building is { } building => Game.PlaceBuilding(building, preview.Area, preview.Rotation),
             PlacementKind.RoadTemplate when preview.Template is { } template =>
                 Game.BuildRoadTemplate(template, new(preview.Area.X, preview.Area.Y)),
             PlacementKind.Demolish => Game.Demolish(preview.Cells ?? preview.Area.Cells()),

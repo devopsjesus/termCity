@@ -53,17 +53,33 @@ internal static class CityMapGeometry
         }
 
         var bridges = new HashSet<Pos>();
+        var crossings = new List<(int Start, int End)>();
         for (int start = 0; start < cells.Count; start++)
         {
             if (map.TerrainAt(cells[start].X, cells[start].Y).Buildable) continue;
             int end = start;
             while (end + 1 < cells.Count && !map.TerrainAt(cells[end + 1].X, cells[end + 1].Y).Buildable) end++;
             if (start > 0 && end + 1 < cells.Count)
+            {
                 for (int index = start; index <= end; index++) bridges.Add(cells[index]);
+                crossings.Add((start, end));
+            }
             start = end;
         }
-        foreach (var p in RoadRules.Plan(map, cells, road.Rank,
-            (x, y) => map.TerrainAt(x, y).Buildable || bridges.Contains(new(x, y))))
+        var plan = RoadRules.Plan(map, cells, road.Rank,
+            (x, y) => map.TerrainAt(x, y).Buildable || bridges.Contains(new(x, y))).ToHashSet();
+        bool Connected(Pos position) => plan.Contains(position) || map.HasRoad(position.X, position.Y);
+        foreach (var (start, end) in crossings)
+        {
+            bool complete = Enumerable.Range(start - 1, end - start + 3).All(index => Connected(cells[index]));
+            if (complete)
+                complete = Enumerable.Range(start, end - start + 1).All(index =>
+                    Simulation.RoadNetwork.Neighbors.Count(direction => Connected(new(
+                        cells[index].X + direction.Dx, cells[index].Y + direction.Dy))) == 2);
+            if (!complete)
+                for (int index = start; index <= end; index++) plan.Remove(cells[index]);
+        }
+        foreach (var p in plan)
         {
             map.SetFeature(p.X, p.Y, null);
             map.SetRoad(p.X, p.Y, road);
