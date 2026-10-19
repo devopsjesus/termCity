@@ -82,10 +82,14 @@ public static class ChoiceHelpContent
     public static ChoiceHelp Road(CityGame game, RoadType road, bool line) => new(
         Icons(road.Glyphs), road.Description,
         $"Does: {(line ? "draw a straight line between two endpoints" : "fill valid selected cells")}.\n\n" +
+        $"Width: {road.WidthCells} cells\n\n" +
         $"Traffic capacity: {road.TrafficCapacity} trips/cell/week\n\n" +
         $"Cost: {Fmt.Money((int)Math.Round(game.Config.RoadCostPerCell * road.CostMultiplier))}/cell before terrain; upgrades pay the difference\n\n" +
         $"Upkeep: {Fmt.Money(game.Config.FullRules ? road.WeeklyUpkeep : 0)}/cell/week at full funding\n\n" +
         $"Travel speed: {6 * road.Rank}x open-ground walking speed\n\n" +
-        "Needs: buildable land and road clearance. Roads are optional travel boosts, including local roads.\n\n" +
-        "Roads appear as smooth curves; these glyphs show connections on overlays and the minimap.");
+        "Needs: open land or a bridge crossing, with whole-cell clearance for the visible road width and bends. Roads are optional travel boosts, including local roads.\n\n" +
+        "Roads appear as smooth curves; these glyphs show connections on overlays and the minimap.\n\n" +
+        "Placement previews use this road's surface and width. Click to place the shown stroke immediately, or use arrows and Enter. " +
+        "Holding and dragging previews an extension built on release. Parallel overlaps are rejected. " +
+        "The selected road tool stays active until Esc; middle-drag pans.");
 }

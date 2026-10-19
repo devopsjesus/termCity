@@ -14,7 +14,8 @@ public static class ShorelineLayout
 
     public static bool BankCell(GameMap map, int x, int y)
     {
-        if (!map.InBounds(x, y) || !map.TerrainAt(x, y).Buildable) return false;
+        if (!map.InBounds(x, y) || !map.TerrainAt(x, y).Buildable ||
+            map.TerrainAt(x, y).Name == Terrain.DefaultTerrains.HillName) return false;
         foreach (var (dx, dy) in (ReadOnlySpan<(int, int)>)[(-1, 0), (1, 0), (0, -1), (0, 1)])
             if (map.InBounds(x + dx, y + dy) && !map.TerrainAt(x + dx, y + dy).Buildable)
                 return true;

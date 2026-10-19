@@ -30,16 +30,21 @@ public sealed partial class GameSession
 
     private bool _anchorFromShift;
     private Pos? _selectionOrigin;
+    private Pos? _initialCameraTarget;
+    private readonly bool _hasCustomStartupFocus;
 
-    public GameSession(CityGame game, string? savePath = null, bool showGuide = false)
+    public GameSession(CityGame game, string? savePath = null, bool showGuide = false, Pos? initialCameraTarget = null)
     {
         SavePath = savePath ?? SaveGameStore.DefaultPath;
         Game = game;
         Game.Changed += OnGameChanged;
-        Cursor = new Pos(game.Map.Width / 2, game.Map.Height / 2);
+        _hasCustomStartupFocus = initialCameraTarget.HasValue;
+        Cursor = Clamp(initialCameraTarget ?? StartingPosition());
         ViewWidth = 80;
         ViewHeight = 24;
         CenterOn(Cursor);
+        _initialCameraTarget = initialCameraTarget ?? (Game.Config.Scenario == CityScenario.Random
+            ? HighwayGenerator.StartingSpur(Game.Map) : null);
         InitializeFeedback();
         if (showGuide)
         {
@@ -133,10 +138,12 @@ public sealed partial class GameSession
 
     public void SetZoom(int level, int? viewX = null, int? viewY = null)
     {
+        bool singleBlock = Selection is { } selected && selected == BlockAt(Cursor);
         level = Math.Clamp(level, MinZoom, MaxZoom);
         int fx = viewX ?? ViewWidth / 2, fy = viewY ?? ViewHeight / 2;
         var focus = ScreenToMap(fx, fy);
         ZoomLevel = level;
+        if (singleBlock) Selection = BlockAt(Cursor);
         CameraX = focus.X - ViewOffsetX(fx);
         CameraY = focus.Y - ViewOffsetY(fy);
         ClampCamera();
@@ -231,12 +238,20 @@ public sealed partial class GameSession
 
         ViewWidth = width;
         ViewHeight = height;
-        FollowCursor();
+        if (_initialCameraTarget is { } target && !HasCursor)
+        {
+            CenterOn(target);
+            if (_hasCustomStartupFocus) _initialCameraTarget = target;
+            return;
+        }
+        if (_hasCustomStartupFocus && !HasCursor) ClampCamera();
+        else FollowCursor();
     }
 
     /// <summary>Scrolls by whole map cells.</summary>
     public void ScrollCamera(int dx, int dy)
     {
+        _initialCameraTarget = null;
         int x = CameraX, y = CameraY;
         CameraX += dx;
         CameraY += dy;
@@ -268,6 +283,7 @@ public sealed partial class GameSession
     /// </summary>
     public void PanCamera(Pos anchor, int viewX, int viewY)
     {
+        _initialCameraTarget = null;
         int x = CameraX, y = CameraY;
         CameraX = anchor.X - ViewOffsetX(viewX);
         CameraY = anchor.Y - ViewOffsetY(viewY);
@@ -291,6 +307,7 @@ public sealed partial class GameSession
 
     public void CenterOn(Pos p)
     {
+        _initialCameraTarget = null;
         CameraX = p.X - VisibleCellsX / 2;
         CameraY = p.Y - VisibleCellsY / 2;
         ClampCamera();
@@ -432,7 +449,7 @@ public sealed partial class GameSession
         HasCursor = true;
         if (RoadToolActive)
         {
-            Cursor = Clamp(p);
+            Cursor = RoadToolCell(p);
             _roadAnchor = Cursor;
             RefreshRoadLine();
             return;
@@ -451,7 +468,7 @@ public sealed partial class GameSession
     {
         if (RoadToolActive)
         {
-            Cursor = Clamp(p);
+            Cursor = RoadToolCell(p);
             RefreshRoadLine();
             return;
         }
@@ -660,12 +677,18 @@ public sealed partial class GameSession
     public void NewGame(GameConfig config)
     {
         ReplaceGame(CityGame.New(config, startingDate: StartAtCurrentWeek ? DateTime.Now : null));
+        Cursor = StartingPosition();
+        SetZoom(1);
+        CenterOn(Cursor);
+        _initialCameraTarget = Game.Config.Scenario == CityScenario.Random
+            ? HighwayGenerator.StartingSpur(Game.Map) : null;
         Game.Paused = true;
         GuideVisible = Game.Config.Scenario == CityScenario.Random;
     }
 
     private void ReplaceGame(CityGame game, bool clearUndo = true)
     {
+        _initialCameraTarget = null;
         ClearPreview();
         Prompt = null;
         _promptHistory.Clear();
@@ -686,4 +709,8 @@ public sealed partial class GameSession
         FollowCursor();
         Game.Touch();
     }
+
+    private Pos StartingPosition() => Game.Config.Scenario == CityScenario.Random
+        ? HighwayGenerator.StartingSpur(Game.Map) ?? new Pos(Game.Map.Width / 2, Game.Map.Height / 2)
+        : new Pos(Game.Map.Width / 2, Game.Map.Height / 2);
 }

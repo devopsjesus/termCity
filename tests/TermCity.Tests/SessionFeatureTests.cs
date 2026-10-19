@@ -77,7 +77,8 @@ public class SessionFeatureTests
         Assert.Equal(before, SaveGameStore.Serialize(session.Game));
         Assert.True(session.ConfirmPreview().Success);
         Assert.Equal(48_500, session.Game.Money);
-        Assert.Null(session.Preview);
+        Assert.True(session.RoadToolActive);
+        Assert.NotNull(session.Preview);
         session.Game.Paused = true;
         session.RequestUndo();
         Assert.True(session.Game.Paused);
@@ -89,7 +90,7 @@ public class SessionFeatureTests
     }
 
     [Fact]
-    public void PreviewAllowsWaterButBlockedCrossingsCannotPartiallyBuildAndCanBeCancelled()
+    public void BlockedBridgePreviewHasNoBuildableCellsAndCanBeCancelled()
     {
         var session = Session();
         var game = session.Game;
@@ -100,9 +101,9 @@ public class SessionFeatureTests
         session.EndSelection();
         session.PreviewRoad();
         var preview = session.Preview!;
-        Assert.Equal(new Quote(3, 1_500, 1), preview.Quote);
-        Assert.True(preview.IsValid(game, 10, 18));
-        Assert.True(preview.IsValid(game, 11, 18));
+        Assert.Equal(new Quote(0, 0, 4), preview.Quote);
+        Assert.False(preview.IsValid(game, 10, 18));
+        Assert.False(preview.IsValid(game, 11, 18));
         Assert.False(preview.IsValid(game, 12, 18));
         var result = session.ConfirmPreview();
         Assert.False(result.Success);
@@ -244,6 +245,9 @@ public class SessionFeatureTests
         Assert.Equal(new CellRect(10, 13, 1, 6), session.Preview.Area);
         Assert.True(session.ConfirmPreview().Success);
         Assert.Equal(6, session.Game.Map.RoadCells.Count(i => i % session.Game.Map.Width == 10 && i / session.Game.Map.Width < 20));
+        Assert.True(session.RoadToolActive);
+        Assert.NotNull(session.Preview);
+        session.CancelPreview();
         Assert.False(session.RoadToolActive);
     }
 
@@ -263,6 +267,135 @@ public class SessionFeatureTests
         Assert.Equal(10, map.RoadCells.Count(i => preview.Cells.Contains(new Pos(i % map.Width, i / map.Width))));
         Assert.False(map.HasRoad(10, 13));
         Assert.False(map.HasRoad(16, 10));
+    }
+
+    [Theory]
+    [InlineData("Dirt Track")]
+    [InlineData("Cobbled Road")]
+    [InlineData("King's Road")]
+    public void RoadPlacementRetainsTheSelectedTypeAndReanchorsUntilCancelled(string name)
+    {
+        var session = Session();
+        var type = session.Game.Map.Content.Roads.Get(name);
+        session.PlaceCursor(new(10, 10));
+        session.BeginRoadLine(type);
+        session.UpdateDrag(new(18, 10));
+        int cost = session.Preview!.Quote.Cost;
+        Assert.True(session.ConfirmPreview().Success);
+        Assert.True(session.RoadToolActive);
+        Assert.Same(type, session.Preview!.Road);
+        Assert.Equal(new CellRect(18, 10, 1, 1), session.Preview.Area);
+        session.UpdateDrag(new(26, 10));
+        Assert.Equal(new CellRect(18, 10, 9, 1), session.Preview.Area);
+        cost += session.Preview.Quote.Cost;
+        Assert.True(session.ConfirmPreview().Success);
+        Assert.Equal(50_000 - cost, session.Game.Money);
+        Assert.True(session.RoadToolActive);
+        Assert.All(Enumerable.Range(10, 17), x => Assert.Same(type, session.Game.Map.RoadTypeAt(x, 10)));
+        session.CancelPreview();
+        Assert.False(session.RoadToolActive);
+        Assert.Null(session.Preview);
+        Assert.Equal(17, session.Game.Map.RoadCells.Count(i => i / session.Game.Map.Width == 10));
+    }
+
+    [Fact]
+    public void FailedRoadStrokeDoesNotSpendOrExitTheSelectedTool()
+    {
+        var session = Session();
+        session.PlaceCursor(new(10, 10));
+        var type = session.Game.Map.Content.Roads.Get(DefaultRoads.CobbledName);
+        session.Game.Map.SetZone(10, 10, ZoneType.Residential);
+        session.Game.Touch();
+        session.BeginRoadLine(type);
+        int money = session.Game.Money;
+        Assert.False(session.ConfirmPreview().Success);
+        Assert.Equal(money, session.Game.Money);
+        Assert.True(session.RoadToolActive);
+        Assert.Same(type, session.Preview!.Road);
+        session.BeginDrag(new(20, 10));
+        session.UpdateDrag(new(26, 10));
+        Assert.True(session.ConfirmPreview().Success);
+        Assert.True(session.RoadToolActive);
+        session.CancelPreview();
+    }
+
+    [Fact]
+    public void ParallelRoadRejectionIsExplainedInTheLivePreviewAndKeepsTheToolActive()
+    {
+        var session = Session();
+        Assert.True(session.Game.BuildRoad(new CellRect(10, 8, 20, 1)).Success);
+        session.PlaceCursor(new(12, 9));
+        session.BeginRoadLine();
+        session.UpdateDrag(new(25, 9));
+        Assert.Equal(0, session.Preview!.Quote.Cells);
+        Assert.Contains("alongside", session.Preview.Name);
+        int money = session.Game.Money;
+        Assert.False(session.ConfirmPreview().Success);
+        Assert.Equal(money, session.Game.Money);
+        Assert.True(session.RoadToolActive);
+        session.CancelPreview();
+    }
+
+    [Fact]
+    public void RoadToolSnapsBothVisibleHighwayHalvesToTheActualLogicalJoin()
+    {
+        var session = Session();
+        var map = session.Game.Map;
+        var highway = map.Content.Roads.Get(DefaultRoads.KingsRoadName);
+        for (int x = 10; x <= 35; x++) map.SetRoad(x, 10, highway);
+        session.Game.Touch();
+        session.PlaceCursor(new(20, 11));
+        session.BeginRoadLine();
+        Assert.Equal(new Pos(20, 10), session.Cursor);
+        session.UpdateDrag(new(20, 17));
+        Assert.True(session.ConfirmPreview().Success);
+        Assert.True(session.RoadToolActive);
+        session.CancelPreview();
+        Assert.Equal(new Pos(20, 17), session.Cursor);
+        session.SelectCell(new(25, 11));
+        Assert.Equal(new Pos(25, 11), session.Cursor);
+    }
+
+    [Fact]
+    public void KeyboardEndpointCanMovePastBothHighwayHalvesWithoutGettingStuck()
+    {
+        var session = Session();
+        var highway = session.Game.Map.Content.Roads.Get(DefaultRoads.KingsRoadName);
+        for (int x = 10; x <= 35; x++) session.Game.Map.SetRoad(x, 10, highway);
+        session.Game.Touch();
+        session.PlaceCursor(new(20, 10));
+        session.BeginRoadLine();
+        session.MoveCursor(0, 1);
+        Assert.Equal(new Pos(20, 11), session.Cursor);
+        session.MoveCursor(0, 1);
+        Assert.Equal(new Pos(20, 12), session.Cursor);
+        Assert.True(session.Preview!.Quote.Cells > 0);
+        session.CancelPreview();
+    }
+
+    [Fact]
+    public void UndoWhileBuildingRestoresTheLastStrokeAndResumesTheSameRoadType()
+    {
+        var session = Session();
+        session.Game.Paused = true;
+        var type = session.Game.Map.Content.Roads.Get(DefaultRoads.CobbledName);
+        session.PlaceCursor(new(10, 10));
+        session.BeginRoadLine(type);
+        session.UpdateDrag(new(15, 10));
+        Assert.True(session.ConfirmPreview().Success);
+        session.UpdateDrag(new(20, 10));
+        Assert.True(session.ConfirmPreview().Success);
+        Assert.Equal(2, session.UndoCount);
+        session.RequestUndo();
+        Assert.Equal("Undo last action", session.Prompt!.Title);
+        session.SelectPrompt(0);
+        Assert.True(session.RoadToolActive);
+        Assert.Equal(type.Name, session.Preview!.Road!.Name);
+        Assert.False(session.Game.Map.HasRoad(20, 10));
+        Assert.True(session.Game.Map.HasRoad(15, 10));
+        Assert.Equal(1, session.UndoCount);
+        session.CancelPreview();
+        Assert.Null(session.Prompt);
     }
 
     [Fact]
@@ -647,7 +780,10 @@ public class SessionFeatureTests
         Assert.Equal(1_000, session.NextMilestone);
         session.ShowReport();
         Assert.Contains("Current size: Village", session.Prompt!.Text);
-        Assert.Contains("Next size: Market Town: 1,000 people", session.Prompt.Text);
+        Assert.DoesNotContain("Next size:", session.Prompt.Text);
+        int milestoneTab = session.Prompt.Tabs!.ToList().FindIndex(tab => tab.Title == MilestoneReport.ReportTabTitle);
+        session.SelectTab(milestoneTab);
+        Assert.Contains("Next milestone: Market Town: 1,000 people", session.Prompt!.Text);
         Assert.DoesNotContain("[Locked]", session.Prompt.Text);
         session.ShowGuide();
         string milestones = session.Prompt!.Tabs!.Single(tab => tab.Title == "Milestones").Text;
@@ -746,7 +882,7 @@ public class SessionFeatureTests
         game.Designate(new CellRect(0, 30, 5, 1), ZoneType.Residential);
         Assert.Equal(7, GrowthDiagnostics.ForZone(game, ZoneType.Residential).EligibleVacancies);
         game.Designate(new CellRect(0, 19, 2, 1), ZoneType.Commercial);
-        Assert.Equal(0, game.Demand.Commercial);
+        Assert.True(game.Demand.Commercial > 0);
         Assert.Equal(GrowthStatus.Ready, GrowthDiagnostics.ForZone(game, ZoneType.Commercial).Status);
     }
 

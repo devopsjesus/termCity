@@ -13,6 +13,7 @@ public enum GrowthStatus
     RoadOverlap,
     NeedsSpace,
     LowAttraction,
+    LowBusinessClimate,
 }
 
 public sealed record GrowthDiagnostic(GrowthStatus Status, string Message, int EligibleVacancies, bool Paused);
@@ -23,8 +24,7 @@ public static class GrowthDiagnostics
     {
         int eligible = game.Map.ZoneCells(zone).Count(i => game.Map.BuildingLayer[i] == 0 &&
             game.Network.IsServed(i) && !game.Network.RoadOverlapsCell(i));
-        var count = game.Stats.For(zone);
-        if (eligible == 0 && count.Filled >= count.Zoned)
+        if (eligible == 0 && !game.Map.ZoneCells(zone).Any(i => game.Map.BuildingLayer[i] == 0))
         {
             return Result(GrowthStatus.NoVacancies, "Zone more land.", eligible, game);
         }
@@ -105,6 +105,18 @@ public static class GrowthDiagnostics
                 $"Settlers are waiting: contentment {game.Indicators.Happiness:0}/100 is too low. {supply}", eligible, game);
         }
 
+        if (zone != ZoneType.Residential && game.Config.FullRules && game.Indicators.BusinessClimate <= 0)
+            return Result(GrowthStatus.LowBusinessClimate,
+                "Businesses are not opening: trade climate is too low. Check fuel and water deliveries, taxes and available workers.",
+                eligible, game);
+        double arrivals = game.ExpectedGrowthArrivals(zone);
+        if (arrivals <= 0)
+            return Result(zone == ZoneType.Residential ? GrowthStatus.LowAttraction : GrowthStatus.LowBusinessClimate,
+                "No arrivals are expected under the current growth conditions.", eligible, game);
+        if (arrivals < 1)
+            return Result(GrowthStatus.Ready,
+                $"Slow arrivals: about {arrivals:0.00} {(zone == ZoneType.Residential ? "families" : "businesses")} per week; some weeks have none.",
+                eligible, game);
         return Result(GrowthStatus.Ready, "Ready for growth; walking arrivals are slower without roads.", eligible, game);
     }
 

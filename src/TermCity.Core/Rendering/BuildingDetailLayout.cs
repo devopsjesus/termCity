@@ -22,6 +22,29 @@ public static class BuildingDetailLayout
     public const float TowerWidth = 0.6f;
     public const float TowerCapWidth = 0.66f;
     public const float MerlonWidth = 0.16f;
+    public const float CottageBeamWidth = 0.032f;
+    public const float CottageDoorWidth = 0.15f;
+    public const float CottageWindowWidth = 0.10f;
+    public const float HalfTimberPostWidth = 0.10f;
+    public const float HalfTimberBeamHeight = 0.08f;
+
+    public static FacadeBays HalfTimberFacade(float width)
+    {
+        if (!float.IsFinite(width) || width < 0.4f) throw new ArgumentOutOfRangeException(nameof(width));
+        float span = width - HalfTimberPostWidth;
+        int count = Math.Max(1, (int)Math.Floor(span / 0.30f));
+        if (count % 2 == 0) count--;
+        return new(span, count);
+    }
+
+    public static FacadeBays CottageFacade(float width)
+    {
+        if (!float.IsFinite(width) || width < 0.4f) throw new ArgumentOutOfRangeException(nameof(width));
+        float span = width - 0.08f;
+        int count = width < 0.76f ? 1 : Math.Clamp((int)Math.Floor(span / 0.32f), 3, 3);
+        if (count % 2 == 0) count--;
+        return new(span, count);
+    }
 
     public static FacadeBays Facade(float width)
     {

@@ -76,12 +76,13 @@ public sealed record BuildingSprite(int Width, int Height, int Lift, byte[] Pixe
             Line(x, y, x + w - 1, y, color.Scale(1.15));
             Line(x + w - 1, y, x + w - 1, y + d - 1, color.Scale(0.75));
             for (int row = y + 2; row < y + d; row += 4)
-                for (int col = x + 2 + (row % 3); col < x + w - 1; col += 5)
-                    Pixel(col, row, color.Scale(0.9));
+                for (int col = x + 1 + (row / 4 % 2) * 2; col < x + w - 2; col += 4)
+                    Rect(col, row, 2, Math.Min(2, y + d - row), color.Scale(0.94));
         }
         void House(int x, int y, int w, int d, int wallHeight, Rgb wall, Rgb roof, bool framed = false)
         {
-            int skew = Math.Min(4, Math.Max(2, w / 5)), rise = Math.Max(3, Math.Min(6, d / 3));
+            int skew = Math.Min(4, Math.Max(2, w / 5));
+            int rise = Math.Max(3, Math.Min(type.Zone == ZoneType.None ? 6 : 4, d / 3));
             int front = y + d, eave = front - wallHeight;
             int frontRight = x + w - skew;
             int ridgeY = y + d / 2 - wallHeight - rise;
@@ -98,19 +99,40 @@ public sealed record BuildingSprite(int Width, int Height, int Lift, byte[] Pixe
                 new(frontRight, eave), new(x, eave));
             Line(ridgeLeft, ridgeY, ridgeRight, ridgeY, roof.Scale(1.2));
             Line(x, eave, frontRight, eave, ink);
-            for (int row = ridgeY + 3; row < eave - 1; row += 3)
+            for (int row = ridgeY + 1; row < eave; row++)
             {
-                int inset = (eave - row) * skew / Math.Max(1, eave - ridgeY) / 2;
-                Line(x + inset + 1, row, frontRight + inset - 1, row, roof.Scale(0.9));
+                float t = (row - ridgeY) / (float)Math.Max(1, eave - ridgeY);
+                int left = (int)Math.Ceiling(ridgeLeft + (x - ridgeLeft) * t);
+                int right = (int)Math.Floor(ridgeRight + (frontRight - ridgeRight) * t);
+                for (int col = left; col < right; col++)
+                {
+                    int course = (row - ridgeY) / 2;
+                    int tileIndex = (col - x + course % 2) / 3;
+                    Pixel(col, row, roof.Scale(0.86 + CellHash.Pick(tileIndex + variant, course, 4) * 0.045));
+                }
             }
-            for (int col = x + 2; col < frontRight - 1; col += 5)
+            int faceWidth = w - skew;
+            int doorX = x + faceWidth / 2 - 1;
+            if (framed)
             {
-                Rect(col, eave + 2, 2, Math.Min(3, Math.Max(1, wallHeight - 3)), glass);
-                Pixel(col, eave + 2, wall.Scale(0.85));
-                if (framed) Rect(col - 1, eave + 1, 1, wallHeight - 1, timber);
+                Rect(x, eave + 1, 1, wallHeight, timber);
+                Rect(frontRight - 1, eave + 1, 1, wallHeight, timber);
             }
-            if (framed && wallHeight > 7) Line(x, eave + wallHeight / 2, frontRight - 1, eave + wallHeight / 2, timber);
-            Rect(x + (w - skew) / 2, front - 3, 2, 3, timber.Scale(0.65));
+            int stories = wallHeight >= 8 ? 2 : 1;
+            int storyHeight = wallHeight / stories;
+            for (int story = 0; story < stories; story++)
+            {
+                int windowY = front - (story + 1) * storyHeight + 2;
+                for (int col = x + 2; col < frontRight - 1; col += 4)
+                {
+                    if (story == 0 && col >= doorX - 1 && col <= doorX + 2) continue;
+                    Rect(col, windowY, faceWidth < 9 ? 1 : 2, Math.Min(2, storyHeight - 2), glass);
+                    if (faceWidth >= 9) Rect(col, windowY + 2, 2, 1, wall.Scale(0.85));
+                }
+                if (framed && story > 0) Line(x, front - story * storyHeight, frontRight - 1, front - story * storyHeight, timber);
+            }
+            Rect(doorX, front - Math.Min(3, storyHeight - 1), 2, Math.Min(3, storyHeight - 1), timber.Scale(0.65));
+            Rect(frontRight, eave + 2, 1, Math.Min(2, wallHeight - 2), glass);
             Line(x, front, frontRight, front, ink);
         }
         void FlatRoof(int x, int y, int w, int d, int wallHeight, Rgb wall)
@@ -155,7 +177,7 @@ public sealed record BuildingSprite(int Width, int Height, int Lift, byte[] Pixe
         }
         int lotTop = lift + 5;
         int lotDepth = height - lotTop - 3;
-        int bodyWidth = Math.Max(8, width - 9);
+        int bodyWidth = Math.Max(8, width - (type.Zone == ZoneType.None ? 9 : 6));
         int bodyDepth = Math.Clamp(plotHeight * 9, 8, 22);
         int bodyY = Math.Max(lift + 9, bottom - bodyDepth - 5);
 
@@ -182,7 +204,42 @@ public sealed record BuildingSprite(int Width, int Height, int Lift, byte[] Pixe
             Rect(mid + 14, bottom - 86, 9, 13, stone.Scale(1.1));
             Rect(mid - 12, bottom - 54, 24, 4, slate);
         }
-        else if (type.Name is "Woodlot" or "Village Green" or "Charcoal Burners")
+        else if (type.Name == "Woodlot")
+        {
+            var bark = Rgb.Hex(WoodlotArtwork.BarkColor);
+            var ends = Rgb.Hex(WoodlotArtwork.CutEndColor);
+            Yard(1, lotTop, width - 3, lotDepth, Rgb.Hex(WoodlotArtwork.EarthColor));
+            int stackWidth = Math.Clamp((width - 8) / 2, 4, 10);
+            for (int y = lotTop + 6; y < bottom - 5; y += 11)
+                foreach (int x in new[] { 3, width - stackWidth - 4 }.Distinct())
+                {
+                    Rect(x, y - 3, stackWidth, 6, bark.Scale(0.75));
+                    for (int layer = 0; layer < 3; layer++)
+                    {
+                        int inset = layer;
+                        Rect(x + inset, y - layer * 2, stackWidth - inset * 2, 2,
+                            layer % 2 == 0 ? bark : bark.Scale(1.16));
+                        for (int log = x + inset; log < x + stackWidth - inset; log += 3)
+                            Rect(log, y - layer * 2, 2, 1, ends);
+                    }
+                }
+            int gate = width / 2;
+            Rect(gate - 1, bottom - 6, 3, 5, Rgb.Hex(WoodlotArtwork.PathColor));
+            for (int x = 1; x < width - 2; x += 4)
+            {
+                Rect(x, lotTop - 2, 1, 5, timber);
+                Rect(x, bottom - 4, 1, 5, timber);
+            }
+            Line(1, lotTop, width - 3, lotTop, timber);
+            Line(1, bottom - 2, gate - 2, bottom - 2, timber);
+            Line(gate + 2, bottom - 2, width - 3, bottom - 2, timber);
+            Line(1, lotTop, 1, bottom - 2, timber);
+            Line(width - 3, lotTop, width - 3, bottom - 2, timber);
+            Rect(gate - 2, bottom - 4, 1, 5, timber);
+            Rect(gate + 2, bottom - 4, 1, 5, timber);
+            Line(gate - 1, bottom - 2, gate + 1, bottom - 2, timber);
+        }
+        else if (type.Name is "Village Green" or "Charcoal Burners")
         {
             Yard(1, lotTop, width - 3, lotDepth, type.Name == "Charcoal Burners" ? paving.Scale(0.65) : grass);
             for (int y = lotTop + 2; y < bottom - 6; y += 9)
@@ -192,10 +249,6 @@ public sealed record BuildingSprite(int Width, int Height, int Lift, byte[] Pixe
                 Rect(width / 2, lotTop + 3, 2, lotDepth - 5, paving);
                 Rect(3, lotTop + lotDepth / 2, width - 6, 2, paving);
                 Rect(width / 2, lotTop + lotDepth / 2 - 4, 1, 6, plaster);
-            }
-            else if (type.Name == "Woodlot")
-            {
-                for (int n = 0; n < 3; n++) Rect(width - 9, bottom - 5 + n * 2, 5, 1, thatch);
             }
             else
             {
@@ -303,55 +356,111 @@ public sealed record BuildingSprite(int Width, int Height, int Lift, byte[] Pixe
             Rect(4, bottom - 4, 2, 2, stone);
             Rect(width - 7, bottom - 4, 2, 2, stone);
         }
-        else if (type.Zone == ZoneType.Industrial)
+        else if (type.Zone == ZoneType.Commercial)
         {
-            Yard(1, lotTop, width - 3, lotDepth, paving.Scale(0.85));
-            House(2, bodyY, bodyWidth, bodyDepth, 5, stone, type.Name == "Mill" ? thatch : slate);
-            if (type.Name == "Mill")
+            var look = WorkplaceAppearance.At(type, variant, variant * 7, plotWidth, plotHeight);
+            Yard(1, lotTop, width - 3, lotDepth, paving);
+            int canopyY;
+            if (look.Form == WorkplaceForm.Stall)
             {
-                Rect(width - 6, bottom - 10, 4, 7, timber.Scale(0.7));
-                for (int row = bottom - 9; row < bottom - 3; row += 2) Rect(width - 6, row, 4, 1, thatch);
-                Rect(2, bottom - 4, width - 4, 2, Rgb.Hex(0x416f83));
+                House(3, bodyY - 1, bodyWidth - 2, 5, 3, Rgb.Hex(look.WallColor), Rgb.Hex(look.RoofColor), framed: true);
+                canopyY = bottom - 9;
             }
             else
             {
-                Chimney(width - 7, bodyY + bodyDepth - 2, type.Level >= 3 ? 14 : 9);
-                Rect(3, bottom - 4, 5, 2, timber);
-                Rect(width / 2, bottom - 4, 3, 2, stone.Scale(0.7));
-                if (type.Level >= 3)
+                House(2, bodyY, bodyWidth, bodyDepth - 2, type.Level == 2 ? 5 : 6,
+                    Rgb.Hex(look.WallColor), Rgb.Hex(look.RoofColor), framed: true);
+                canopyY = bottom - 8;
+            }
+            Rect(2, canopyY + 1, bodyWidth, 3, plaster);
+            for (int x = 2; x < bodyWidth + 2; x += 4)
+                Rect(x, canopyY, Math.Min(2, bodyWidth + 2 - x), 3, Rgb.Hex(look.CanvasColor));
+            Rect(2, canopyY + 3, 1, 6, timber);
+            Rect(bodyWidth + 1, canopyY + 3, 1, 6, timber);
+            Rect(3, bottom - 3, bodyWidth - 2, 3, timber);
+            Rect(3, bottom - 4, bodyWidth - 2, 1, plaster.Scale(0.8));
+            for (int x = 4; x < bodyWidth; x += 4)
+                Rect(x, bottom - 6, 2, 2, Rgb.Hex(x % 3 == 0 ? 0x8c9c68 : 0xb19b64));
+            if (look.Form != WorkplaceForm.Stall)
+            {
+                Rect(2 + (bodyWidth - Math.Min(4, Math.Max(2, bodyWidth / 5))) / 2 - 1,
+                    bottom - 4, 2, 5, paving);
+                Rect(bodyWidth - 1, canopyY - 3, 3, 2, timber);
+                Rect(bodyWidth, canopyY - 3, 1, 1, thatch);
+            }
+        }
+        else if (type.Zone == ZoneType.Industrial)
+        {
+            var look = WorkplaceAppearance.At(type, variant, variant * 7, plotWidth, plotHeight);
+            Yard(1, lotTop, width - 3, lotDepth, paving.Scale(0.85));
+            House(2, bodyY, bodyWidth - 1, bodyDepth - 2, 5, Rgb.Hex(look.WallColor), Rgb.Hex(look.RoofColor), framed: true);
+            if (look.Form == WorkplaceForm.Mill)
+            {
+                int wheelX = width - 6, wheelY = bottom - 8;
+                Rect(wheelX, wheelY + 2, 5, 1, timber.Scale(0.7));
+                Rect(wheelX + 2, wheelY, 1, 5, timber.Scale(0.7));
+                foreach (var p in new[] { new Pos(1, 0), new Pos(3, 0), new Pos(0, 1), new Pos(4, 1),
+                    new Pos(0, 3), new Pos(4, 3), new Pos(1, 4), new Pos(3, 4) })
+                    Pixel(wheelX + p.X, wheelY + p.Y, timber);
+                Rect(3, bottom - 4, 2, 3, thatch);
+                Rect(6, bottom - 5, 2, 3, thatch.Scale(0.85));
+            }
+            else if (look.Form is WorkplaceForm.Smithy or WorkplaceForm.Forge)
+            {
+                Chimney(4, bodyY + 3, look.Form == WorkplaceForm.Forge ? 6 : 4);
+                Rect(3, bottom - 7, 4, 5, stone);
+                Rect(4, bottom - 6, 2, 3, ink);
+                Rect(4, bottom - 4, 2, 1, Rgb.Hex(0xb87745));
+                Rect(bodyWidth - 2, bottom - 5, 2, 3, timber);
+                Rect(bodyWidth - 3, bottom - 6, 4, 1, slate);
+                Pixel(bodyWidth + 1, bottom - 6, slate.Scale(1.2));
+            }
+            else if (look.Form == WorkplaceForm.Cooper)
+            {
+                for (int x = 3; x <= bodyWidth - 2; x += 4)
                 {
-                    House(3, lotTop + 7, bodyWidth - 5, 7, 4, stone, slate);
-                    Chimney(5, lotTop + 12, 8);
+                    Rect(x, bottom - 6, 3, 4, timber);
+                    Rect(x, bottom - 5, 3, 1, slate);
+                    Rect(x, bottom - 3, 3, 1, slate);
                 }
+            }
+            else
+            {
+                Rect(3, bottom - 6, bodyWidth - 2, 1, plaster);
+                Rect(3, bottom - 5, 1, 3, timber);
+                Rect(bodyWidth, bottom - 5, 1, 3, timber);
+                Rect(4, bottom - 3, bodyWidth - 4, 1, timber);
+                Rect(4, bottom - 4, bodyWidth - 4, 1, thatch);
             }
         }
         else
         {
             bool home = type.Zone == ZoneType.Residential;
             Yard(1, lotTop, width - 3, lotDepth, home ? grass : paving);
-            int floors = home ? 4 + type.Level * 2 : 5;
-            var roof = type.Name == "Cottage" ? thatch :
+            var appearance = HouseAppearance.At(variant, variant * 7, type.Level);
+            int floors = home ? type.Level == 1 ? 5 : type.Level == 2 ? 8 : 9 : 5;
+            var roof = home ? Rgb.Hex(appearance.RoofColor) :
                 type.Name is "Infirmary" or "Hospice" or "Chantry School" ? slate : tile;
-            if (type.Level >= 3 && plotHeight >= 2)
+            var wall = home ? Rgb.Hex(appearance.WallColor) : plaster;
+            if (home && appearance.Wing && plotWidth >= 2 && plotHeight >= 2)
             {
-                House(2, lotTop + 8, bodyWidth, Math.Max(8, bodyDepth - 4), floors, plaster, roof, framed: home);
-                House(2, bottom - 12, bodyWidth, 8, 5, plaster, roof, framed: home);
+                House(2, lotTop + 8, bodyWidth, Math.Max(8, bodyDepth - 4), floors, wall, roof, framed: true);
+                House(2, bottom - 12, bodyWidth / 2, 8, 4, wall, roof, framed: true);
             }
-            else House(2, bodyY, bodyWidth, bodyDepth, floors, plaster, roof, framed: home && type.Level > 1);
+            else House(2, bodyY, bodyWidth, bodyDepth, floors, wall, roof, framed: home);
             if (home)
             {
+                if (appearance.Chimney) Chimney(bodyWidth - 2, bodyY + 2, 3);
                 Rect(width / 2, bottom - 3, 2, 3, paving);
                 if (width >= 24) Tree(width - 7, bottom - 10);
                 Line(2, bottom, width - 3, bottom, timber.Scale(0.8));
             }
-            if (type.Zone == ZoneType.Commercial || type.Name is "Tavern" or "Guildhall")
+            if (type.Name is "Tavern" or "Guildhall")
             {
                 int awningY = bodyY + bodyDepth - floors + 3;
                 Rect(3, awningY, bodyWidth - 2, 3, plaster);
                 for (int x = 3; x < bodyWidth; x += 4) Rect(x, awningY, 2, 3, Rgb.Hex(0x59777d));
                 Rect(3, bottom - 4, bodyWidth - 2, 2, timber);
-                if (type.Name == "Market Stall")
-                    Rect(3, bodyY + bodyDepth - 1, bodyWidth - 2, 3, timber);
             }
             if (type.Service == ServiceKind.Health)
             {

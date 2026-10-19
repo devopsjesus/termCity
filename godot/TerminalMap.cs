@@ -184,13 +184,15 @@ public partial class TerminalMap : Control
         if (delta == 0) return;
         RefreshCells();
         var anchor = pointer ?? Size / 2;
-        if (PerspectiveEnabled)
+        if (PerspectiveEnabled && Perspective is { } perspective)
         {
-            if (!TryMapPosition(anchor, out var beforeWorld)) return;
+            perspective.Sync(Session, Size);
+            var beforeWorld = perspective.GroundCell(anchor);
             Session.ZoomBy(delta);
             RefreshCells();
-            if (TryMapPosition(anchor, out var afterWorld))
-                Session.ScrollCamera(beforeWorld.X - afterWorld.X, beforeWorld.Y - afterWorld.Y);
+            perspective.Sync(Session, Size);
+            var afterWorld = perspective.GroundCell(anchor);
+            Session.ScrollCamera(beforeWorld.X - afterWorld.X, beforeWorld.Y - afterWorld.Y);
             return;
         }
         if (!Grid.TryCell(anchor.X, anchor.Y, out var before)) return;

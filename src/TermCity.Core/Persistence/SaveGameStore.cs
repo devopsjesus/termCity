@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TermCity.Core.Buildings;
 using TermCity.Core.Registry;
+using TermCity.Core.Rendering;
 using TermCity.Core.Simulation;
 using TermCity.Core.Terrain;
 using TermCity.Core.Util;
@@ -78,7 +79,9 @@ public static class SaveGameStore
             ZoneRemovals = new(map.ZoneRemovals),
             BuildingFootprints = map.BuildingFootprints.Values.ToList(),
             BuildingRotations = new(map.BuildingRotations),
+            HouseYardCells = new(map.HouseYardCells),
             Paths = Pack(map.PathLayer),
+            PathLinks = Pack(map.PathLinkLayer),
             Sea = Pack(EncodeFlags(map.SeaLayer)),
             Rivers = Pack(EncodeFlags(map.RiverLayer)),
             BuildingEstablishedDays = new(map.BuildingEstablishedDays),
@@ -143,6 +146,7 @@ public static class SaveGameStore
         byte[] zones = DecodeBytes(data.Zones, count, "zones");
         byte[] households = DecodeBytes(data.Households, count * 3, "households");
         byte[] paths = data.Paths is null ? new byte[count] : DecodeBytes(data.Paths, count, "paths");
+        byte[] pathLinks = data.PathLinks is null ? new byte[count] : DecodeBytes(data.PathLinks, count, "path links");
         byte[] sea = data.Sea is null ? new byte[count] : DecodeBytes(data.Sea, count, "sea");
         byte[] rivers = data.Rivers is null ? new byte[count] : DecodeBytes(data.Rivers, count, "rivers");
         for (int i = 0; i < count; i++)
@@ -156,6 +160,8 @@ public static class SaveGameStore
             map.ZoneLayer[i] = (ZoneType)zones[i];
             map.HouseholdLayer[i] = new Household(households[i * 3], households[i * 3 + 1], households[i * 3 + 2]);
             map.PathLayer[i] = paths[i];
+            if (pathLinks[i] > 15) throw new InvalidDataException("Invalid path connection mask.");
+            map.PathLinkLayer[i] = pathLinks[i];
             if (sea[i] > 1 || sea[i] == 1 && map.TerrainAt(i % map.Width, i / map.Width).Name != DefaultTerrains.WaterName)
                 throw new InvalidDataException("Invalid sea classification.");
             map.SeaLayer[i] = sea[i] != 0;
@@ -165,6 +171,19 @@ public static class SaveGameStore
             map.RiverLayer[i] = rivers[i] != 0;
         }
 
+        for (int index = 0; index < count; index++)
+        {
+            if (map.PathLinkLayer[index] == 0) continue;
+            var cell = map.PosOf(index);
+            foreach (var (dx, dy) in RoadNetwork.Neighbors)
+            {
+                int mask = GameMap.PathDirection(dx, dy);
+                if ((map.PathLinkLayer[index] & mask) == 0) continue;
+                if (!map.InBounds(cell.X + dx, cell.Y + dy) ||
+                    !map.HasPathLink(index, map.Index(cell.X + dx, cell.Y + dy)))
+                    throw new InvalidDataException("Invalid or asymmetric saved path connection.");
+            }
+        }
         map.RebuildIndexes();
         if (data.BuildingRotations.Values.Any(rotation => rotation is < 0 or > 3))
             throw new InvalidDataException("Invalid building rotation.");
@@ -202,6 +221,19 @@ public static class SaveGameStore
                 map.BuildingAt(index % map.Width, index / map.Width)?.PlayerPlaceable != true)
                 throw new InvalidDataException("Invalid building rotation anchor.");
             if (rotation != 0) map.BuildingRotations.Add(index, rotation);
+        }
+        var assignedYards = new HashSet<int>();
+        foreach (var (owner, cell) in data.HouseYardCells)
+        {
+            if (owner < 0 || owner >= count || cell < 0 || cell >= count ||
+                !map.BuildingFootprints.TryGetValue(owner, out var footprint) ||
+                map.BuildingAt(owner % map.Width, owner / map.Width)?.Zone != ZoneType.Residential ||
+                !assignedYards.Add(cell))
+                throw new InvalidDataException("Invalid or overlapping house yard assignment.");
+            var position = map.PosOf(cell);
+            if (!HouseYardLayout.IsAdjoining(footprint, position) && !footprint.Cells().Contains(position))
+                throw new InvalidDataException("A saved house yard must adjoin its house or be covered by its expanded footprint.");
+            map.RegisterHouseYard(owner, cell);
         }
         foreach (int index in map.ServiceCells)
             if (!occupied.Contains(index))
@@ -279,7 +311,7 @@ public static class SaveGameStore
             throw new InvalidDataException("Invalid saved calendar or speed.");
         if (data.Growth is null || data.Tally is null || data.Taxes is null ||
             data.BuildingFootprints is null || data.ZoneRemovals is null || data.Funding is null ||
-            data.BuildingEstablishedDays is null || data.BuildingRotations is null)
+            data.BuildingEstablishedDays is null || data.BuildingRotations is null || data.HouseYardCells is null)
             throw new InvalidDataException("Save file has missing city state.");
         if (!InRange(data.Taxes.Residential, 0, 0.3) || !InRange(data.Taxes.Commercial, 0, 0.3) ||
             !InRange(data.Taxes.Industrial, 0, 0.3) || data.Funding.Length != ServiceKinds.Count ||
@@ -482,7 +514,9 @@ public static class SaveGameStore
         public required Dictionary<int, ZoneRemoval> ZoneRemovals { get; set; }
         public required List<CellRect> BuildingFootprints { get; set; }
         public Dictionary<int, int> BuildingRotations { get; set; } = [];
+        public Dictionary<int, int> HouseYardCells { get; set; } = [];
         public string? Paths { get; set; }
+        public string? PathLinks { get; set; }
         public string? Sea { get; set; }
         public string? Rivers { get; set; }
         public Dictionary<int, double> BuildingEstablishedDays { get; set; } = [];

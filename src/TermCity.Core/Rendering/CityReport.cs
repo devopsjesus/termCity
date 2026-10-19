@@ -60,7 +60,13 @@ public static class CityReport
     {
         var info = Zones.Get(zone);
         var count = game.Stats.For(zone);
+        var diagnostic = GrowthDiagnostics.ForZone(game, zone);
         return $"{info.Letter} {info.Name}\nDemand: {game.Demand.For(zone):P0}\n" +
+            $"Expected arrivals: {game.ExpectedGrowthArrivals(zone):0.00} " +
+            $"{(zone == ZoneType.Residential ? "families" : "businesses")}/week\n" +
+            (zone == ZoneType.Residential ? "Arrivals use room in existing homes before building new homes.\n" :
+                $"Unfilled business slots: {Math.Max(0, game.SupportedCells(zone) - count.Occupied):N0}\n") +
+            $"Growth: {diagnostic.Message}{(diagnostic.Paused ? " Paused." : "")}\n" +
             $"Built: {count.Filled:N0} buildings\nZoned: {count.Zoned:N0} lots\n" +
             $"Walkable: {count.Served:N0} lots\nUnreachable: {count.Zoned - count.Served:N0} lots\n" +
             $"Awaiting removal: {count.AwaitingRemoval:N0} buildings";

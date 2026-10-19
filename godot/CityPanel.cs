@@ -1,6 +1,7 @@
 using Godot;
 using TermCity.Core.Rendering;
 using TermCity.Core.Session;
+using TermCity.Core.Simulation;
 using TermCity.Core.Util;
 using TermCity.Core.World;
 
@@ -17,6 +18,7 @@ public partial class CityPanel : Control
     public CityMinimap Minimap { get; private set; } = null!;
     private readonly Dictionary<ZoneType, ProgressBar> _demand = [];
     private readonly Dictionary<ZoneType, Control[]> _demandHover = [];
+    private (CityGame Game, CityStats Stats, CityIndicators Indicators, bool Paused, Season Season)? _demandState;
     private readonly List<Label> _cityCells = [];
     private GridContainer _cityTable = null!;
     private Label _zoom = null!;
@@ -66,10 +68,10 @@ public partial class CityPanel : Control
             Text = "ROTATE",
             FocusMode = FocusModeEnum.None,
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
-            TooltipText = "Rotate map 90° clockwise; [ / ] rotate a building during placement, otherwise the map"
+            TooltipText = "Rotate map 90° clockwise; Shift+[ / Shift+] rotate the map during building placement"
         };
-        tilt.Pressed += () => { if (!Blocked) TiltMap(); };
-        rotate.Pressed += () => { if (!Blocked) RotateMap(); };
+        tilt.Pressed += () => { if (Session.MapNavigationAllowed) TiltMap(); };
+        rotate.Pressed += () => { if (Session.MapNavigationAllowed) RotateMap(); };
         cameraControls.AddChild(tilt);
         cameraControls.AddChild(rotate);
         foreach (var button in new[] { tilt, rotate })
@@ -82,8 +84,8 @@ public partial class CityPanel : Control
             }
         overview.AddChild(cameraControls);
         var zoomControls = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
-        var zoomOut = new Button { Text = "[-]", FocusMode = FocusModeEnum.None };
-        zoomOut.Pressed += () => { if (!Blocked) ZoomBy(-1); };
+        var zoomOut = new Button { Name = "MinimapZoomOut", Text = "[-]", FocusMode = FocusModeEnum.None };
+        zoomOut.Pressed += () => { if (Session.MapNavigationAllowed) ZoomBy(-1); };
         _zoom = new Label
         {
             Name = "ZoomIndicator",
@@ -91,8 +93,8 @@ public partial class CityPanel : Control
             SizeFlagsHorizontal = SizeFlags.ExpandFill
         };
         _zoom.AddThemeFontSizeOverride("font_size", 20);
-        var zoomIn = new Button { Text = "[+]", FocusMode = FocusModeEnum.None };
-        zoomIn.Pressed += () => { if (!Blocked) ZoomBy(1); };
+        var zoomIn = new Button { Name = "MinimapZoomIn", Text = "[+]", FocusMode = FocusModeEnum.None };
+        zoomIn.Pressed += () => { if (Session.MapNavigationAllowed) ZoomBy(1); };
         zoomControls.AddChild(zoomOut);
         zoomControls.AddChild(_zoom);
         zoomControls.AddChild(zoomIn);
@@ -352,12 +354,18 @@ public partial class CityPanel : Control
     {
         if (_cityTable is null) return;
         var game = Session.Game;
+        var demand = game.Demand;
+        var demandState = (game, game.Stats, game.Indicators, game.Paused, game.Season);
         foreach (var zone in Zones.Placeable)
         {
-            _demand[zone].Value = game.Demand.For(zone);
-            string details = CityReport.ZoneDetails(game, zone) + "\nF8: growth and road access report.";
-            foreach (var control in _demandHover[zone]) control.TooltipText = details;
+            _demand[zone].Value = demand.For(zone);
+            if (_demandState != demandState)
+            {
+                string details = CityReport.ZoneDetails(game, zone) + "\nF8: growth and road access report.";
+                foreach (var control in _demandHover[zone]) control.TooltipText = details;
+            }
         }
+        _demandState = demandState;
         int previousCells = _cityCells.Count;
         RefreshTable(_cityTable, SidebarReport.CityRows(game), _cityCells);
         _zoom.Text = Session.ZoomLabel;

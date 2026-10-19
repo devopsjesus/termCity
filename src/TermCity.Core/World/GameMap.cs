@@ -38,6 +38,7 @@ public sealed class GameMap
     internal readonly byte[] BuildingLayer;
     internal readonly Household[] HouseholdLayer;
     internal readonly byte[] PathLayer;
+    internal readonly byte[] PathLinkLayer;
     internal readonly Dictionary<int, double> BuildingEstablishedDays = [];
     internal readonly Dictionary<string, Simulation.TravelRoutes> TravelCache = [];
     internal Simulation.TravelRoutes? PathRoutes;
@@ -49,6 +50,8 @@ public sealed class GameMap
     internal double[]? JunctionDelays;
     internal IReadOnlyList<TermCity.Core.Rendering.RoadPath>? TravelRoadPaths;
     internal TermCity.Core.Rendering.RoadMeshLayout? JunctionRoadLayout;
+    internal float[]? FootpathHeights;
+    internal bool[]? FootpathBridgeCells;
     internal TermCity.Core.Rendering.WaterFlowField? WaterFlow;
     internal readonly Dictionary<int, ZoneRemoval> ZoneRemovals = [];
 
@@ -59,13 +62,80 @@ public sealed class GameMap
     private readonly HashSet<int> _serviceCells = [];
     private readonly Dictionary<int, CellRect> _buildingFootprints = [];
     private readonly Dictionary<int, int> _buildingOwners = [];
+    private readonly Dictionary<int, int> _houseYardCells = [];
+    private readonly Dictionary<int, int> _houseYardOwners = [];
 
     public IReadOnlyDictionary<int, CellRect> BuildingFootprints => _buildingFootprints;
+    public IReadOnlyDictionary<int, int> HouseYardCells => _houseYardCells;
     public Dictionary<int, int> BuildingRotations { get; } = [];
 
     public int BuildingAnchor(int index) => _buildingOwners.GetValueOrDefault(index, index);
     public bool IsBuildingAnchor(int index) => BuildingAnchor(index) == index;
     public int PathWearAt(int x, int y) => PathLayer[Index(x, y)];
+
+    internal int HouseYardOwner(int index)
+    {
+        if (!_houseYardOwners.TryGetValue(index, out int owner) ||
+            !_buildingFootprints.TryGetValue(owner, out var area) ||
+            !Rendering.HouseYardLayout.IsAdjoining(area, PosOf(index)) ||
+            ZoneLayer[index] != ZoneType.Residential || BuildingLayer[index] != 0 ||
+            FeatureLayer[index] != 0 || RoadLayer[index] || !Content.Terrains[TerrainLayer[index]].Buildable)
+            return -1;
+        var cell = PosOf(index);
+        return JunctionRoadLayout?.AtCell(cell.X, cell.Y).Any(segment =>
+            Rendering.RoadMeshLayout.OverlapsCell(segment.Corridor, cell.X, cell.Y)) == true ? -1 : owner;
+    }
+
+    internal bool IsHouseYardCell(int index) => HouseYardOwner(index) >= 0;
+
+    public void SetPathWear(int x, int y, int wear)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(x);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(x, Width);
+        ArgumentOutOfRangeException.ThrowIfNegative(y);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(y, Height);
+        ArgumentOutOfRangeException.ThrowIfNegative(wear);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(wear, 12);
+        int index = Index(x, y);
+        if ((PathLayer[index] >= 3) != (wear >= 3)) TravelCache.Clear();
+        PathLayer[index] = (byte)wear;
+        if (wear == 0) ClearPathLinks(index);
+    }
+
+    internal static int PathDirection(int dx, int dy) => (dx, dy) switch
+    {
+        (0, -1) => 1, (1, 0) => 2, (0, 1) => 4, (-1, 0) => 8, _ => 0,
+    };
+
+    internal bool HasPathLink(int first, int last)
+    {
+        int mask = PathDirection(last % Width - first % Width, last / Width - first / Width);
+        int reverse = (mask << 2 | mask >> 2) & 15;
+        return mask != 0 && (PathLinkLayer[first] & mask) != 0 && (PathLinkLayer[last] & reverse) != 0;
+    }
+
+    internal bool LinkPathCells(int first, int last)
+    {
+        int mask = PathDirection(last % Width - first % Width, last / Width - first / Width);
+        if (mask == 0) throw new ArgumentException("Path links require orthogonally adjacent cells.", nameof(last));
+        int reverse = (mask << 2 | mask >> 2) & 15;
+        bool changed = (PathLinkLayer[first] & mask) == 0 || (PathLinkLayer[last] & reverse) == 0;
+        PathLinkLayer[first] |= (byte)mask;
+        PathLinkLayer[last] |= (byte)reverse;
+        return changed;
+    }
+
+    private void ClearPathLinks(int index)
+    {
+        var cell = PosOf(index);
+        foreach (var (dx, dy) in Simulation.RoadNetwork.Neighbors)
+        {
+            if (!InBounds(cell.X + dx, cell.Y + dy)) continue;
+            int reverse = PathDirection(-dx, -dy);
+            PathLinkLayer[Index(cell.X + dx, cell.Y + dy)] &= (byte)(15 ^ reverse);
+        }
+        PathLinkLayer[index] = 0;
+    }
 
     public CellRect BuildingFootprintAt(int x, int y)
     {
@@ -79,12 +149,34 @@ public sealed class GameMap
 
     public void SetBuildingFootprint(BuildingType building, CellRect area)
     {
+        int owner = Index(area.X, area.Y);
+        int? yard = building.Zone == ZoneType.Residential && _houseYardCells.TryGetValue(owner, out int cell)
+            ? cell : null;
         foreach (var p in area.Cells())
         {
             SetFeature(p.X, p.Y, null);
             SetBuilding(p.X, p.Y, building);
         }
         RegisterBuildingFootprint(area);
+        if (yard is { } yardCell) RegisterHouseYard(owner, yardCell);
+    }
+
+    internal void RegisterHouseYard(int owner, int cell)
+    {
+        if (_houseYardCells.TryGetValue(owner, out int existing))
+        {
+            if (existing != cell) throw new InvalidOperationException("An established house yard cannot be relocated.");
+            return;
+        }
+        _houseYardCells.Add(owner, cell);
+        _houseYardOwners.Add(cell, owner);
+        PathRoutes = null;
+        BuildingPaths = null;
+    }
+
+    private void RemoveHouseYard(int owner)
+    {
+        if (_houseYardCells.Remove(owner, out int cell)) _houseYardOwners.Remove(cell);
     }
 
     internal void RegisterBuildingFootprint(CellRect area)
@@ -122,6 +214,7 @@ public sealed class GameMap
         BuildingLayer = new byte[count];
         HouseholdLayer = new Household[count];
         PathLayer = new byte[count];
+        PathLinkLayer = new byte[count];
 
         Array.Fill(TerrainLayer, content.Terrains.Base.Id);
     }
@@ -218,6 +311,8 @@ public sealed class GameMap
         JunctionDelays = null;
         TravelRoadPaths = null;
         JunctionRoadLayout = null;
+        FootpathHeights = null;
+        FootpathBridgeCells = null;
     }
 
     public FeatureType? FeatureAt(int x, int y)
@@ -226,7 +321,17 @@ public sealed class GameMap
         return id == 0 ? null : Content.Features[id];
     }
 
-    public void SetFeature(int x, int y, FeatureType? feature) => FeatureLayer[Index(x, y)] = feature?.Id ?? 0;
+    public void SetFeature(int x, int y, FeatureType? feature)
+    {
+        int index = Index(x, y);
+        if (FeatureLayer[index] == (feature?.Id ?? 0)) return;
+        FeatureLayer[index] = feature?.Id ?? 0;
+        if (_houseYardOwners.ContainsKey(index))
+        {
+            PathRoutes = null;
+            BuildingPaths = null;
+        }
+    }
 
     public bool HasRoad(int x, int y) => InBounds(x, y) && RoadLayer[Index(x, y)];
 
@@ -333,6 +438,11 @@ public sealed class GameMap
         }
 
         ZoneLayer[i] = zone;
+        if (_houseYardOwners.ContainsKey(i))
+        {
+            PathRoutes = null;
+            BuildingPaths = null;
+        }
         _zoneCells[(int)old].Remove(i);
         _zoneCells[(int)zone].Add(i);
         if (zone != ZoneType.None)
@@ -367,8 +477,10 @@ public sealed class GameMap
             }
             BuildingEstablishedDays.Remove(owner);
             BuildingRotations.Remove(owner);
+            RemoveHouseYard(owner);
         }
         BuildingRotations.Remove(i);
+        RemoveHouseYard(i);
         BuildingLayer[i] = building?.Id ?? 0;
         ZoneRemovals.Remove(i);
         if (building is { IsService: true })
@@ -399,7 +511,7 @@ public sealed class GameMap
         SetBuilding(x, y, null);
         HouseholdLayer[i] = default;
         FeatureLayer[i] = 0;
-        PathLayer[i] = 0;
+        SetPathWear(x, y, 0);
         InvalidateTravel();
     }
 }

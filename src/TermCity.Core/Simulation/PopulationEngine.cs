@@ -249,7 +249,6 @@ internal static class PopulationEngine
                         map.ZoneAt(cell.X, cell.Y) == zone &&
                         (map.BuildingAt(cell.X, cell.Y) is null || map.BuildingAnchor(map.Index(cell.X, cell.Y)) == i)))
                         continue;
-                    map.SetBuilding(p.X, p.Y, null);
                     map.SetBuildingFootprint(next, area);
                     if (zone == ZoneType.Residential)
                     {
@@ -264,7 +263,6 @@ internal static class PopulationEngine
                     var p = map.PosOf(i);
                     var h = map.HouseholdLayer[i];
                     var area = map.BuildingFootprintAt(p.X, p.Y);
-                    map.SetBuilding(p.X, p.Y, null);
                     map.SetBuildingFootprint(lower, area);
                     if (zone == ZoneType.Residential)
                     {

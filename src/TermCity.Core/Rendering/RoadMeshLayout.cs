@@ -6,7 +6,7 @@ namespace TermCity.Core.Rendering;
 
 public sealed class RoadMeshLayout
 {
-    public const float HalfWidth = 0.3f;
+    public const float HalfWidth = 0.5f;
     public const float ShoulderWidth = 0.12f;
     public const float SurfaceLift = 0;
     public const float MinimumTerraceWidth = 0.25f;
@@ -22,6 +22,7 @@ public sealed class RoadMeshLayout
     }
 
     private readonly Dictionary<int, List<Segment>> _cells = [];
+    private readonly Dictionary<RoadPath, List<Segment>> _pathSegments = [];
     private readonly GameMap _map;
     private readonly Dictionary<Vector2, float> _heights = [];
     public IReadOnlyList<Segment> Segments { get; }
@@ -32,12 +33,21 @@ public sealed class RoadMeshLayout
         var segments = new List<Segment>();
         foreach (var path in paths)
         {
+            var pathSegments = new List<Segment>();
+            _pathSegments.Add(path, pathSegments);
+            float halfWidth = path.Type.WidthCells / 2;
+            float gradeReach = GradeReach(path.Type);
             var points = new List<Vector2>();
             var heights = new List<float>();
             var water = new List<bool>();
             var raw = Enumerable.Range(0, path.Count).Select(i => (X: path.Xs[i], Y: path.Ys[i])).ToList();
             if (path.Closed) raw.Add(raw[0]);
-            var simplified = RoadCurves.Straighten(raw, new bool[raw.Count], 0.2);
+            var pinned = new bool[raw.Count];
+            static int Cardinal((double X, double Y) a, (double X, double Y) b) =>
+                Math.Abs(a.X - b.X) < 0.0000001 ? 1 : Math.Abs(a.Y - b.Y) < 0.0000001 ? 2 : 0;
+            for (int i = 1; i < raw.Count - 1; i++)
+                pinned[i] = Cardinal(raw[i - 1], raw[i]) != Cardinal(raw[i], raw[i + 1]);
+            var simplified = RoadCurves.Straighten(raw, pinned, 0.2);
             for (int i = 0; i < simplified.Count; i++)
             {
                 var end = new Vector2((float)simplified[i].X / RoadCurves.CellWidth,
@@ -46,7 +56,7 @@ public sealed class RoadMeshLayout
                 var start = points[^1];
                 int steps = Math.Max(1, (int)Math.Ceiling(Vector2.Distance(start, end)));
                 for (int step = 1; step <= steps; step++)
-                    Add(Vector2.Lerp(start, end, step / (float)steps));
+                    Add(start + (end - start) * (step / (float)steps));
             }
             (float Height, bool Water) Sample(Vector2 point)
             {
@@ -152,6 +162,14 @@ public sealed class RoadMeshLayout
                 }
                 if (before.LengthSquared() < 0.000001f) before = after;
                 if (after.LengthSquared() < 0.000001f) after = before;
+                bool beforeCardinal = before.X == 0 || before.Y == 0;
+                bool afterCardinal = after.X == 0 || after.Y == 0;
+                if (beforeCardinal != afterCardinal)
+                {
+                    // A curve's first chord must not pull its shared edge behind the straight-leg tangency.
+                    offsets[i] = Perpendicular(Vector2.Normalize(beforeCardinal ? before : after));
+                    continue;
+                }
                 var n1 = Perpendicular(Vector2.Normalize(before));
                 var n2 = Perpendicular(Vector2.Normalize(after));
                 var sum = n1 + n2;
@@ -166,17 +184,17 @@ public sealed class RoadMeshLayout
                     points[i] - offsets[i] * width, points[i - 1] - offsets[i - 1] * width,
                 ]);
                 var segment = new Segment(points[i - 1], points[i], heights[i - 1], heights[i],
-                    path.Type, path, Ribbon(HalfWidth), Ribbon(HalfWidth + ShoulderWidth), bridgeSegments[i - 1],
-                    points[i - 1] + offsets[i - 1] * (HalfWidth + ShoulderWidth),
-                    points[i] + offsets[i] * (HalfWidth + ShoulderWidth),
-                    points[i - 1] - offsets[i - 1] * (HalfWidth + ShoulderWidth),
-                    points[i] - offsets[i] * (HalfWidth + ShoulderWidth));
+                    path.Type, path, Ribbon(halfWidth), Ribbon(halfWidth + ShoulderWidth), bridgeSegments[i - 1],
+                    points[i - 1] + offsets[i - 1] * (halfWidth + ShoulderWidth),
+                    points[i] + offsets[i] * (halfWidth + ShoulderWidth),
+                    points[i - 1] - offsets[i - 1] * (halfWidth + ShoulderWidth),
+                    points[i] - offsets[i] * (halfWidth + ShoulderWidth));
                 segments.Add(segment);
-                const float reach = 1.01f;
-                int left = Math.Max(0, (int)MathF.Floor(Math.Min(segment.A.X, segment.B.X) - reach));
-                int right = Math.Min(map.Width - 1, (int)MathF.Floor(Math.Max(segment.A.X, segment.B.X) + reach));
-                int top = Math.Max(0, (int)MathF.Floor(Math.Min(segment.A.Y, segment.B.Y) - reach));
-                int bottom = Math.Min(map.Height - 1, (int)MathF.Floor(Math.Max(segment.A.Y, segment.B.Y) + reach));
+                pathSegments.Add(segment);
+                int left = Math.Max(0, (int)MathF.Floor(Math.Min(segment.A.X, segment.B.X) - gradeReach));
+                int right = Math.Min(map.Width - 1, (int)MathF.Floor(Math.Max(segment.A.X, segment.B.X) + gradeReach));
+                int top = Math.Max(0, (int)MathF.Floor(Math.Min(segment.A.Y, segment.B.Y) - gradeReach));
+                int bottom = Math.Min(map.Height - 1, (int)MathF.Floor(Math.Max(segment.A.Y, segment.B.Y) + gradeReach));
                 for (int y = top; y <= bottom; y++)
                     for (int x = left; x <= right; x++)
                     {
@@ -192,27 +210,136 @@ public sealed class RoadMeshLayout
     public IReadOnlyList<Segment> AtCell(int x, int y) =>
         _map.InBounds(x, y) && _cells.TryGetValue(_map.Index(x, y), out var segments) ? segments : Array.Empty<Segment>();
 
+    private IReadOnlyList<Segment> Near(Vector2 point) =>
+        AtCell(Math.Clamp((int)MathF.Floor(point.X), 0, _map.Width - 1),
+            Math.Clamp((int)MathF.Floor(point.Y), 0, _map.Height - 1));
+
+    private static float GradeReach(RoadType type) => Math.Max(1, type.WidthCells + ShoulderWidth * 2) + 0.001f;
+
     public Segment? RoadAt(Vector2 point)
     {
         Segment? best = null;
-        foreach (var segment in AtCell(Math.Clamp((int)MathF.Floor(point.X), 0, _map.Width - 1),
-            Math.Clamp((int)MathF.Floor(point.Y), 0, _map.Height - 1)))
+        foreach (var segment in Near(point))
             if (ContainsRibbon(segment.Road, point) && (best is null || segment.Type.Rank > best.Type.Rank ||
                 segment.Type.Rank == best.Type.Rank && segment.Bridge && !best.Bridge))
                 best = segment;
         return best;
     }
 
-    public bool InCorridor(Vector2 point) => AtCell((int)MathF.Floor(point.X), (int)MathF.Floor(point.Y))
+    public Vector2[] SelectionPolygon(Vector2 point, int stride = 1)
+    {
+        if (RoadAt(point) is not { } road) return [];
+        var parts = _pathSegments[road.Path];
+        float station = 0, before = 0, total = 0;
+        foreach (var part in parts)
+        {
+            var delta = part.B - part.A;
+            if (ReferenceEquals(part, road))
+            {
+                before = total;
+                station = total + Vector2.Dot(point - part.A, delta) / delta.Length();
+            }
+            total += delta.Length();
+        }
+        float from = Math.Max(0, station - stride / 2f), to = Math.Min(total, station + stride / 2f);
+        var direction = road.B - road.A;
+        if (Math.Abs(direction.Y) < 0.00001f || Math.Abs(direction.X) < 0.00001f)
+        {
+            bool horizontal = Math.Abs(direction.Y) < 0.00001f;
+            float origin = horizontal ? road.A.X : road.A.Y, delta = horizontal ? direction.X : direction.Y;
+            float position = Math.Clamp(horizontal ? point.X : point.Y,
+                Math.Min(origin, origin + delta) + 0.0001f, Math.Max(origin, origin + delta) - 0.0001f);
+            float blockStart = MathF.Floor(position / stride) * stride;
+            float a = before + (blockStart - origin) / delta * direction.Length();
+            float b = before + (blockStart + stride - origin) / delta * direction.Length();
+            from = Math.Min(a, b); to = Math.Max(a, b);
+            from = Math.Clamp(from, 0, total); to = Math.Clamp(to, 0, total);
+        }
+        var left = new List<Vector2>(); var right = new List<Vector2>();
+        float walked = 0;
+        foreach (var part in parts)
+        {
+            float length = Vector2.Distance(part.A, part.B);
+            if (walked <= to && walked + length >= from)
+            {
+                float a = Math.Clamp((from - walked) / length, 0, 1), b = Math.Clamp((to - walked) / length, 0, 1);
+                float ratio = Math.Max(stride, part.Type.WidthCells) / (part.Type.WidthCells + ShoulderWidth * 2);
+                left.Add(Vector2.Lerp(part.A + (part.LeftA - part.A) * ratio, part.B + (part.LeftB - part.B) * ratio, a));
+                left.Add(Vector2.Lerp(part.A + (part.LeftA - part.A) * ratio, part.B + (part.LeftB - part.B) * ratio, b));
+                right.Add(Vector2.Lerp(part.A + (part.RightA - part.A) * ratio, part.B + (part.RightB - part.B) * ratio, a));
+                right.Add(Vector2.Lerp(part.A + (part.RightA - part.A) * ratio, part.B + (part.RightB - part.B) * ratio, b));
+            }
+            walked += length;
+            if (walked > to) break;
+        }
+        right.Reverse();
+        return left.Concat(right).Distinct().ToArray();
+    }
+
+    public Vector2 NearestPoint(RoadPath path, Vector2 point)
+    {
+        if (!_pathSegments.TryGetValue(path, out var parts) || parts.Count == 0)
+            throw new ArgumentException("Road path must belong to this mesh layout.", nameof(path));
+        float nearest = float.PositiveInfinity;
+        var result = point;
+        foreach (var part in parts)
+        {
+            var delta = part.B - part.A;
+            float t = Math.Clamp(Vector2.Dot(point - part.A, delta) / delta.LengthSquared(), 0, 1);
+            var candidate = part.A + delta * t;
+            float distance = Vector2.DistanceSquared(point, candidate);
+            if (distance < nearest) { nearest = distance; result = candidate; }
+        }
+        return result;
+    }
+
+    public bool InCorridor(Vector2 point) => Near(point)
         .Any(segment => ContainsRibbon(segment.Corridor, point) || ContainsRibbon(segment.Road, point));
 
-    public bool InGroundCorridor(Vector2 point) => AtCell((int)MathF.Floor(point.X), (int)MathF.Floor(point.Y))
+    public bool InGroundCorridor(Vector2 point) => Near(point)
         .Any(segment => !segment.Bridge && (ContainsRibbon(segment.Corridor, point) || ContainsRibbon(segment.Road, point)));
 
     public bool InRoadInterior(Vector2 point) => RoadAt(point + new Vector2(0.001f, 0)) is not null &&
         RoadAt(point - new Vector2(0.001f, 0)) is not null &&
         RoadAt(point + new Vector2(0, 0.001f)) is not null &&
         RoadAt(point - new Vector2(0, 0.001f)) is not null;
+
+    public Vector2[] BorderBand(Segment segment, bool left, float width)
+    {
+        float corridorWidth = segment.Type.WidthCells / 2 + ShoulderWidth;
+        if (width <= 0 || width >= segment.Type.WidthCells / 2)
+            throw new ArgumentOutOfRangeException(nameof(width));
+        var offsetA = ((left ? segment.LeftA : segment.RightA) - segment.A) / corridorWidth;
+        var offsetB = ((left ? segment.LeftB : segment.RightB) - segment.B) / corridorWidth;
+        float outer = segment.Type.WidthCells / 2, inner = outer - width;
+        return [segment.A + offsetA * outer, segment.B + offsetB * outer,
+            segment.B + offsetB * inner, segment.A + offsetA * inner];
+    }
+
+    public bool TryBorderBand(Vector2 a, Vector2 b, RoadType type, float width, out Vector2[] band)
+    {
+        foreach (var segment in Near((a + b) / 2))
+        {
+            if (segment.Type != type) continue;
+            foreach (bool left in new[] { true, false })
+            {
+                var source = BorderBand(segment, left, width);
+                var delta = source[1] - source[0];
+                float length = delta.LengthSquared();
+                if (length < 0.000001f) continue;
+                float ta = Vector2.Dot(a - source[0], delta) / length;
+                float tb = Vector2.Dot(b - source[0], delta) / length;
+                if (ta < -0.0002f || ta > 1.0002f || tb < -0.0002f || tb > 1.0002f ||
+                    Vector2.DistanceSquared(a, source[0] + delta * ta) > 0.00000004f ||
+                    Vector2.DistanceSquared(b, source[0] + delta * tb) > 0.00000004f) continue;
+                band = [a, b, Vector2.Lerp(source[3], source[2], Math.Clamp(tb, 0, 1)),
+                    Vector2.Lerp(source[3], source[2], Math.Clamp(ta, 0, 1))];
+                return true;
+            }
+        }
+        band = [];
+        return false;
+    }
 
     public float HeightAt(Vector2 point)
     {
@@ -225,7 +352,7 @@ public sealed class RoadMeshLayout
     {
         float grade = HeightAt(point);
         if (grade == terrainHeight) return grade;
-        var nearby = AtCell((int)MathF.Floor(point.X), (int)MathF.Floor(point.Y));
+        var nearby = Near(point);
         if (nearby.Any(segment => ContainsRibbon(segment.Road, point) ||
             segment.Bridge && ContainsRibbon(segment.Corridor, point))) return grade;
         float distanceSquared = float.PositiveInfinity;
@@ -248,41 +375,44 @@ public sealed class RoadMeshLayout
         if (_heights.TryGetValue(point, out height)) return true;
         height = 0;
         float sum = 0, weight = 0;
-        var nearby = AtCell(Math.Clamp((int)MathF.Floor(point.X), 0, _map.Width - 1),
-            Math.Clamp((int)MathF.Floor(point.Y), 0, _map.Height - 1));
+        var nearby = Near(point);
         bool bridge = nearby.Any(segment => segment.Bridge && ContainsRibbon(segment.Corridor, point));
-        if (nearby.Count > 0)
-        {
-            float baseline = nearby.First(segment => !bridge || segment.Bridge).HeightA;
-            bool uniform = true;
-            foreach (var segment in nearby)
-            {
-                if (bridge && !segment.Bridge) continue;
-                if (segment.HeightA != baseline || segment.HeightB != baseline) { uniform = false; break; }
-            }
-            if (uniform)
-            {
-                height = baseline + SurfaceLift;
-                if (_heights.Count > 200_000) _heights.Clear();
-                _heights[point] = height;
-                return true;
-            }
-        }
+        float? baseline = null;
+        bool uniform = true;
         foreach (var segment in nearby)
         {
             if (bridge && !segment.Bridge) continue;
             var delta = segment.B - segment.A;
             float t = Math.Clamp(Vector2.Dot(point - segment.A, delta) / delta.LengthSquared(), 0, 1);
             float distance = Vector2.DistanceSquared(point, segment.A + delta * t);
-            if (distance > 1) continue;
-            float influence = (1 - distance) * (1 - distance) / (0.04f + distance);
+            float reach = GradeReach(segment.Type);
+            float normalizedDistance = distance / (reach * reach);
+            if (normalizedDistance >= 1) continue;
+            baseline ??= segment.HeightA;
+            uniform &= segment.HeightA == baseline && segment.HeightB == baseline;
+            float influence = (1 - normalizedDistance) * (1 - normalizedDistance) / (0.04f + distance);
             sum += (segment.HeightA + (segment.HeightB - segment.HeightA) * t) * influence;
             weight += influence;
         }
-        if (weight == 0) return false;
-        height = sum / weight + SurfaceLift;
+        if (weight == 0 || baseline is not { } level) return false;
+        height = (uniform ? level : sum / weight) + SurfaceLift;
         if (_heights.Count > 200_000) _heights.Clear();
         _heights[point] = height;
+        return true;
+    }
+
+    public static bool OverlapsCell(IReadOnlyList<Vector2> polygon, int x, int y)
+    {
+        if (polygon.Max(p => p.X) <= x || polygon.Min(p => p.X) >= x + 1 ||
+            polygon.Max(p => p.Y) <= y || polygon.Min(p => p.Y) >= y + 1) return false;
+        Vector2[] corners = [new(x, y), new(x + 1, y), new(x + 1, y + 1), new(x, y + 1)];
+        for (int i = 0; i < polygon.Count; i++)
+        {
+            var axis = Perpendicular(polygon[(i + 1) % polygon.Count] - polygon[i]);
+            float min = polygon.Min(p => Vector2.Dot(p, axis)), max = polygon.Max(p => Vector2.Dot(p, axis));
+            if (corners.Max(p => Vector2.Dot(p, axis)) <= min ||
+                corners.Min(p => Vector2.Dot(p, axis)) >= max) return false;
+        }
         return true;
     }
 
@@ -342,6 +472,21 @@ public sealed class RoadMeshLayout
             clearance[i + 1] = (1 - t) * (1 - t) * start + 2 * (1 - t) * t * corner + t * t * end;
         }
         return clearance;
+    }
+
+    public static Vector2[] UnsupportedTerraceTip(Vector2 roadEnd, Vector2 corner, Vector2 boundaryEnd)
+    {
+        var road = roadEnd - corner;
+        var boundary = boundaryEnd - corner;
+        if (road.LengthSquared() < 0.000001f || boundary.LengthSquared() < 0.000001f) return [];
+        var direction = Vector2.Normalize(road);
+        if (Vector2.Dot(direction, Vector2.Normalize(boundary)) <= 0.5f) return [];
+        float height = Math.Abs(direction.X * boundary.Y - direction.Y * boundary.X);
+        if (height < 0.000001f) return [];
+        float t = Math.Min(1, MinimumTerraceWidth / height);
+        float along = Vector2.Dot(boundary * t, direction);
+        if (along <= 0 || along > road.Length()) return [];
+        return [corner, corner + boundary * t, corner + direction * along];
     }
 
     private static Vector2 Perpendicular(Vector2 direction) => new(-direction.Y, direction.X);

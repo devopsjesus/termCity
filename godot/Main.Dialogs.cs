@@ -31,6 +31,7 @@ public partial class Main
     private ScrollContainer? _choiceHelpScroll;
 
     private Label? _choiceHelpText;
+    private VBoxContainer? _choiceHelpPreviews;
 
     private float _modalContentWidth;
 
@@ -75,7 +76,10 @@ public partial class Main
     private void UpdateModal()
     {
         _linePreview.Visible = Session.RoadToolActive && Session.Prompt is null;
-        _lineSummary.Text = Session.Preview?.Summary + "\nArrows or drag set the endpoint. Enter confirms; Esc cancels.";
+        bool nextStroke = Session.Preview is { RoadStroke.Count: 1, Quote.Cells: 0, Road: { } type } preview &&
+            Session.Game.Map.RoadTypeAt(preview.RoadStroke[0].X, preview.RoadStroke[0].Y)?.Rank >= type.Rank;
+        _lineSummary.Text = (nextStroke ? Session.Preview!.Road!.Name + ": ready for the next stroke." : Session.Preview?.Summary) +
+            "\nClick an endpoint to build now. Drag to extend; release or Enter builds. Esc exits.";
         object? state = Session.Prompt ?? (Session.RoadToolActive || Session.FixedPlacementToolActive ? null : (object?)Session.Preview);
         if (ReferenceEquals(state, _shownModal))
         {
@@ -89,6 +93,7 @@ public partial class Main
         _modalColumns = null;
         _choiceHelpScroll = null;
         _choiceHelpText = null;
+        _choiceHelpPreviews = null;
         _promptButtons.Clear();
         _dialogControls.Clear();
         _promptIndex = selectedIndex;
@@ -124,6 +129,8 @@ public partial class Main
         _modalContentWidth = labels.Max(TextWidth) + characterWidth * 10 + ButtonTextInset() * 2;
         bool reportDialog = Session.Prompt?.Title == ReportDialogTitle;
         bool milestoneDialog = Session.Prompt?.Title == TermCity.Core.Rendering.MilestoneReport.Title;
+        bool milestonesReport = reportDialog && Session.Prompt is { Tabs: { } reportTabs } reportPrompt &&
+            reportTabs[reportPrompt.ActiveTab].Title == TermCity.Core.Rendering.MilestoneReport.ReportTabTitle;
         bool buildingDialog = Session.Prompt?.Title == TermCity.Core.Rendering.BuildingReport.Title;
         bool tableDialog = reportDialog || milestoneDialog || buildingDialog;
         if (reportDialog) _modalContentWidth = Math.Max(_modalContentWidth, 720);
@@ -181,6 +188,9 @@ public partial class Main
             CenterModal();
         };
         helpContent.AddChild(closeHelp);
+        _choiceHelpPreviews = new VBoxContainer { Name = "ChoiceHelpPreviewSlot",
+            SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        helpContent.AddChild(_choiceHelpPreviews);
         _choiceHelpText = new Label
         {
             Name = "ChoiceHelpText", AutowrapMode = TextServer.AutowrapMode.Arbitrary,
@@ -225,7 +235,9 @@ public partial class Main
                 : ReportTables.Build(Session);
             foreach (var section in sections)
             {
-                if (milestoneDialog && sectionIndex == 1)
+                var buildingArt = milestoneDialog || milestonesReport ? Session.Game.Map.Content.Buildings.FirstOrDefault(building =>
+                    building.PlayerPlaceable && building.Name.ToUpperInvariant() == section.Title) : null;
+                if (milestoneDialog && sectionIndex == 1 && buildingArt is not null)
                 {
                     var servicesHeader = new Label { Name = "NewServicesHeader", Text = "New Services",
                         Modulate = new Color("#70d7ff"), HorizontalAlignment = HorizontalAlignment.Center };
@@ -233,10 +245,10 @@ public partial class Main
                     content.AddChild(PopupFrame(servicesHeader));
                 }
                 var heading = new Label { Text = section.Title,
-                    HorizontalAlignment = milestoneDialog && sectionIndex == 0
+                    HorizontalAlignment = (milestoneDialog || milestonesReport) && sectionIndex == 0
                         ? HorizontalAlignment.Center : HorizontalAlignment.Left,
-                    Modulate = new Color(milestoneDialog && sectionIndex == 0 ? "#88ee99" : "#70b7ff") };
-                heading.AddThemeFontSizeOverride("font_size", milestoneDialog && sectionIndex == 0 ? 24 : 18);
+                    Modulate = new Color((milestoneDialog || milestonesReport) && sectionIndex == 0 ? "#88ee99" : "#70b7ff") };
+                heading.AddThemeFontSizeOverride("font_size", (milestoneDialog || milestonesReport) && sectionIndex == 0 ? 24 : 18);
                 var sectionHeader = PopupFrame(heading);
                 sectionHeader.Name = $"ReportSectionHeader{sectionIndex}";
                 content.AddChild(sectionHeader);
@@ -261,28 +273,19 @@ public partial class Main
                         cell.AddChild(label);
                         reportTable.AddChild(cell);
                     }
-                var buildingArt = milestoneDialog ? Session.Game.Map.Content.Buildings.FirstOrDefault(building =>
-                    building.PlayerPlaceable && building.Name.ToUpperInvariant() == section.Title) : null;
                 if (buildingArt is not null)
                 {
                     var buildingSection = new HBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
                     buildingSection.AddThemeConstantOverride("separation", 12);
                     buildingSection.AddChild(reportTable);
-                    var artwork = new Label { Name = "MilestoneBuildingArt",
-                        Text = buildingArt.FootprintArt.Count > 0
-                            ? string.Join("\n", buildingArt.FootprintArt) : buildingArt.Glyphs[0],
-                        HorizontalAlignment = HorizontalAlignment.Center,
-                        VerticalAlignment = VerticalAlignment.Center,
-                        CustomMinimumSize = new Vector2(80, 0),
-                        TooltipText = buildingArt.Name, MouseFilter = MouseFilterEnum.Ignore };
-                    artwork.AddThemeFontSizeOverride("font_size", buildingArt.FootprintArt.Count > 0 ? 20 : 32);
-                    artwork.AddThemeColorOverride("font_color", ToColor(buildingArt.Foreground));
+                    var artwork = CreateModelPreview("MilestoneBuildingPreview", building: buildingArt);
+                    artwork.CustomMinimumSize = new Vector2(80, 72);
                     buildingSection.AddChild(ConstructionTableCell(artwork));
                     buildingSection.GetChild<Control>(1).SizeFlagsHorizontal = SizeFlags.Fill;
                     content.AddChild(buildingSection);
                 }
                 else content.AddChild(reportTable);
-                if (reportDialog && sectionIndex == 1 && Session.Prompt?.ActiveTab == 0)
+                if (milestonesReport && sectionIndex == 1)
                 {
                     var size = TermCity.Core.Simulation.CityProgression.SizeProgress(Session.Game);
                     var progress = new ProgressBar { Name = "CitySizeProgress", MinValue = 0, MaxValue = 1,
@@ -370,9 +373,6 @@ public partial class Main
                         button.AddThemeColorOverride(colorState, color);
                 }
                 _dialogControls.Add(button);
-                if (milestoneDialog)
-                    button.Disabled = prompt.Choices[i].Label == "Previous" && prompt.ActiveTab == 0 ||
-                        prompt.Choices[i].Label == "Next" && prompt.ActiveTab == prompt.Tabs!.Count - 1;
                 if (prompt.Title == GameDialogTitle)
                 {
                     foreach (string colorState in new[] { "font_color", "font_hover_color", "font_pressed_color",
@@ -508,6 +508,15 @@ public partial class Main
         if (Session.Prompt?.HelpIndex is { } helpIndex) ShowChoiceHelp(helpIndex, focusChoice: false);
         CenterModal();
         Callable.From(CenterModal).CallDeferred();
+        if (milestonesReport)
+        {
+            var shownPrompt = Session.Prompt;
+            Callable.From(() =>
+            {
+                if (GodotObject.IsInstanceValid(scroll) && ReferenceEquals(Session.Prompt, shownPrompt))
+                    scroll.ScrollVertical = 0;
+            }).CallDeferred();
+        }
     }
 
     private float ButtonTextInset() => GetThemeStylebox("normal", "Button")?.GetMargin(Side.Left) ?? 0;
@@ -673,7 +682,29 @@ public partial class Main
             _promptButtons[index].GrabFocus();
         }
         var help = prompt.ActiveHelp!;
-        _choiceHelpText.Text = $"{help.Icons}\n\n{prompt.Choices[index].Label}\n\n{help.Description}\n\n{help.Details}";
+        string choiceName = prompt.Choices[index].Label;
+        var building = Session.Game.Map.Content.Buildings.FirstOrDefault(type =>
+            type.Name == choiceName || type.CatalogName == choiceName);
+        var road = Session.Game.Map.Content.Roads.FirstOrDefault(type => type.Name == choiceName);
+        var template = choiceName == TermCity.Core.Roads.RoadTemplate.TrafficCircle.Name
+            ? TermCity.Core.Roads.RoadTemplate.TrafficCircle : null;
+        foreach (var child in _choiceHelpPreviews!.GetChildren())
+        {
+            _choiceHelpPreviews.RemoveChild(child);
+            child.QueueFree();
+        }
+        bool modelHelp = building is not null || road is not null || template is not null;
+        if (modelHelp)
+        {
+            var artwork = CreateModelPreview("ChoiceHelpModelPreview", building, road, template);
+            artwork.CustomMinimumSize = new Vector2(0, 144);
+            artwork.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            _choiceHelpPreviews.AddChild(artwork);
+        }
+        string details = modelHelp ? help.Details.Replace(
+            "Roads appear as smooth curves; these glyphs show connections on overlays and the minimap.\n\n",
+            "", StringComparison.Ordinal) : help.Details;
+        _choiceHelpText.Text = $"{(modelHelp ? "" : help.Icons + "\n\n")}{choiceName}\n\n{help.Description}\n\n{details}";
         _choiceHelpScroll.Visible = true;
         _choiceHelpScroll.ScrollVertical = 0;
         CenterModal();

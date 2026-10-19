@@ -151,7 +151,8 @@ public class RoadCurveTests
             for (int x = 5; x < 25; x++) blank.Map.SetRoad(x, 10, type);
             var path = Assert.Single(Paths(blank));
             Assert.Equal(road.Name, path.Type.Name);
-            Assert.All(path.Ys, y => Assert.Equal(CentreY(10), y, 6));
+            double centre = CentreY(10) + (type.WidthCells % 2 == 0 ? H / 2.0 : 0);
+            Assert.All(path.Ys, y => Assert.Equal(centre, y, 6));
         }
     }
 
@@ -167,7 +168,10 @@ public class RoadCurveTests
         var a = paths.Single(p => p.Type == track);
         var b = paths.Single(p => p.Type == king);
         Assert.True(a.Xs.Max() >= b.Xs.Min(), "the two stretches should overlap, not leave a gap");
-        Assert.All(a.Ys.Concat(b.Ys), y => Assert.Equal(CentreY(10), y, 6));
+        Assert.All(a.Ys, y => Assert.Equal(CentreY(10), y, 6));
+        Assert.All(b.Ys, y => Assert.Equal(CentreY(10) + H / 2.0, y, 6));
+        var layout = new RoadMeshLayout(game.Map, paths);
+        Assert.NotNull(layout.RoadAt(new(15, 10.5f)));
     }
 
     [Fact]
@@ -201,7 +205,7 @@ public class RoadCurveTests
         for (int x = 5; x < 25; x++) game.Map.SetRoad(x, 10, king);
         var path = Assert.Single(Paths(game));
         Assert.False(path.Closed);
-        Assert.All(path.Ys, y => Assert.Equal(CentreY(10), y, 6));
+        Assert.All(path.Ys, y => Assert.Equal(CentreY(10) + H / 2.0, y, 6));
         Assert.Equal(5 * W, path.Xs.Min(), 6);
         Assert.Equal(25 * W, path.Xs.Max(), 6);
     }
@@ -230,6 +234,53 @@ public class RoadCurveTests
         }
 
         Assert.True(worst < 3, $"the diagonal wanders {worst:0.0}px off a straight line");
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void RecurringShallowStaircaseDoesNotPinAnUnusuallyLongInteriorTread(int rotation)
+    {
+        var map = new GameMap(128, 128, new GameContent());
+        var highway = map.Content.Roads.Get(DefaultRoads.KingsRoadName);
+        Pos Rotate(Pos cell)
+        {
+            for (int turn = 0; turn < rotation; turn++) cell = new(127 - cell.Y, cell.X);
+            return cell;
+        }
+        int x = 5, y = 10;
+        foreach (int run in new[] { 13, 30, 12, 14 })
+        {
+            for (int i = 0; i < run; i++)
+            {
+                var cell = Rotate(new(x++, y));
+                map.SetRoad(cell.X, cell.Y, highway);
+            }
+            x--;
+            y++;
+        }
+        var path = Assert.Single(RoadCurves.Extract(map, (_, _) => true));
+        double dx = path.Xs[^1] - path.Xs[0], dy = path.Ys[^1] - path.Ys[0];
+        double length = Math.Sqrt(dx * dx + dy * dy);
+        double worst = Enumerable.Range(0, path.Count).Max(i =>
+            Math.Abs(dy * (path.Xs[i] - path.Xs[0]) - dx * (path.Ys[i] - path.Ys[0])) / length);
+        Assert.True(worst < 3, $"An interior staircase tread created a grid knee {worst:0.0}px off the diagonal.");
+    }
+
+    [Fact]
+    public void OpposingShortStepsDoNotEraseTheSustainedStraightLegBetweenThem()
+    {
+        var map = new GameMap(80, 40, new GameContent());
+        var highway = map.Content.Roads.Get(DefaultRoads.KingsRoadName);
+        Pos[] corners = [new(5, 10), new(17, 10), new(17, 11), new(46, 11), new(46, 10), new(57, 10)];
+        foreach (var (a, b) in corners.Zip(corners.Skip(1)))
+            foreach (var cell in CellLines.Between(a, b)) map.SetRoad(cell.X, cell.Y, highway);
+        var path = Assert.Single(RoadCurves.Extract(map, (_, _) => true));
+        var middle = Enumerable.Range(0, path.Count).Where(i => path.Xs[i] >= 25 * W && path.Xs[i] <= 40 * W);
+        Assert.NotEmpty(middle);
+        Assert.All(middle, i => Assert.Equal(12 * H, path.Ys[i], 6));
     }
 
     [Fact]
@@ -291,10 +342,9 @@ public class RoadCurveTests
             Assert.True(turn < 0.45, $"sharp turn of {turn:F2} rad at sample {i}");
         }
 
-        // The corner cell's centre is cut off, not visited.
-        double nearest = Enumerable.Range(0, path.Count).Min(i => Math.Abs(path.Xs[i] - CentreX(20)) + Math.Abs(path.Ys[i] - CentreY(10)));
-        Assert.True(nearest > 4);
-        Assert.True(nearest < W + H);
+        double nearest = Enumerable.Range(0, path.Count).Min(i => Math.Sqrt(
+            Math.Pow(path.Xs[i] / W - 20, 2) + Math.Pow(path.Ys[i] / H - 11, 2)));
+        Assert.InRange(nearest, 2.4, 2.6);
     }
 
     [Fact]
@@ -315,8 +365,8 @@ public class RoadCurveTests
         for (int y = 5; y <= 15; y++) game.Map.SetRoad(10, y, king);
         var paths = Paths(game);
         Assert.Equal(2, paths.Count);
-        Assert.Contains(paths, p => p.Ys.All(y => Math.Abs(y - CentreY(10)) < 1e-6));
-        Assert.Contains(paths, p => p.Xs.All(x => Math.Abs(x - CentreX(10)) < 1e-6));
+        Assert.Contains(paths, p => p.Ys.All(y => Math.Abs(y - CentreY(10) - H / 2.0) < 1e-6));
+        Assert.Contains(paths, p => p.Xs.All(x => Math.Abs(x - CentreX(10) - W / 2.0) < 1e-6));
     }
 
     [Fact]
@@ -327,9 +377,9 @@ public class RoadCurveTests
         for (int y = 11; y <= 18; y++) game.Map.SetRoad(12, y, king);
         var paths = Paths(game);
         Assert.Equal(2, paths.Count);
-        var stem = paths.Single(p => p.Xs.All(x => Math.Abs(x - CentreX(12)) < 1e-6));
+        var stem = paths.Single(p => p.Xs.All(x => Math.Abs(x - CentreX(12) - W / 2.0) < 1e-6));
         double top = stem.Ys.Min();
-        Assert.Equal(CentreY(10), top, 6);
+        Assert.Equal(CentreY(10) + H / 2.0, top, 6);
     }
 
     [Theory(Skip = LegacyPaintedRoad)]

@@ -57,28 +57,24 @@ public class DiagonalHighwayTests
     [Fact]
     public void GeneratedHighwaysRunAtAnglesAndEveryRoadStillReachesTheEdge()
     {
-        int stairs = 0;
+        int angledSegments = 0;
         for (int seed = 1; seed <= 30; seed++)
         {
             var game = CityGame.New(new GameConfig { Seed = seed });
             var map = game.Map;
-            foreach (int i in map.RoadCells)
+            foreach (var path in RoadCurves.Extract(map, (_, _) => true).Where(p =>
+                p.Type.Name == DefaultRoads.KingsRoadName))
             {
-                int x = i % map.Width, y = i / map.Width;
-
-                // A stair step: a down-right corner followed by an up-right corner just below it, or the mirror image.
-                string here = CellRenderer.Render(game, x, y).Glyph;
-                string next = CellRenderer.Render(game, x + 1, y).Glyph;
-                if ((here == "╚" && next == "╗") || (here == "╔" && next == "╝"))
-                {
-                    stairs++;
-                }
+                for (int i = 1; i < path.Count; i++)
+                    if (Math.Abs(path.Xs[i] - path.Xs[i - 1]) > 0.1 &&
+                        Math.Abs(path.Ys[i] - path.Ys[i - 1]) > 0.1)
+                        angledSegments++;
             }
 
             Assert.Equal(map.RoadCount, game.Network.ConnectedRoadCount);
         }
 
-        Assert.True(stairs > 30, $"only {stairs} stair steps: highways are not running at angles");
+        Assert.True(angledSegments > 30, $"Only {angledSegments} visible angled segments: highways are not flowing through the terrain.");
     }
 
     [Theory]
@@ -91,7 +87,8 @@ public class DiagonalHighwayTests
         for (int seed = 1; seed <= 30; seed++)
         {
             var game = CityGame.New(new GameConfig { Seed = seed, MapWidth = width, MapHeight = height });
-            foreach (var path in RoadCurves.Extract(game.Map, (x, y) => true))
+            foreach (var path in RoadCurves.Extract(game.Map, (x, y) => true)
+                .Where(path => path.Type.Name == DefaultRoads.KingsRoadName))
             {
                 for (int i = 2; i < path.Count - 1; i++)
                 {
@@ -110,12 +107,15 @@ public class DiagonalHighwayTests
         Assert.True(turns > 0, "no curves were found, so the check proved nothing");
     }
 
-    [Fact]
-    public void BridgesAreAlwaysStraight()
+    [Theory]
+    [InlineData(160, 96)]
+    [InlineData(320, 192)]
+    [InlineData(640, 384)]
+    public void BridgesAreAlwaysStraight(int width, int height)
     {
         for (int seed = 1; seed <= 30; seed++)
         {
-            var map = CityGame.New(new GameConfig { Seed = seed }).Map;
+            var map = CityGame.New(new GameConfig { Seed = seed, MapWidth = width, MapHeight = height }).Map;
             foreach (int i in map.RoadCells)
             {
                 int x = i % map.Width, y = i / map.Width;
@@ -123,6 +123,28 @@ public class DiagonalHighwayTests
                 {
                     Assert.Contains(CellRenderer.RoadMask(map, x, y), new[] { 1, 4, 5, 2, 8, 10 });
                 }
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(160, 96)]
+    [InlineData(320, 192)]
+    [InlineData(640, 384)]
+    public void GeneratedHighwaysNeverJoinSustainedPerpendicularLegs(int width, int height)
+    {
+        foreach (int seed in Enumerable.Range(1, 12).Append(42).Append(137))
+        {
+            var map = MapGenerator.Generate(width, height, seed, new GameContent());
+            bool Highway(int x, int y) => map.InBounds(x, y) &&
+                map.RoadTypeAt(x, y)?.Name == DefaultRoads.KingsRoadName;
+            foreach (int cell in map.RoadCells)
+            {
+                int x = cell % width, y = cell / width;
+                var arms = RoadNetwork.Neighbors.Where(d => Highway(x + d.Dx, y + d.Dy)).ToArray();
+                if (arms.Length != 2 || arms[0].Dx * arms[1].Dx + arms[0].Dy * arms[1].Dy != 0) continue;
+                bool corner = arms.All(d => Enumerable.Range(1, 3).All(step => Highway(x + d.Dx * step, y + d.Dy * step)));
+                Assert.False(corner, $"seed {seed}, {width}x{height}: right-angle highway legs at {x},{y}.");
             }
         }
     }

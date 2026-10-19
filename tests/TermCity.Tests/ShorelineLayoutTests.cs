@@ -35,7 +35,7 @@ public class ShorelineLayoutTests
         map.SetTerrain(0, 0, map.Content.Terrains.Get("Water"));
         map.SetTerrain(1, 0, map.Content.Terrains.Get("Hill"));
         Assert.False(ShorelineLayout.BankCell(map, 0, 0));
-        Assert.True(ShorelineLayout.BankCell(map, 1, 0));
+        Assert.False(ShorelineLayout.BankCell(map, 1, 0));
         Assert.True(ShorelineLayout.BankCell(map, 0, 1));
         Assert.False(ShorelineLayout.BankCell(map, 1, 1));
         Assert.False(ShorelineLayout.BankCell(map, 2, 0));
@@ -43,6 +43,20 @@ public class ShorelineLayoutTests
         Assert.False(ShorelineLayout.BankCell(map, 0, -1));
         Assert.False(ShorelineLayout.BankCell(map, map.Width, 0));
         Assert.False(ShorelineLayout.BankCell(map, 0, map.Height));
+    }
+
+    [Fact]
+    public void RiverBanksDoNotRecolorHilltops()
+    {
+        var map = new GameMap(24, 24, new GameContent());
+        for (int row = 0; row < map.Height; row++)
+        {
+            map.SetTerrain(12, row, map.Content.Terrains.Get("Water"));
+            map.SetRiverWater(12, row, true);
+            map.SetTerrain(11, row, map.Content.Terrains.Get("Hill"));
+            Assert.False(ShorelineLayout.BankCell(map, 11, row));
+            Assert.True(ShorelineLayout.BankCell(map, 13, row));
+        }
     }
 
     [Fact]

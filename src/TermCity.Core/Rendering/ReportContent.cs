@@ -26,7 +26,6 @@ public static class ReportContent
         {
             Row("City", game.CityName), Row("Population", $"{stats.Population:N0}"),
             Row("Current size", size.CurrentName),
-            Row("Next size", size.Target is { } target ? $"{size.NextName}: {target:N0} people" : "Largest city size reached."),
             Row("Date", MedievalCalendar.DateLabel(game.Year, game.WeekOfYear, game.Config.WeeksPerYear).Trim()),
             Row("Season", Seasons.Name(game.Season)), Row("Seed", game.Config.Seed.ToString()),
             Row("Map dimensions", $"{game.Map.Width} x {game.Map.Height}"),
@@ -186,6 +185,7 @@ public static class ReportContent
             new("Services", services), new("Growth", growth),
             new("Food & Seasons", food),
             new("Events", [new("RECENT EVENTS", events.Length == 0 ? [Row("Status", "No events recorded.", None)] : events)]),
+            MilestoneReport.Browse(game),
         ];
     }
 

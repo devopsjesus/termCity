@@ -7,13 +7,12 @@ namespace TermCity.Core.Rendering;
 public static class MilestoneReport
 {
     public const string Title = "Your City Grew!";
+    public const string ReportTabTitle = "Milestones";
+    private static readonly Rgb Label = Rgb.Hex(0x70d7ff), Grey = Rgb.Hex(0x9fb4c7);
 
     public static ReportPage Build(CityGame game, int index)
     {
         var milestone = CityProgression.Milestones[index];
-        var label = Rgb.Hex(0x70d7ff);
-        var grey = Rgb.Hex(0x9fb4c7);
-        ReportCell[] Row(string name, string value) => [new(name, label), new(value, grey)];
         var groups = new List<ReportGroup>
         {
             new(milestone.Name.ToUpperInvariant(),
@@ -49,8 +48,26 @@ public static class MilestoneReport
             groups.Add(new("REDEVELOPMENT", [Row("Unlocks", milestone.Population == 500
                 ? "Burgage-house redevelopment with a lord's seat and good land value."
                 : "Tenement redevelopment with a keep, room and good land value.")]));
-        if (groups.Count == 1)
-            groups.Add(new("UNLOCKED BUILDINGS", [Row("Availability", "All earlier buildings remain available.")]));
         return new(milestone.Name, groups);
     }
+
+    public static ReportPage Browse(CityGame game)
+    {
+        var size = CityProgression.SizeProgress(game);
+        int current = CityProgression.Milestones.ToList().FindLastIndex(m => m.Population <= game.HighestMilestone);
+        var groups = current >= 0 ? Build(game, current).Groups.ToList() :
+            new List<ReportGroup> { new("SETTLEMENT", [Row("Status", "Current")]) };
+        var rows = groups[0].Rows.Select(row => row[0].Text == "Status" ? Row("Status", "Current") : row).ToList();
+        rows.Add(Row("Population now", $"{size.Population:N0} souls"));
+        rows.Add(Row("Next milestone", size.Target is { } target
+            ? $"{size.NextName}: {target:N0} people" : "Largest city size reached."));
+        groups[0] = new(groups[0].Title, rows);
+        groups.Add(new("OTHER MILESTONES",
+            [Row("Browse", "Scroll through reached and upcoming milestones and the buildings/services each unlocks.")]));
+        for (int index = 0; index < CityProgression.Milestones.Count; index++)
+            if (index != current) groups.AddRange(Build(game, index).Groups);
+        return new(ReportTabTitle, groups);
+    }
+
+    private static ReportCell[] Row(string name, string value) => [new(name, Label), new(value, Grey)];
 }

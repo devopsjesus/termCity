@@ -46,6 +46,9 @@ public sealed class RoadNetwork
 
     public bool RoadOverlapsCell(int index) => _geometry.OverlapsCell(index % _width, index / _width);
     public RoadPath? RoadAtCellCenter(int x, int y) => _geometry.RoadAtCellCenter(x, y);
+    public RoadMeshLayout.Segment? RoadAt(System.Numerics.Vector2 point) => _geometry.RoadAt(point);
+    internal bool HasParallelRoad(System.Numerics.Vector2 point, System.Numerics.Vector2 direction, float width) =>
+        _geometry.HasParallelRoad(point, direction, width);
     public bool IsBridgeAtCellCenter(int x, int y) => _geometry.IsBridgeAtCellCenter(x, y);
 
     public static RoadNetwork Compute(GameMap map, int serviceReach)

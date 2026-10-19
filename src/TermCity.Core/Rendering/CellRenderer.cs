@@ -54,10 +54,12 @@ public static class CellRenderer
 
         }
 
-        if (building is null && map.PathWearAt(x, y) > 0 && !map.HasRoad(x, y))
+        if (building is null && map.PathWearAt(x, y) > 0 && !map.HasRoad(x, y) &&
+            !map.IsHouseYardCell(map.Index(x, y)) && !TravelRoutes.IsFootpathBridgeCell(map, map.Index(x, y)) &&
+            !TravelRoutes.IsFootpathHillCell(map, map.Index(x, y)))
         {
             glyph = FootpathLayout.Glyph(FootpathLayout.Connections(map, x, y));
-            fg = Rgb.Hex(map.PathWearAt(x, y) >= 3 ? 0xb19564 : 0x81735c);
+            fg = Rgb.Hex(FootpathArtwork.ColorForWear(map.PathWearAt(x, y)));
         }
 
         if (vectorRoads && map.HasRoad(x, y))

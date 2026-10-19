@@ -1,5 +1,6 @@
 using TermCity.Core.Buildings;
 using System.Text;
+using TermCity.Core.Rendering;
 using TermCity.Core.Roads;
 using TermCity.Core.Terrain;
 using TermCity.Core.Util;
@@ -232,27 +233,15 @@ public sealed class CityGame
     public double ElapsedDays => (long)Week * Config.DaysPerWeek + Day + Math.Clamp(_dayProgress / SecondsPerDay, 0, 1);
 
     public int SupportedCells(ZoneType zone)
-    {
-        if (zone == ZoneType.Residential)
-        {
-            return int.MaxValue;
-        }
+        => Demand.SupportedBuildings(Stats, Config, zone);
 
-        // Dense towers support as many shops as the same people spread over small houses would.
-        int homes = Demand.SupportingHomes(Stats, Config);
+    private double WeeklyArrivalRate(ZoneType zone) => Demand.ExpectedArrivals(Stats, Config, zone,
+        Config.FullRules ? Indicators.Attraction : 1,
+        Config.FullRules ? Indicators.BusinessClimate : 1, Seasons.Travel(Season));
 
-        if (homes < Config.MinResidentialCells)
-        {
-            return 0;
-        }
-
-        return zone switch
-        {
-            ZoneType.Commercial => CeilDiv(homes, Config.ResidentialPerCommercial),
-            ZoneType.Industrial => CeilDiv(homes, Config.ResidentialPerIndustrial),
-            _ => 0,
-        };
-    }
+    public double ExpectedGrowthArrivals(ZoneType zone) => zone == ZoneType.Residential
+        ? WeeklyArrivalRate(zone)
+        : Math.Min(WeeklyArrivalRate(zone), Math.Max(0, SupportedCells(zone) - Stats.For(zone).Occupied));
 
     /// <summary>Fraction (0-1) of the current week that has elapsed.</summary>
     public double WeekProgress => Math.Clamp((Day + Math.Clamp(_dayProgress / SecondsPerDay, 0, 1)) / Config.DaysPerWeek, 0, 1);
@@ -294,7 +283,9 @@ public sealed class CityGame
         }
     }
 
-    public Demand Demand => Demand.Compute(Stats, Config);
+    public Demand Demand => Demand.Compute(Stats, Config,
+        Config.FullRules ? Indicators.Attraction : 1,
+        Config.FullRules ? Indicators.BusinessClimate : 1, Seasons.Travel(Season));
 
     public Budget Budget { get; } = new();
 
@@ -694,27 +685,11 @@ public sealed class CityGame
     /// <summary>Decides how many cells may fill this week, from the size of the city as the week begins.</summary>
     private void PlanWeek()
     {
-        if (Config.FullRules)
-        {
-            var ind = Indicators;
-            int effective = Math.Max(Stats.Residential.Filled, Stats.Population / 5);
-            double families = Config.MaxNewResidentialPerWeek + effective * Config.MigrationRatePerWeek;
-            _planHomes = StochasticRound(families * ind.Attraction * Seasons.Travel(Season));
-            int allowedC = SupportedCells(ZoneType.Commercial);
-            int allowedI = SupportedCells(ZoneType.Industrial);
-            _planShops = StochasticRound(WeeklyCap(Config.MaxNewCommercialPerWeek, allowedC) * ind.BusinessClimate);
-            _planFactories = StochasticRound(WeeklyCap(Config.MaxNewIndustrialPerWeek, allowedI) * ind.BusinessClimate);
-            _planned = true;
-            return;
-        }
-
-        int filledR = Stats.Residential.Occupied;
-        int allowedCells = SupportedCells(ZoneType.Commercial);
-        int allowedInd = SupportedCells(ZoneType.Industrial);
-
-        _planHomes = WeeklyCap(Config.MaxNewResidentialPerWeek, filledR);
-        _planShops = WeeklyCap(Config.MaxNewCommercialPerWeek, allowedCells);
-        _planFactories = WeeklyCap(Config.MaxNewIndustrialPerWeek, allowedInd);
+        int Planned(ZoneType zone) => Config.FullRules
+            ? StochasticRound(WeeklyArrivalRate(zone)) : (int)WeeklyArrivalRate(zone);
+        _planHomes = Planned(ZoneType.Residential);
+        _planShops = Planned(ZoneType.Commercial);
+        _planFactories = Planned(ZoneType.Industrial);
         _planned = true;
     }
 
@@ -747,31 +722,38 @@ public sealed class CityGame
         }
 
         vacancies.Sort();
+        var roadRoutes = Map.RoadCount > 0 && vacancies.Count > 0 ? TravelRoutes.NearestRoad(Map) : null;
+        var pools = SettlementPools(vacancies, roadRoutes is { } routes
+            ? cell => TravelRoutes.RoadDistance(Map, Map.BuildingFootprintAt(cell % Map.Width, cell / Map.Width), routes)
+            : null);
         int moved = 0;
-        while (moved < families && vacancies.Count > 0)
+        foreach (var pool in pools)
         {
-            int a = Rng.Next(vacancies.Count), b = Rng.Next(vacancies.Count);
-            int pick = CityAnalysis.LandValue(this, vacancies[a]) >= CityAnalysis.LandValue(this, vacancies[b]) ? a : b;
-            int cell = vacancies[pick];
-            vacancies[pick] = vacancies[^1];
-            vacancies.RemoveAt(vacancies.Count - 1);
-
-            var home = Map.HouseholdLayer[cell];
-            int room = Map.Content.Buildings[Map.BuildingLayer[cell]].Capacity - home.Total;
-            var family = Household.Migrant(Rng);
-            if (family.Total > room)
+            while (moved < families && pool.Count > 0)
             {
-                family = family.Scaled((double)room / family.Total);
-            }
+                int a = Rng.Next(pool.Count), b = Rng.Next(pool.Count);
+                int pick = CityAnalysis.LandValue(this, pool[a]) >= CityAnalysis.LandValue(this, pool[b]) ? a : b;
+                int cell = pool[pick];
+                pool[pick] = pool[^1];
+                pool.RemoveAt(pool.Count - 1);
 
-            if (family.IsEmpty)
-            {
-                continue;
-            }
+                var home = Map.HouseholdLayer[cell];
+                int room = Map.Content.Buildings[Map.BuildingLayer[cell]].Capacity - home.Total;
+                var family = Household.Migrant(Rng);
+                if (family.Total > room)
+                {
+                    family = family.Scaled((double)room / family.Total);
+                }
 
-            Map.HouseholdLayer[cell] = home.Plus(family);
-            Tally.MovedIn += family.Total;
-            moved++;
+                if (family.IsEmpty)
+                {
+                    continue;
+                }
+
+                Map.HouseholdLayer[cell] = home.Plus(family);
+                Tally.MovedIn += family.Total;
+                moved++;
+            }
         }
 
         if (moved < families)
@@ -788,7 +770,6 @@ public sealed class CityGame
         int days = Config.DaysPerWeek;
         return (int)((long)total * (day + 1) / days - (long)total * day / days);
     }
-    private static int CeilDiv(int value, int divisor) => (value + divisor - 1) / divisor;
 
     /// <summary>The most cells that may fill this week: the base cap plus a share of what is already there.</summary>
     internal int WeeklyCap(int baseCap, int existing) =>
@@ -799,6 +780,10 @@ public sealed class CityGame
         _version++;
         if (servicesChanged) _serviceVersion++;
     }
+
+    private static IReadOnlyList<List<int>> SettlementPools(List<int> candidates, Func<int, double>? distance) =>
+        distance is null ? [candidates] :
+            candidates.GroupBy(distance).OrderBy(group => group.Key).Select(group => group.ToList()).ToArray();
 
     /// <summary>Fills up to <paramref name="limit"/> (and <paramref name="room"/>) served, empty cells of a zone type.</summary>
     private int Grow(ZoneType zone, int limit, int room)
@@ -823,56 +808,56 @@ public sealed class CityGame
         // The zone index has no meaningful order; sorting keeps results identical for a given seed,
         // including after a save is loaded and the index is rebuilt.
         candidates.Sort();
+        var roadRoutes = zone == ZoneType.Residential && Map.RoadCount > 0 && candidates.Count > 0
+            ? TravelRoutes.NearestRoad(Map) : null;
+        var pools = SettlementPools(candidates, roadRoutes is { } routes
+            ? cell => TryPlot(Map.PosOf(cell), out var plot)
+                ? TravelRoutes.RoadDistance(Map, plot, routes) : double.PositiveInfinity
+            : null);
 
         int filled = 0;
-        while (filled < count && candidates.Count > 0)
+        foreach (var pool in pools)
         {
-            int pick = Rng.Next(candidates.Count);
-            var p = Map.PosOf(candidates[pick]);
-            candidates[pick] = candidates[^1];
-            candidates.RemoveAt(candidates.Count - 1);
+            while (filled < count && pool.Count > 0)
+            {
+                int pick = Rng.Next(pool.Count);
+                var p = Map.PosOf(pool[pick]);
+                pool[pick] = pool[^1];
+                pool.RemoveAt(pool.Count - 1);
 
-            if (Map.BuildingAt(p.X, p.Y) is not null) continue;
-            int width = building.Width + CellHash.Pick(p.X, p.Y, 2);
-            CellRect footprint = new(p.X, p.Y, width, building.Height);
-            bool Available(CellRect area) => area.Cells().All(cell => Map.InBounds(cell) &&
-                Map.ZoneAt(cell.X, cell.Y) == zone && Map.BuildingAt(cell.X, cell.Y) is null &&
-                Map.TerrainAt(cell.X, cell.Y).Buildable && !Map.HasRoad(cell.X, cell.Y) &&
-                !network.RoadOverlapsCell(Map.Index(cell.X, cell.Y)));
-            if (zone == ZoneType.Residential && Config.FullRules)
-            {
-                int preferredWidth = 2 + CellHash.Pick(p.X + 17, p.Y, 3);
-                int preferredHeight = 2 + CellHash.Pick(p.X, p.Y + 29, 3);
-                footprint = default;
-                for (int plotWidth = preferredWidth; plotWidth >= 2; plotWidth--)
-                    for (int plotHeight = preferredHeight; plotHeight >= 2; plotHeight--)
-                    {
-                        var candidate = new CellRect(p.X, p.Y, plotWidth, plotHeight);
-                        if (candidate.Area <= footprint.Area || !Available(candidate)) continue;
-                        footprint = candidate;
-                    }
-                if (footprint.Area == 0) continue;
-            }
-            else if (!Available(footprint))
-            {
-                footprint = new(p.X, p.Y, building.Width, building.Height);
-                if (!Available(footprint)) continue;
-            }
-            // Roads accelerate settlement; a remote plot remains a valid place to live.
-            if (network.AccessRank(Map.Index(p.X, p.Y)) == 0 && !Rng.Chance(0.35)) continue;
-            Map.SetBuildingFootprint(building, footprint);
-            if (zone == ZoneType.Residential)
-            {
-                var family = Config.FullRules ? Household.Migrant(Rng) : Household.Random(Rng);
-                Map.SetHousehold(p.X, p.Y, family);
-                Tally.MovedIn += family.Total;
-            }
+                if (!TryPlot(p, out var footprint)) continue;
+                // Roads accelerate settlement; a remote plot remains a valid place to live.
+                if (network.AccessRank(Map.Index(p.X, p.Y)) == 0 && !Rng.Chance(0.35)) continue;
+                Map.SetBuildingFootprint(building, footprint);
+                if (zone == ZoneType.Residential)
+                {
+                    var family = Config.FullRules ? Household.Migrant(Rng) : Household.Random(Rng);
+                    Map.SetHousehold(p.X, p.Y, family);
+                    Tally.MovedIn += family.Total;
+                }
 
-            filled++;
+                filled++;
+            }
         }
 
         if (filled > 0) _serviceVersion++;
         return filled;
+
+        bool TryPlot(Pos p, out CellRect footprint)
+        {
+            int variation = CellHash.Pick(p.X + 17, p.Y + 29, 100);
+            int width = variation >= 88 ? 2 : 1;
+            int height = variation is >= 80 and < 88 or >= 96 ? 2 : 1;
+            footprint = new(p.X, p.Y, Math.Max(building.Width, width), Math.Max(building.Height, height));
+            if (Available(footprint)) return true;
+            footprint = new(p.X, p.Y, building.Width, building.Height);
+            return Available(footprint);
+        }
+
+        bool Available(CellRect area) => area.Cells().All(cell => Map.InBounds(cell) &&
+            Map.ZoneAt(cell.X, cell.Y) == zone && Map.BuildingAt(cell.X, cell.Y) is null &&
+            Map.TerrainAt(cell.X, cell.Y).Buildable && !Map.HasRoad(cell.X, cell.Y) &&
+            !network.RoadOverlapsCell(Map.Index(cell.X, cell.Y)));
     }
 
     // ---- Player actions ---------------------------------------------------------------------------------------
@@ -924,18 +909,70 @@ public sealed class CityGame
     internal (int Width, int Height) MinimumGrowthSize(ZoneType zone)
     {
         var type = Map.Content.Buildings.ForZone(zone);
-        return zone == ZoneType.Residential && Config.FullRules
-            ? (2, 2) : (type?.Width ?? 1, type?.Height ?? 1);
+        return (type?.Width ?? 1, type?.Height ?? 1);
     }
 
     /// <summary>A road can go on open, unbuilt ground, or replace a smaller road type (an upgrade); see <see cref="RoadRules"/>.</summary>
     public bool CanPlaceRoad(int x, int y, RoadType? type = null) => PlanRoad([new Pos(x, y)], type).Count == 1;
 
     /// <summary>The cells of a road stroke that can actually be laid, in order, under the rules of <see cref="RoadRules"/>.</summary>
-    public List<Pos> PlanRoad(IEnumerable<Pos> cells, RoadType? type = null) =>
-        RoadRules.Plan(Map, cells as IReadOnlyList<Pos> ?? cells.ToList(), (type ?? DefaultRoad).Rank,
+    public List<Pos> PlanRoad(IEnumerable<Pos> cells, RoadType? type = null)
+        => PlanRoad(cells, type, out _);
+
+    public List<Pos> PlanRoad(IEnumerable<Pos> cells, RoadType? type, out string? error)
+    {
+        error = null;
+        type ??= DefaultRoad;
+        var stroke = cells as IReadOnlyList<Pos> ?? cells.ToList();
+        var plan = RoadRules.Plan(Map, stroke, type.Rank,
             (x, y) => (Map.TerrainAt(x, y).Buildable || Map.TerrainAt(x, y).Name == DefaultTerrains.WaterName) &&
                 Map.ZoneAt(x, y) == ZoneType.None && Map.BuildingAt(x, y) is null);
+        if (plan.Count == 0) return plan;
+        if (stroke.Count > 1)
+        {
+            var direction = new System.Numerics.Vector2(stroke[^1].X - stroke[0].X, stroke[^1].Y - stroke[0].Y);
+            if (direction.LengthSquared() > 0.000001f)
+            {
+                var normal = new System.Numerics.Vector2(-direction.Y, direction.X);
+                float side = Math.Abs(direction.X) >= Math.Abs(direction.Y) ? Math.Sign(direction.X) : -Math.Sign(direction.Y);
+                var offset = type.WidthCells % 2 == 0 ? System.Numerics.Vector2.Normalize(normal) * (side * 0.5f) :
+                    System.Numerics.Vector2.Zero;
+                if (stroke.Where(p => Map.InBounds(p) && !Map.HasRoad(p.X, p.Y)).Any(p =>
+                    Network.HasParallelRoad(new System.Numerics.Vector2(p.X + 0.5f, p.Y + 0.5f) + offset,
+                        direction, type.WidthCells)))
+                {
+                    error = "Roads cannot overlap or run alongside another road. Continue it, cross it, or join at an angle.";
+                    return [];
+                }
+            }
+        }
+        if (stroke.Any(p => Map.InBounds(p) && !Map.TerrainAt(p.X, p.Y).Buildable))
+        {
+            var plannedCells = plan.ToHashSet();
+            if (stroke.Any(p => !Map.InBounds(p) || !plannedCells.Contains(p) && !Map.HasRoad(p.X, p.Y)))
+                return [];
+        }
+
+        var obstacles = new HashSet<Pos>();
+        int reach = (int)Math.Ceiling(type.WidthCells / 2 + type.BendRadiusCells +
+            RoadCurves.StraightenTolerance / RoadCurves.CellWidth + 1);
+        foreach (var p in plan)
+            for (int y = Math.Max(0, p.Y - reach); y <= Math.Min(Map.Height - 1, p.Y + reach); y++)
+                for (int x = Math.Max(0, p.X - reach); x <= Math.Min(Map.Width - 1, p.X + reach); x++)
+                    if (Map.BuildingAt(x, y) is not null || Map.ZoneAt(x, y) != ZoneType.None)
+                        obstacles.Add(new(x, y));
+        if (obstacles.Count == 0) return plan;
+
+        var planned = plan.ToDictionary(p => Map.Index(p.X, p.Y), _ => type);
+        var bounds = obstacles.Aggregate(CellRect.Single(obstacles.First()),
+            (area, p) => area.Union(CellRect.Single(p)));
+        var paths = RoadCurves.Extract(Map, (_, _) => false, planned)
+            .Where(path => RoadCurves.Intersects(path, bounds, reach)).ToArray();
+        var geometry = new RoadGeometry(Map, paths);
+        // Do not disturb legacy overlaps, but a new road or widening must not consume an occupied plot.
+        return obstacles.Any(p => geometry.OverlapsCell(p.X, p.Y) &&
+            !Network.RoadOverlapsCell(Map.Index(p.X, p.Y))) ? [] : plan;
+    }
 
     public Quote QuoteRoad(CellRect area, RoadType? type = null) => QuoteRoad(area.Cells(), type);
 
@@ -943,6 +980,11 @@ public sealed class CityGame
     {
         var area = cells as IReadOnlyCollection<Pos> ?? cells.ToList();
         var plan = PlanRoad(area, type);
+        return QuotePlannedRoad(area, plan, type);
+    }
+
+    internal Quote QuotePlannedRoad(IReadOnlyCollection<Pos> area, IReadOnlyCollection<Pos> plan, RoadType? type)
+    {
         int total = 0;
         foreach (var p in plan)
         {
@@ -1129,7 +1171,8 @@ public sealed class CityGame
             return ActionResult.Fail($"{type.Name} cannot be built by the player.");
         }
 
-        var plan = PlanRoad(area, type);
+        var plan = PlanRoad(area, type, out var error);
+        if (error is not null) return ActionResult.Fail(error);
         if (area.Any(p => Map.InBounds(p) && !Map.TerrainAt(p.X, p.Y).Buildable))
         {
             var planned = plan.ToHashSet();
@@ -1137,7 +1180,7 @@ public sealed class CityGame
                 if (!Map.InBounds(p) || !planned.Contains(p) && !Map.HasRoad(p.X, p.Y))
                     return ActionResult.Fail($"Bridge crossing blocked at ({p.X},{p.Y}); choose a clear continuous route between the banks.");
         }
-        var quote = QuoteRoad(area, type);
+        var quote = QuotePlannedRoad(area, plan, type);
         var check = CheckSpend(quote, type.Name.ToLowerInvariant());
         if (check is not null)
         {

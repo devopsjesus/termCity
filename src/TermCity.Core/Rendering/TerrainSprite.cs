@@ -70,10 +70,24 @@ public sealed record TerrainSprite(int Width, int Height, int Lift, byte[] Pixel
             var queue = new Queue<int>();
             bool Hill(int cx, int cy) => map.InBounds(cx, cy) &&
                 map.TerrainAt(cx, cy).Buildable && map.TerrainAt(cx, cy).BuildCostModifier > 1;
+            bool Boundary(int cx, int cy, int dx, int dy)
+            {
+                int nx = cx + dx, ny = cy + dy;
+                if (Hill(nx, ny)) return false;
+                if (!map.InBounds(nx, ny) || !map.IsRiver(nx, ny)) return true;
+                for (int step = 2; step <= 10; step++)
+                {
+                    nx = cx + dx * step; ny = cy + dy * step;
+                    if (!map.InBounds(nx, ny)) return true;
+                    if (map.TerrainAt(nx, ny).Buildable) return !Hill(nx, ny);
+                    if (!map.IsRiver(nx, ny)) return true;
+                }
+                return true;
+            }
             for (int cy = 0; cy < map.Height; cy++)
                 for (int cx = 0; cx < map.Width; cx++)
-                    if (Hill(cx, cy) && (!Hill(cx - 1, cy) || !Hill(cx + 1, cy) ||
-                        !Hill(cx, cy - 1) || !Hill(cx, cy + 1)))
+                    if (Hill(cx, cy) && (Boundary(cx, cy, -1, 0) || Boundary(cx, cy, 1, 0) ||
+                        Boundary(cx, cy, 0, -1) || Boundary(cx, cy, 0, 1)))
                     {
                         int cell = map.Index(cx, cy);
                         levels[cell] = 1;
@@ -92,6 +106,10 @@ public sealed record TerrainSprite(int Width, int Height, int Lift, byte[] Pixel
                     queue.Enqueue(next);
                 }
             }
+            for (int cy = 0; cy < map.Height; cy++)
+                for (int cx = 0; cx < map.Width; cx++)
+                    if (Hill(cx, cy) && levels[map.Index(cx, cy)] == 0)
+                        levels[map.Index(cx, cy)] = 1;
             map.HillLevels = levels;
         }
         return map.HillLevels[map.Index(x, y)];

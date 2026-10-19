@@ -53,7 +53,8 @@ public class MedievalTravelTests
         session.PlaceCursor(new(10, 5));
         Assert.True(session.Zone(ZoneType.Residential).Success);
         Assert.Single(session.Game.VacantPlots(ZoneType.Residential));
-        Assert.Equal(ZoneType.Residential, session.Game.Map.ZoneAt(11, 5));
+        Assert.Equal(ZoneType.Residential, session.Game.Map.ZoneAt(10, 5));
+        Assert.Equal(ZoneType.None, session.Game.Map.ZoneAt(11, 5));
         TestCity.Advance(session.Game, 12);
         Assert.True(session.Game.Stats.Population > 0);
     }
@@ -83,13 +84,12 @@ public class MedievalTravelTests
     }
 
     [Fact]
-    public void IsolatedOneCellZoneShowsItsRealPlotSizeBlocker()
+    public void IsolatedOneCellZoneIsACompleteCompactHomePlot()
     {
         var game = Small();
         game.Designate(new(10, 5, 1, 1), ZoneType.Residential);
-        Assert.Equal(GrowthStatus.NeedsSpace, GrowthDiagnostics.ForCell(game, 10, 5).Status);
-        Assert.Contains("2x1", CellInspector.Summary(game, new(10, 5)));
-        Assert.Contains("adjacent", CityProgression.NextStep(game));
+        Assert.Equal(GrowthStatus.Ready, GrowthDiagnostics.ForCell(game, 10, 5).Status);
+        Assert.Equal(new CellRect(10, 5, 1, 1), Assert.Single(game.VacantPlots(ZoneType.Residential)));
     }
 
     [Fact]
@@ -117,7 +117,7 @@ public class MedievalTravelTests
         game.Designate(new(10, 5, 30, 2), ZoneType.Residential);
         TestCity.Advance(game, 8);
         Assert.True(game.Stats.Households > 0);
-        Assert.All(game.Map.BuildingFootprints.Values, area => Assert.True(area.Area >= 2));
+        Assert.All(game.Map.BuildingFootprints.Values, area => Assert.InRange(area.Area, 1, 4));
         var a = game.Map.Index(10, 30);
         var b = game.Map.Index(30, 30);
         double walking = TravelRoutes.Compute(game.Map, [a]).Cost[b];
@@ -198,7 +198,7 @@ public class MedievalTravelTests
     }
 
     [Fact]
-    public void BuildingPathsCannotCrossWaterUntilABridgeMakesTheOtherBuildingReachable()
+    public void PathsWaitForLandRoadApproachesWhileGeneralTravelCanUseTheBridge()
     {
         var game = Small();
         var map = game.Map;
@@ -210,9 +210,23 @@ public class MedievalTravelTests
         Assert.False(TravelRoutes.WearPaths(map));
         Assert.All(map.PathLayer, wear => Assert.Equal(0, wear));
         map.SetRoad(14, 10, true);
+        Assert.True(double.IsFinite(TravelRoutes.Compute(map, [map.Index(10, 10)]).Cost[map.Index(18, 10)]));
+        Assert.False(TravelRoutes.WearPaths(map));
+        Assert.All(map.PathLayer, wear => Assert.Equal(0, wear));
+        foreach (int x in new[] { 12, 13, 15, 16 }) map.SetRoad(x, 10, true);
+        for (int y = 0; y < 10; y++)
+        {
+            map.SetRoad(12, y, true);
+            map.SetRoad(16, y, true);
+        }
         for (int day = 0; day < 12; day++) TravelRoutes.WearPaths(map);
-        for (int x = 11; x < 18; x++)
-            Assert.True(x == 14 ? map.HasRoad(x, 10) : map.PathWearAt(x, 10) >= 3);
+        Assert.Equal(2, TravelRoutes.FootpathJourneys(map).Count());
+        Assert.Contains(map.PathLayer, wear => wear >= 3);
+        Assert.All(TravelRoutes.FootpathJourneys(map), journey =>
+            Assert.True(TravelRoutes.IsPathRoadTarget(map, journey[^1]) &&
+                !TravelRoutes.IsFootpathBridgeCell(map, journey[^1])));
+        Assert.All(Enumerable.Range(0, map.PathLayer.Length).Where(cell => map.PathLayer[cell] > 0),
+            cell => Assert.False(TravelRoutes.IsFootpathBridgeCell(map, cell)));
         for (int y = 0; y < map.Height; y++) Assert.Equal(0, map.PathWearAt(14, y));
     }
 

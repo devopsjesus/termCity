@@ -15,6 +15,7 @@ public static class MapGenerator
             terrain.Generator!.Generate(context, terrain);
         }
 
+        HillGenerator.AddRiverCanyon(context);
         HighwayGenerator.Generate(context);
 
         foreach (var feature in content.Features.Where(f => f.Generator is not null).OrderBy(f => f.Generator!.Order).ThenBy(f => f.Id))

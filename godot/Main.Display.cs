@@ -253,7 +253,7 @@ public partial class Main
         _hudPopulation = new Label { Name = "Population", HorizontalAlignment = HorizontalAlignment.Left };
         _hudPopulation.AddThemeColorOverride("font_color", new Color("#88ee99"));
         _hudPopulation.VerticalAlignment = VerticalAlignment.Center;
-        void LinkHeader(Label label, Action action, string tooltip, bool textOnly = false)
+        void LinkHeader(Label label, Action action, string tooltip, bool textOnly = false, bool mapControl = false)
         {
             label.MouseFilter = MouseFilterEnum.Stop;
             label.MouseDefaultCursorShape = CursorShape.PointingHand;
@@ -269,7 +269,8 @@ public partial class Main
                 if (textOnly && input is InputEventMouseMotion motion)
                     label.MouseDefaultCursorShape = textRect.HasPoint(motion.Position) ? CursorShape.PointingHand : CursorShape.Arrow;
                 if (input is not InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true } click ||
-                    _editingName || Session.Prompt is not null || Session.Preview is not null) return;
+                    _editingName || (mapControl ? !Session.MapNavigationAllowed :
+                        Session.Prompt is not null || Session.Preview is not null)) return;
                 if (textOnly && !textRect.HasPoint(click.Position)) return;
                 action();
                 label.AcceptEvent();
@@ -286,7 +287,7 @@ public partial class Main
         LinkHeader(_hudReports, Session.ShowReport, "Open weekly report");
         _hudViews = new Label { Name = "ViewsHeader", Text = "VIEWS", HorizontalAlignment = HorizontalAlignment.Center };
         _hudViews.AddThemeColorOverride("font_color", new Color("#70d7ff"));
-        LinkHeader(_hudViews, ToggleViews, "Choose an overlay");
+        LinkHeader(_hudViews, ToggleViews, "Choose an overlay", mapControl: true);
         _hudCalendar = new Label { Name = "Calendar", HorizontalAlignment = HorizontalAlignment.Left };
         _hudCalendar.AddThemeColorOverride("font_color", new Color("#70d7ff"));
         _hudWeek = new Label { Name = "WeekProgress", HorizontalAlignment = HorizontalAlignment.Center };
@@ -389,7 +390,7 @@ public partial class Main
         _linePreview.AddChild(_lineSummary);
         var lineButtons = new HBoxContainer();
         AddButton(lineButtons, "Confirm [Enter]", () => Session.ConfirmPreview(), underline: 0);
-        AddButton(lineButtons, "Cancel [Esc]", Session.CancelPreview, underline: 1);
+        AddButton(lineButtons, "Finish [Esc]", Session.CancelPreview, underline: 1);
         _linePreview.AddChild(lineButtons);
         city.AddChild(_linePreview);
         _panel = new CityPanel { Session = Session, ZoomBy = delta => Map.ZoomBy(delta),
@@ -552,7 +553,8 @@ public partial class Main
         _hudStats.Modulate = game.Money <= 0 ? new Color("#ff7777") : new Color("#88ee99");
         FitHeaderFonts();
         UpdateMenuSizeControls();
-        string cellInfo = Session.HasCursor ? CellInspector.Summary(game, Session.Cursor) : "Press F1 for HELP";
+        string cellInfo = Session.HasCursor ? CellInspector.Summary(game, Session.Cursor,
+            Map.PerspectiveEnabled ? Map.Perspective?.SelectedSurfacePoint(Session.Cursor) : null) : "Press F1 for HELP";
         bool gameMenu = Session.Prompt?.Title == GameDialogTitle;
         if (Session.Selection is { Area: > 1 } selection)
             cellInfo += $" | Selection {selection.Width}x{selection.Height} ({selection.Area} cells)";

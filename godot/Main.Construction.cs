@@ -12,7 +12,7 @@ public partial class Main
 {
     internal const int IconPadding = 6;
     internal const int RailPadding = 4;
-    private sealed record ConstructionChoice(string Name, string Icon, Color Color, ChoiceHelp Help,
+    private sealed record ConstructionChoice(string Name, Color Color, ChoiceHelp Help,
         BuildingType? Building = null, RoadType? Road = null, RoadTemplate? Template = null);
 
     private SessionPrompt? _constructionPrompt;
@@ -23,6 +23,24 @@ public partial class Main
     private Label _constructionDescription = null!;
     private GridContainer _constructionStats = null!;
     private Button _constructionAdd = null!;
+    private RenderedModelPreview _constructionPreview = null!;
+    private RenderedModelPreviewCache? _modelPreviewCache;
+
+    private RenderedModelPreview CreateModelPreview(string name, BuildingType? building = null,
+        RoadType? road = null, RoadTemplate? template = null)
+    {
+        if (_modelPreviewCache is null)
+        {
+            _modelPreviewCache = new RenderedModelPreviewCache { Name = "ModelPreviewCache" };
+            AddChild(_modelPreviewCache);
+        }
+        return new RenderedModelPreview
+        {
+            Name = name, Cache = _modelPreviewCache,
+            Subject = new ModelPreviewSubject(Session.Game.Map.Content, building, road, template),
+            TooltipText = building?.Name ?? template?.Name ?? road!.Name,
+        };
+    }
 
     private bool ConstructionMenuVisible =>
         Session.Prompt is not null && ReferenceEquals(Session.Prompt, _constructionPrompt);
@@ -106,17 +124,17 @@ public partial class Main
             ? game.Map.Content.Buildings.Where(b => b.PlayerPlaceable && b.IsMonument &&
                 (!b.DebugOnly || CityGame.DebugToolsAvailable))
                 .Select(b => new ConstructionChoice(b.CatalogName,
-                    b.Glyphs[0], ToColor(b.Foreground),
+                    ToColor(b.Foreground),
                     ChoiceHelpContent.Building(game, b), Building: b)).ToArray()
             : service is { } kind
             ? game.Map.Content.Buildings.Where(b => b.PlayerPlaceable && b.Service == kind)
                 .OrderBy(CityProgression.RequiredPopulation).ThenBy(b => b.Cost)
-                .Select(b => new ConstructionChoice(b.Name, b.Glyphs[0], ToColor(b.Foreground),
+                .Select(b => new ConstructionChoice(b.Name, ToColor(b.Foreground),
                     ChoiceHelpContent.Building(game, b), Building: b)).ToArray()
             : game.Map.Content.Roads.Where(r => r.PlayerPlaceable).OrderBy(r => r.Rank)
-                .Select(r => new ConstructionChoice(r.Name, r.GlyphFor(15), ToColor(r.Foreground),
+                .Select(r => new ConstructionChoice(r.Name, ToColor(r.Foreground),
                     ChoiceHelpContent.Road(game, r, line: true), Road: r))
-                .Append(new ConstructionChoice("Traffic Circle", "O",
+                .Append(new ConstructionChoice("Traffic Circle",
                     ToColor(game.Map.Content.Roads.Get(DefaultRoads.CobbledName).Foreground),
                     ChoiceHelpContent.RoadTemplate(game, RoadTemplate.TrafficCircle),
                     Template: RoadTemplate.TrafficCircle)).ToArray();
@@ -192,10 +210,7 @@ public partial class Main
                 style.ContentMarginBottom = capacity is null ? 6 : 26;
                 button.AddThemeStyleboxOverride(state, style);
             }
-            var icon = new Label { Text = choice.Icon, MouseFilter = MouseFilterEnum.Ignore,
-                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-            icon.AddThemeFontSizeOverride("font_size", 30);
-            icon.AddThemeColorOverride("font_color", choice.Color);
+            var icon = CreateModelPreview("ConstructionTypePreview", choice.Building, choice.Road, choice.Template);
             icon.AnchorBottom = capacity is null ? 1 : 0;
             icon.OffsetBottom = capacity is null ? 0 : 44;
             icon.OffsetRight = 40;
@@ -258,6 +273,9 @@ public partial class Main
         stats.AddChild(_constructionStats);
         var description = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsStretchRatio = 1 };
         description.AddThemeConstantOverride("separation", 0);
+        var previewSlot = new VBoxContainer { Name = "ConstructionPreviewSlot",
+            SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        description.AddChild(previewSlot);
         _constructionDescription = new Label
         {
             Name = "ConstructionDescription", AutowrapMode = TextServer.AutowrapMode.WordSmart,
@@ -303,6 +321,16 @@ public partial class Main
     {
         _constructionIndex = index;
         var choice = _constructionChoices[index];
+        var previewSlot = _constructionDescription.GetParent().GetParent().GetNode<VBoxContainer>("ConstructionPreviewSlot");
+        foreach (var oldPreview in previewSlot.GetChildren())
+        {
+            previewSlot.RemoveChild(oldPreview);
+            oldPreview.QueueFree();
+        }
+        _constructionPreview = CreateModelPreview("ConstructionModelPreview", choice.Building, choice.Road, choice.Template);
+        _constructionPreview.CustomMinimumSize = new Vector2(0, 144);
+        _constructionPreview.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        previewSlot.AddChild(_constructionPreview);
         _constructionDescription.Text = choice.Help.Description;
         string effectDescription = "";
         if (choice.Building is { } describedBuilding)

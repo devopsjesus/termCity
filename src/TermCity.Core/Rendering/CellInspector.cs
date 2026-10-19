@@ -75,9 +75,10 @@ public static class CellInspector
     }
 
     /// <summary>One-line description of a cell for the status line.</summary>
-    public static string Summary(CityGame game, Pos pos) => string.Join(" · ", Describe(game, pos));
+    public static string Summary(CityGame game, Pos pos, System.Numerics.Vector2? surfacePoint = null) =>
+        string.Join(" · ", Describe(game, pos, surfacePoint));
 
-    public static IReadOnlyList<string> Describe(CityGame game, Pos pos)
+    public static IReadOnlyList<string> Describe(CityGame game, Pos pos, System.Numerics.Vector2? surfacePoint = null)
     {
         var map = game.Map;
         if (!map.InBounds(pos))
@@ -98,9 +99,12 @@ public static class CellInspector
         if (map.PathWearAt(pos.X, pos.Y) > 0 && !map.HasRoad(pos.X, pos.Y))
             lines.Add(map.PathWearAt(pos.X, pos.Y) >= 3 ? "Worn footpath: faster walking" : "Footpath forming");
 
-        if (game.Network.RoadAtCellCenter(pos.X, pos.Y) is { } visibleRoad)
+        var pickedRoad = surfacePoint is { } point ? game.Network.RoadAt(point) : null;
+        var road = surfacePoint is null ? game.Network.RoadAtCellCenter(pos.X, pos.Y) : pickedRoad?.Path;
+        if (road is { } visibleRoad)
         {
-            string kind = visibleRoad.Type.Name + (game.Network.IsBridgeAtCellCenter(pos.X, pos.Y) ? " bridge" : string.Empty);
+            bool bridge = surfacePoint is null ? game.Network.IsBridgeAtCellCenter(pos.X, pos.Y) : pickedRoad?.Bridge == true;
+            string kind = visibleRoad.Type.Name + (bridge ? " bridge" : string.Empty);
             lines.Add(visibleRoad.Connected ? $"{kind} (connected)" : $"{kind} (NOT connected)");
             double junctionDelay = TravelRoutes.JunctionDelayUnits(map, map.Index(pos.X, pos.Y));
             if (junctionDelay > 0)

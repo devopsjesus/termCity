@@ -12,8 +12,12 @@ The Godot-local solution also remains available for editor integration.
 ```bash
 dotnet build TermCity.slnx
 godot --path godot -- --seed 42 --size medium
+godot --path godot -- --seed 42 --size small --debug-starter
 godot --headless --path godot -- --size SF --seed 42 --dump-map
 godot --path godot -- --size small --seed 42 --building-smoke-test --capture /tmp/termcity-buildings.png
+godot --path godot -- --size small --seed 42 --milestone-smoke-test --capture /tmp/termcity-milestone.png
+godot --path godot -- --size small --seed 42 --woodlot-smoke-test --capture /tmp/termcity-woodlot.png
+godot --path godot -- --size small --seed 42 --placement-smoke-test --capture /tmp/termcity-placement.png
 godot --path godot -- --size small --seed 42 --perspective-smoke-test --capture /tmp/termcity-perspective.png
 godot --path godot -- --size large --seed 42 --perspective-performance-test
 dotnet build TermCity.slnx -c Release
@@ -29,6 +33,25 @@ load, frame cap, map dump, help, smoke tests and optional screenshot capture.
 All projects target `net10.0`, with nullable references and implicit usings enabled.
 Godot uses `Godot.NET.Sdk/4.7.2`; tests use VSTest/xUnit v2.
 Generated `bin`, `obj`, `.godot` state and export outputs are ignored.
+
+`GameSession.MapNavigationAllowed` distinguishes non-modal placement tools from modal
+confirmations. Building, road and traffic-circle tools retain camera zoom/rotation/tilt,
+minimap navigation, pan gestures, overlays and edge scrolling; ordinary dialogs and
+confirmation previews still block map navigation. During building placement, brackets
+rotate the building and Shift+brackets rotate the camera. Middle-drag takes precedence
+over pointer-following placement, so panning cannot move or accidentally place the ghost.
+
+`--debug-starter` is an opt-in Debug-only preset for a new random map. It places one
+Town Well and one Woodlot within eight cells of the generated starting spur, designates
+exactly a 4x10 residential rectangle nearby, suppresses the initial guide, and starts
+unpaused. The initial camera is centered on the residential rectangle and retains that
+focus through startup viewport/layout changes without adding a selection highlight.
+User camera navigation releases the startup target. It uses normal placement checks and
+gold costs without altering terrain or roads.
+An invalid or cramped setup fails explicitly; the flag cannot modify a loaded city or be
+combined with populated scenarios, map dumps or smoke tests. Normal startup stays unchanged.
+After validation finishes, launch the final passing Debug build without smoke-test arguments
+so the interactive game remains open rather than exiting with the validation process.
 
 ### Windows rendering and resize checks
 
@@ -108,8 +131,62 @@ to built cells. `SetRoad`, `SetZone` and `ClearCell` maintain them; loading rebu
 `BuildingType.Width/Height` define player-placement footprints. `PlanBuildings` tiles the
 expanded selection, rejecting blocked buildings atomically. `GameMap.BuildingFootprints` and a
 sparse cell-owner lookup associate occupied cells with one building; `ServiceCells` contains
-only its anchor. Zoned buildings also register complete footprints: new full-rules homes
-use 2x2–4x4 plots; stalls/workshops and classic cottages retain 2x1 or 3x1 plots.
+only its anchor. Zoned buildings also register complete footprints: new homes
+normally use 1x1 plots, as do stalls and workshops in both rule sets. Deterministic
+appearance-size preferences are 80% 1x1, 8% 1x2, 8% 2x1 and 4% 2x2, falling back to
+the registered minimum when space is constrained. All default zoned building tiers fit
+within 2x2; civic footprints remain independent.
+Woodlots render as fenced, packed-earth firewood yards rather than tree groves.
+`WoodlotArtwork` supplies shared block-built geometry with low rails, a front gate,
+stacking pallets, and stepped cords with contrasting bark and cut ends. The canonical
+menu thumbnail and city renderer use the same model; the legacy pixel sprite also
+shows the fenced stacks. Footprints, clean-fuel capacity, costs and upkeep are unchanged.
+Residential models choose a stable coordinate-derived medieval archetype: thatched cottage,
+timber gable, stone croft, burgage, longhouse or weaver's house. These share coarse
+clean half-timber walls, with three or four thick
+roof steps assembled from small blocks instead of smooth pitched faces or long strips.
+`HouseAppearance.Parts` supplies four square corner posts, joined sill/floor/eaves beams,
+intermediate bay posts and uniform recessed plaster panels. Frame pieces meet without
+intersecting duplicate trim; no diagonal braces or checker-colored wall tiles are used.
+The frame and openings share `HalfTimberFacade` and `HouseBlock.WallPanel` so doors/windows
+remain centered and clear the structural beams. Broad corner timbers, floor bands, square windows
+and a single door replace fine trim, dormers and awnings.
+One-cell houses remain the norm; 1x2/2x1 homes extend their roof ridge along the long axis.
+Selected 2x2 styles add a low adjoining block around an open courtyard corner, without
+overlapping wall masses. Larger plots never increase wall height or roof pitch.
+Their open plot margins contain dirt approaches; facade layout favors a few readable windows
+and structural beams over dense repeated trim. `HouseYardLayout` assigns each home one whole
+adjacent free cell for a decorative lawn, stepping path, flower bed, vegetable bed and low fence.
+Assignments are deterministic across saves, mutually exclusive, and stay within designated
+residential areas; unzoned land, water, trees, other buildings, actual road shoulders and
+existing footpaths are never chosen for a new yard. Established gardens take priority over
+later footpaths: journeys can end at their boundaries but cannot wear paths through them,
+and shared ribbon/cap polygons are clipped at the garden edge. Old wear is retained in saves
+without being painted over a garden. The yard's graphical
+elements pick their owning home. Yards do not change saved footprints, growth rules, capacity
+or household counts. The first chosen yard cell is stored per house in `GameMap.HouseYardCells`
+and persisted in saves; it never relocates when neighbors, roads or footpaths change. A blocked
+or dezoned yard hides rather than selecting a replacement cell, and can return only in its
+original location. House upgrades preserve the assignment, even if an expanded footprint
+covers it; demolition clears it. Older saves without yard metadata assign a fixed cell when
+first rendered. Their grass replaces the vacant-zone overlay only in
+the rendered yard cell. Yard assignments are cached until the map changes; camera movement
+and selection changes do not recalculate them across the entire city.
+The reverse yard-owner index makes route blocking constant-time; assignment, demolition
+and garden visibility changes invalidate cached footpath routes.
+Natural footpaths avoid all hill terrain, including level terrace tops and collapsed hill
+remnants beside roads. Ordinary roads on hills and general service travel remain usable.
+Footpath routing also rejects off-road transitions across height changes above 0.12 world
+units and checks actual road-deck heights before choosing an approach. Legacy worn paths
+are hidden on hills and split at those barriers instead of reconnecting across
+cliffs. The renderer also rejects any ribbon triangle whose sampled ground-height span
+exceeds that threshold, preventing steep strips on road cut walls or terrace faces.
+General service travel, road grades, bridges and terrain geometry remain unchanged.
+Selecting any part of a house or its yard outlines the whole property, including all cells
+of larger saved houses. `HouseYardLayout.Outline` removes shared cell edges, so the highlight
+is one closed outer boundary rather than separate boxes or an oversized bounding rectangle.
+Dragged area selections retain their rectangular outline; property highlights only rebuild
+the indicator layer, not city geometry.
 Households live only at the anchor,
 and population, jobs, taxes, supply demand and pollution count each building once.
 Land is walkable without road access. Area effects originate at the anchor.
@@ -136,12 +213,19 @@ at all four camera headings, including raised plots; it also checks building fro
 at all four building orientations.
 
 Residential perspective models use `HouseAppearance.At` for deterministic palette, proportion,
-roof-direction and pitch variants, with occasional low wings and broad chimneys. Original medieval
-artwork uses cached 32x32 textures: irregular plaster patches, shaded thatch bundles, staggered
-clay/slate roof courses and masonry. Four-pixel clusters and eight-pixel-deep solid courses
-replace narrow thatch scores, tile highlights and mortar seams; no fine lines or squiggles.
-Broad timber corners/eaves, plaster gables, recessed window surrounds, stone sills and solid roof
-caps provide depth without the generic fine facade framing. Appearance depends on anchor and
+roof-direction and stepped-roof variants, with occasional low wings and broad chimneys.
+Visible residential walls use dark, flat-colored half-timber frames and a single muted
+plaster color per house. Square posts span the wall height and horizontal beams stop
+at the posts, keeping corners clean. Roofs retain batched cuboids about 0.20 cells across,
+with muted whole-block color variation rather than repeating fine textures on each face.
+The existing 32x32 plaster, roof and masonry textures remain available to workplaces and foundations.
+Broad timber corners/eaves, square window surrounds and solid roof
+caps provide depth without fine facade framing. `BlocksOnPlot` supplies the same wall masses
+to the model and hillside foundations; every roof step uses batched boxes. Picking uses the
+actual recessed panel, frame and wall-core boxes, plus the exact solid union of each tiled
+roof course. Step edges remain accurate without ray-testing every roof voxel; openings
+and yards retain their own picking volumes.
+Appearance depends on anchor and
 building level, so reloads do not shuffle house variants. Other building models are unchanged.
 On hills, residential foundations follow the inset house/wing walls and intersect the existing
 terrain as stepped stone lower levels. Deep exposed sides have lower windows; shallow changes
@@ -157,6 +241,36 @@ children and seniors; occupied businesses contribute income but not population.
 
 `CellRenderer` composes terrain, features, zones, buildings and roads into glyph/foreground/background.
 The road tool (T) draws a line at any angle between its two ends (`CellLines.Between`, four-connected so the simulation can follow it); the preview carries just the cells on the line. Straight runs and diagonal staircases are drawn as straight lines (`RoadCurves.Straighten`), rounded only at real bends.
+Road clicks commit the hovered stroke immediately on left-button press; they do not reset
+its anchor and silently discard the shown segment. A held click can preview a further
+extension, committed on release only when the pointer moved; an ordinary click release
+never charges or commits twice. Pointer motion and arrows update the endpoint and Enter
+supports keyboard construction. Successful strokes retain `_lineRoad`
+and reanchor at the endpoint instead of exiting the tool. Esc/Finish exits; right-click resets
+the starting point without leaving placement. Fixed traffic-circle placement also persists.
+Each stroke remains separately quoted, validated and undoable; failed placements keep
+their preview/type and spend nothing. Area-road confirmations transition into the same tool.
+Pointer starts/endpoints over a highway's outer selectable band resolve to its actual
+logical road owner in construction mode only; ordinary cell selection remains physical,
+and keyboard endpoints can traverse both bands without snapping back.
+Nearly parallel strokes within the combined rendered road widths and shoulders are
+rejected atomically (15-degree tangent tolerance). Collinear endpoint extensions and
+logical-cell upgrades are exempt; regular crossings and angled junctions remain legal.
+The explicit rejection reason is shared by live previews and `BuildRoad`.
+Paused undo is available while building and resumes the selected tool after restoration.
+Perspective previews extract the prospective network with planned road overrides and reuse
+`RoadMeshLayout` plus `RoadSurfaceMeshes` for actual type colors, pixel textures, raised
+borders, widths, joins, grades and bridges. Preview meshes are indicator-only, slightly
+raised/translucent, and limited to affected visible chunks; they never modify map layers
+or rebuild the existing city while the pointer moves.
+Preview triangles are clipped to prospective footprint/type/bridge/grade differences
+from committed roads. Existing road meshes are never repainted as translucent ghosts;
+no-op strokes emit no preview geometry. The preview remains separate from picking.
+Planning is computed once per endpoint update and reused for the quote. Prospective
+clearance and preview mesh generation retain complete nearby paths while excluding
+distant roads, so joins/curves stay exact without rebuilding unrelated city geometry.
+The perspective performance smoke measures live road-preview endpoint updates against
+a 100 ms budget and asserts that they do not rebuild existing city geometry.
 Roads may cross and branch but never run side by side: `CityGame.PlanRoad` (via `RoadRules.Plan`) lets a stroke touch another road only where it runs into it or at its two ends, and never completes a 2x2 block of road (`CompletesRoadBlock`). It also refuses a new junction within `RoadRules.JunctionSpacing` cells of an existing one. Quote, build and the line preview all use that plan, generated maps lay highways first and then the street grid as strokes through the same rules (`CityMapGeometry.Grid`), `RoadSeparation.RemoveFragments` drops tiny detached scraps, and `RoadSeparation.Apply` clears generated roads that form 2x2 blocks (dropping the humblest road where the neighbours stay connected). In `RoadCurves`, `Pair` decides which arms of a junction run through it (highest rank first, then straightest), so a diagonal highway stays one curve; `Join` moves each branch end onto the host curve and, unless the meeting is nearly square, `Ramp` bends it into a quadratic merge along the host. Zoomed out, `RoadVectorLayer.Weight`/`Opacity`/`Shown`/`RankOpacity` thin, fade and (at stride 8+) drop the minor roads, while top-rank highways always keep a narrow bed and a thin double line (`HighwayBedHalf`, `HighwayLineOffset`, `HighwayLineHalf`) so they stay a backdrop.
 At four-way junctions where pairing would create opposing bends, only the main road continues
 through; the other arms join it as branches. This prevents independently rounded curves from
@@ -170,9 +284,25 @@ Where roadbeds overlap at a merge, the higher-ranked road retains its pavement a
 line colors, including the smooth-min fillet and antialiased outer edge. This prevents a minor branch's smoothing ramp from painting a gray
 patch along its highway host; equal-ranked overlaps still use the nearest path.
 `Rendering/RoadGeometry` is built once per `RoadNetwork` revision from shared `DrawnPaths`, also reused
-by `RoadVectorLayer`. It reserves whole cells crossed by the normal-size road bed or conservative
-junction blend, for every road type including disconnected roads. Automatic growth and player
-building placement reject these partially occupied cells; existing buildings are retained.
+by `RoadVectorLayer`. It reserves whole cells intersecting the actual `RoadMeshLayout` surface
+polygons, for every road type including disconnected roads. `RoadType.WidthCells` is one for dirt
+and cobblestone and two for King's Roads; shoulders, cut/fill edges, bridges and picking derive
+from those same offsets. Width is measured in square world-cell space, not terminal pixels.
+King's Roads use tangent circular arcs with a six-cell radius in world space for broad highway bends; minor-road
+curves use a compact one-cell radius so right-angle local roads retain straight, grid-aligned legs.
+Mesh simplification pins transitions into and out of cardinal straight sections; it cannot
+replace a straight leg with a slightly diagonal chord that blocks neighboring plots.
+Junction joins intersect the host along the approaching road's existing cell axis instead
+of moving a whole straight leg toward the nearest point on an angled host. If the host
+does not cross that axis, only a short junction connector may leave it. Cell-straight mesh
+sampling preserves constant coordinates exactly, avoiding floating-point spill into a
+neighboring cell's placement clearance.
+Intersections remain ordinary intersections. Automatic growth and player building placement reject
+partially occupied cells. Road placement and widening check prospective curves against occupied
+and zoned plots before quoting, previewing or committing. Existing overlaps are not demolished.
+Even-width centerlines are offset by half a cell so straight road edges coincide with whole-cell
+boundaries. A single highway anchor covers a 1x2 or 2x1 band, not three partly occupied bands.
+Road costs, upkeep and weekly capacities (6/20/60) remain per centerline cell, not per width cell.
 `RoadCurves.Extract` traces roads as paths that run straight through junctions, cuts a path where the road type changes
 (`SplitByType`, so each stretch keeps its own colours and the seam is hidden by a one-cell overlap), then straightens,
 resamples and smooths each (a branch reaches the host centreline so three-way junctions merge without a separate end cap). `RoadVectorLayer`
@@ -185,6 +315,8 @@ segments (filtered with `FollowRate` so they glide), and speeds are the `Ambient
 `godot/TerminalMap` caches the chunks as textures and draws them between the cell backgrounds and the glyphs.
 Player road strokes accept water cells and render them as bridges instead of
 silently skipping the crossing. Buildings and zones still reject water.
+Interrupted water-crossing strokes quote zero cells and show no valid preview cells;
+confirmation reports the blocked bridge without charging or laying a partial crossing.
 Selected areas that cross water use the selected start/end cells as one ordered
 road stroke, not a rectangle of scattered road strips. Preview, quote and commit
 share that stroke. A blocked water crossing fails before changing any cell or
@@ -233,12 +365,50 @@ Random `MapGenerator` stages are deterministic from the seed:
 `GameRandom` uses independent seeded stage streams so changing one stage does not shift another.
 Perlin noise controls terrain coverage. The default hills cover about 17%; water generators
 produce sea edges, bays, lakes, deltas or meandering rivers plus smaller bodies.
-Highways reach map edges, connect through cardinal links and use straight bridges in random maps.
-Highways between interchanges are angled: a straight lead (5 columns or 3 rows) out of each arm, joined by an evenly
-stepped staircase, with turns of at most 60 degrees on screen. Where water, crowding or the map rules that out, an L or Z
-of right-angle corners with legs of at least four cells is used instead; bridges never bend. Gateway rays drift sideways
-as they run to the edge. Nearly aligned interchanges are still snapped into line. Two arms of one interchange fan out
-rather than run side by side.
+Random highways are long intercity through-routes spread across potential settlement regions,
+not short spokes radiating from a hub. Primary routes follow coverage envelopes along the longer dimension, with stronger
+meanders and individually randomized bend locations rather than visible fixed lanes.
+Candidate scoring favors substantial curvature instead of the shortest nearly straight
+line. Secondary intercity corridors enter from varying edges, select scattered land joins,
+and end on an existing trunk; they do not all cross every primary route into a Cartesian
+lattice. Crossing and terminal approaches share the ordinary road rules. Diagonal approaches
+to water are adjusted into straight bridge reaches and then resume their intended corridor.
+Standard small/medium/large maps normally use 2/3/5 corridors.
+The explicit coverage target is at most 96 logical cells of unobstructed Manhattan distance
+from every buildable cell to the nearest highway centerline. This fixed two-screen reference
+does not depend on the user's current viewport, zoom or monitor, and does not create a
+simulation connectivity gate. Coverage checks include corners, center and all other land.
+Highway-centerline density budgets are 2.5% for maps up to 15,360 cells and 1.5% for larger maps,
+with a minimum budget of the long dimension plus 16 cells for thin maps.
+Candidates commit atomically through `RoadRules.Plan`, rejecting blobs, near misses and
+crowded junctions. Water crossings stay straight; a bounded straight fallback within a
+primary band preserves coverage when curved candidates cannot cross water.
+Seed determinism and named-city scenario layouts are preserved.
+After rasterizing random highways, the generator aims for three to six spaced waterfront
+dirt-road spurs, scaling with map size, with each end within six cells of any water body and a
+clear, level 4x4 settlement plot beside it. Short straight spokes are preferred; a bounded
+land-only search can reach a shoreline around obstacles. The whole stroke must pass
+`RoadRules.Plan` before it is committed, preserving junction spacing, connectivity and
+the highway count. Spur length is separately bounded; adding dirt spurs does not increase
+the highway density budget. New routes preserve the clear settlement plots of prior spurs.
+Candidate scoring favors shorter, more central usable sites without imposing a center gate.
+Waterless or unsuitable all-water/all-hill maps retain ordinary stubs.
+`HighwayGenerator.StartingSpur` selects the most central water-adjacent dirt-road tip.
+Fresh sessions/restarts center there; the initial viewport resize preserves the target
+instead of moving it to a screen edge. Explicit camera movement, loading and undo clear
+the one-shot startup target, so saved camera state and user navigation remain authoritative.
+Generated starter streets remain minor-road spokes beside the long trunks. Bridges never bend.
+
+Water generation follows lightweight landscape rules rather than a fluid simulation.
+Most river sources favor approaches across the short axis of their receiving lake or normal
+to an edge shoreline. The last part of a river can widen laterally into its mouth; receiving
+water keeps its body identity, so an inlet cannot consume a small lake or bay.
+Existing flow fields keep river travel downhill, avoid cycles and leave lakes/seas level.
+About 30% of river-bearing random-map opportunities add broad hill banks around a river
+reach. Hill terraces can remain high on both sides of a classified river, forming a steep
+canyon without raising the water or creating repeated waterfalls. Ordinary lake and sea
+shores retain their existing hill-boundary treatment. Canyon terrain and river flags persist
+through the existing map layers; named-city layouts are not rewritten.
 
 `MapSize` accepts small 160x96, medium 320x192, large 640x384, custom 80x24 through 640x384,
 and case-insensitive city presets **SF/LA/SD/CHI/STL** (San Francisco, Los Angeles, San Diego, Chicago, St. Louis).
@@ -315,21 +485,55 @@ Nearest providers share residents by least-time routes. Area staffing capacity i
 time and reduces service quality. Fuel/water retain their city supply/demand limits and
 also require deliveries to have arrived.
 
-Each day, buildings wear one new path segment toward their closest reachable road
-and their nearest reachable neighboring building. Cached deterministic multi-source
-breadth-first fields avoid building interiors and unbridged water; building routes
-also form in roadless settlements and begin at both building perimeters.
+Each day, buildings wear one new path segment along their least-distance reachable
+road approach. Cached deterministic multi-source breadth-first fields are seeded by
+the actual rendered road footprint (including both highway bands), avoid building
+interiors/unbridged water and established gardens, and choose the closest property perimeter
+cell, including a home's garden boundary.
+Bridge decks and their parapet/approach footprints are never footpath targets, including
+raised spans over dry valleys. A cached bridge-cell mask keeps new and saved path
+connections on ordinary land roads; rendered ribbons and caps also subtract actual
+bridge corridors so they cannot paint onto a deck. General travel and service routes
+still cross bridges normally.
+Buildings that can reach a road do not also wear direct links to neighboring buildings.
+Roadless service/workplace journeys remain available, but residential-to-residential
+journeys are excluded. Roads remain optional settlement/travel boosts, not gates.
+Residential arrivals prefer the shortest reachable approach to an actual road footprint.
+Both vacant homes and new plots are considered in nearest-first distance bands, with
+randomized choices within a band and the existing land-value choice for vacant homes.
+Invalid nearer plots do not block farther plots; roadless and unreachable-road plots
+remain eligible. Commercial/industrial growth and weekly arrival quotas are unchanged.
 Repeated traffic compacts segments at wear 3; wear caps at 12. Paths are not roads,
 cost nothing, do not require edge connectivity, and survive saves and undo.
 Perspective footpaths follow the same cached building/road journeys that sims wear, rather than
 joining every adjacent worn cell. `FootpathLayout.Strokes` clips unworn gaps and rounds corners
 inside their traveled cells, so neighboring routes do not acquire artificial ladder rungs.
+Each actually traveled step records a reciprocal north/east/south/west mask in `PathLinkLayer`.
+The optional compressed `PathLinks` save layer preserves that topology when journeys change;
+loading rejects invalid or asymmetric links, and clearing wear removes incident links.
+Legacy saves without edge metadata retain straight trails and real branches, but reconstruction
+does not join parallel lanes merely because their worn cells touch. Current journeys take
+precedence over historical corridors; redundant old connectors are removed as whole corridors
+instead of leaving ladder-rung stubs. Raw wear is retained.
+`FootpathArtwork` supplies cached nearest-filtered earthy block patches. World-space UVs keep
+the dirt texture consistent through turns and intersections, without noise speckles, extra
+render nodes, or changes to trail widths, terrain support, road joins or travel costs.
 Terrain-following mesh ribbons replace overlapping rectangular bars. `RibbonSections` samples
 the centerline and smoothly flares its width at road contacts; targets project onto the actual
 road centerline, including diagonal roads. Ribbons are clipped against the road polygons, so
-their curved mouths meet the road edge without painting dirt over it. Free ends and abandoned
-wear use rounded dirt patches. Routing, wear, costs and save data are unchanged;
+their curved mouths meet the road edge without painting dirt over it. Free ends of connected
+strokes retain rounded caps. Persistent wear that no longer belongs to a current journey
+is reconstructed into cardinally connected ribbons and branches, reaching neighboring
+buildings/roads; isolated wear cells are not rendered as scattered dots. Unworn gaps and
+water are not bridged, and active parallel journeys remain separate. Obsolete residential-only
+links and near-road contour edges are omitted from persistent fallback rendering without
+deleting saved wear. Wear rates, costs and save data are unchanged;
 the overhead glyph renderer retains its existing cardinal connectivity.
+`FootpathSurfaceLayout` caches exact ribbon triangles, turns, flared mouths and caps once
+per scene rebuild. Both `DrawFootpaths` and `ZoneSurfaceLayout` use those same polygons,
+so checkerboards clear only the actual path surface while residential zoning stays intact.
+The same clipping is applied to other zone colors for consistency. Opt-in
+`MeasureZoneFootpathOverlap` verifies emitted zone triangles against the shared path polygons.
 Roads remain useful travel boosts, not prerequisites for settlement or redevelopment.
 
 `Changed` notifies possible UI changes; `MapVersion` advances only for map-visible changes.
@@ -464,17 +668,19 @@ Each table's label column is sized to its longest label so multiword labels stay
 on one line, while the value column uses the remaining space.
 The main title is `Weekly Report`; each table subheader uses a closed double-white
 terminal frame on black, matching the sidebar section headers.
-The report retains current settlement size and a green progress bar from the current
+The Milestones report tab shows current settlement size and a green progress bar from the current
 achieved size threshold to the next one. Population losses clamp progress at zero
 without revoking achieved sizes; Great City shows a full bar and completion text.
-Milestone thresholds, unlocks and advice live in the guide's Milestones tab, not in
-the report. The growth announcement also provides previous/next milestone browsing.
+The current milestone appears first, followed by a vertically scrollable list of the
+other reached and upcoming milestones with their unlock tables, model previews and advice.
+The next milestone indicator lives here rather than on Overview. The guide retains
+its milestone summary; the growth announcement has Continue only, without browsing controls.
 Weekly Report has Overview, Population, Economy, Services, Growth, Food & Seasons
-and Events tabs. Food & Seasons prominently shows famine/food status, reserves,
+and Events tabs, followed by Milestones. Food & Seasons prominently shows famine/food status, reserves,
 storage/consumption, merchant grain purchases/prices, harvest quality, current
 season and all four seasonal modifiers, plus recent food events.
 Shared `ReportContent` supplies both session text and Godot tables from actual city
-statistics. Overview includes map/calendar details and size progress. Population
+statistics. Overview includes map/calendar details and the current size. Population
 includes demographics, jobs and last-week changes. Economy separates projected
 itemized weekly income/expenses from the last completed week's figures. Services
 shows supply, health, coverage/funding and complaints; classic rules explicitly omit
@@ -610,7 +816,17 @@ Grants appear in the announcement and guide and do not count as recurring tax in
 Your City Grew! announcements explicitly pause the game and target 720 pixels of
 content width, clamped to available space. The reached milestone is selected, with
 tables of newly unlocked buildings, summaries, costs/upkeep, footprints and key
-capacity/coverage features. Previous/Next browse milestones and disable at the ends;
+capacity/coverage features. Continue is the only action; arrow keys cannot browse
+other milestones in this announcement. Reports > Milestones opens at the current size,
+with progress to the next milestone and a scrollable list of all other milestones.
+The announcement lists only that milestone's new unlocks,
+not all currently available buildings or higher service tiers.
+Milestones with no new building/service unlocks omit the New Services header and empty
+availability tables; their population, grant, status and advice remain visible.
+The focused `--milestone-smoke-test` crosses 250 population, verifies exactly the five
+care unlocks and their thumbnails, verifies the Continue-only announcement and
+scrollable Milestones report with its relocated progress indicator, and checks the
+shared terminal dialogs at normal and 640-pixel window widths.
 Continue closes the dialog but leaves the clock paused. Placement feedback does
 not overwrite a newly raised milestone banner.
 The growth title is centered yellow, the city-size heading is green, and New Services
@@ -697,6 +913,28 @@ An enclosing `SidebarFrame` retains the full-height double-white outline and the
 content inset as the map frame. The divider gap is measured between the two outer frames.
 City uses colored native cells without a Metric/Value heading row. It omits population, tax/budget,
 standing and employment rows duplicated elsewhere. Demand tooltips contain all per-zone counts;
+bars use `Demand.Compute` with the same `ExpectedArrivals` rates and `SupportedBuildings`
+capacity as weekly growth. Vacant zoning is not counted as fulfilled demand. Full-rule
+attraction, seasonal migration and trade climate affect the forecast without drawing from
+simulation RNG. Tooltips show expected weekly arrivals, remaining business slots and the
+shared `GrowthDiagnostics` blocker, including stalled trade climate and slow arrivals.
+`CityPanel` caches the formatted hover details by city/statistics/indicator snapshot,
+pause state and season so pointer selection and camera motion do not repeatedly rescan
+vacant plots.
+
+Perspective zone checkerboards use `ZoneSurfaceLayout.Patches` to subtract exact rendered
+road polygons before emitting triangles. This includes curbs and bridge decks and applies
+to existing zoned cells as well as new zoning, without changing gameplay zoning or UV scale.
+Opt-in `PerspectiveCity.MeasureZoneRoadOverlap` checks emitted triangle intersections during
+graphical smoke rebuilds; normal play incurs no diagnostic intersection scans.
+`RoadSurfaceMeshes` caches each cell's actual land-top triangles separately from roads,
+water and vertical banks. `ZoneSurfaceLayout.Conform` intersects zone patches with those
+triangles and interpolates height on each original plane, retaining exact world-space
+UVs and the shared small surface lift. Road-cut height breaks therefore cannot pull a
+large checker triangle underneath a neighboring hilltop; lower and upper terraces stay
+separate and cliff faces remain unpainted. Flat cached chunks retain their flat-plane
+fast path. Opt-in diagnostics verify complete top-surface coverage and emitted heights
+beside all road types at multiple zooms and rotations; terrain and logical zoning are unchanged.
 keyboard users get the identical formatter through F7, F8 and the full-rules health report.
 City body text targets 16 logical pixels (three larger than the previous body setting); section
 headers stay at 18. Constrained layouts adapt the body size without changing the header font.
@@ -843,6 +1081,18 @@ front-to-back, including raised roofs and overhangs. Transparent pixels pass thr
 `TerminalGrid` suppresses building glyphs; overlays and selection remain available.
 `BuildingType.FootprintArt` and `MapSnapshot` retain terminal art for text/effect fallbacks;
 the minimap and `--dump-map` retain canonical glyphs.
+Compact residential models use restrained varied thatch/tile roofs, timber and floor bands,
+readable doors/shutters and small chimneys within the actual 1x1–2x2 plots.
+`WorkplaceAppearance` distinguishes stalls, shopfronts, smithies, carpenters/coopers, mills
+and forges with period-appropriate props rather than generic factory boxes.
+
+`RenderedModelPreview` replaces road/building glyph illustrations in construction choices,
+selected-model panels, contextual choice help and milestone unlocks. A shared
+`RenderedModelPreviewCache` renders canonical `PerspectiveCity` geometry in an isolated,
+paused staging city, captures static nearest-filtered thumbnails and reuses them by subject.
+Only one staging viewport renders at a time; the real city, its RNG and simulation are untouched.
+Headless mode exposes subject metadata without waiting for unavailable draw signals or
+claiming a graphical texture is ready. All catalog frames retain terminal styling and keyboard focus.
 `TerrainSprite` supplies world-anchored pixel ground chunks and raised natural-object
 sprites. Meadow uses quiet mottled grass, hills have shaded earth ledges, and water
 has banks and a four-phase shimmer. Terrain textures cache by map terrain revision,
@@ -875,8 +1125,12 @@ settling frames before stopping. This prevents zoom/resize updates from leaving 
 or blank subviewport frame; graphical captures wait for those frames before reading pixels.
 The graphical performance check covers every zoom, selection, buffered panning and cache-boundary
 loads, with a 512-node ceiling, 50ms CPU interaction budget and 60ms frame-p90 budget.
-`PerspectiveCity.NormalMagnification` is 1.8, making the normal tilted map view 80% closer.
-All zoom levels use this baseline; UI scaling and the legacy overhead grid are unchanged.
+`PerspectiveCity.Magnification` uses 1.9 for the normal view and 3.2 for the close
+view. Normal is eased back 5% from the previous 2.0 scale, while the close view stays
+at 3.2. New desktop games and restarted/new sessions start at zoom level 1 (the nominal
+2x control); loaded games retain saved camera/zoom state. The visual step is about 1.68. Overview zoom levels retain the 1.8 baseline divided by stride.
+The nominal 1x/2x controls, UI scaling, legacy overhead grid, native render resolution,
+cell selection strides and camera-aware picking remain unchanged.
 Perspective range rings draw as antialiased screen-space circles anchored at their projected
 source and scaled by camera magnification. They do not inherit camera foreshortening or
 terminal-cell 12/22 compensation, and remain approximate timely-response guides.
@@ -932,8 +1186,36 @@ are sampled at most one cell apart before smoothing, so sparse flat stretches
 cannot stretch a summit transition into a long shallow trench. Stable terrace
 samples within 0.06 units settle back onto the terrace; uniform straight
 stretches then coalesce up to six cells. Smoothed centerline heights define the shared
-road grade, including raised water crossings. Offset edges define a 0.6-cell
-carriageway and a 0.12-cell shoulder on either side; joins share their edge vertices.
+road grade, including raised water crossings. Offset edges define a one-cell local
+carriageway or two-cell King's Road, with a 0.12-cell shoulder on either side; joins
+share their edge vertices. Grade lookup buckets cover the full miter-support reach,
+including exact map/cell boundaries. Uniform-height shortcuts cannot report support
+outside that reach.
+Paved roads have shallow raised stone edging; dirt roads have a wider, low earthy verge,
+and wooden bridges retain timber-colored edge beams. These bands lie inside the road bed,
+reuse the pixel materials and cached chunk mesh, and stop at ordinary intersections.
+Their actual triangles participate in picking; there are no per-stone scene nodes.
+Curved curb fragments interpolate shared inner/outer miter endpoints rather than
+offsetting cell-clipped fragments independently. Every touched pavement cell clips
+the complete nearby border bands, including bands whose outer edge lies in the next
+cell, so diagonal cell crossings cannot lose triangular wedges. Bands split at cell
+and road-intersection boundaries before exposed-edge classification. Candidates are
+cached per cell/road type rather than recomputed for each pavement fragment; normal
+junction openings remain clear and eligible straight strips still coalesce. The perspective
+smoke samples actual emitted curb heights around bends/intersections at both zooms
+and all four camera headings.
+Acute unsupported terrace tips beside
+curves are trimmed into supported road grade; broad hill remnants remain intact.
+Shared cell edges split at road-grade stations so shoulders and terrace faces meet
+without height-interpolation cracks. Bridge approaches close cut faces below the deck
+while retaining terrain underneath.
+Normal/close-zoom road selection remains one physical map cell, with both halves of a
+two-cell highway independently selectable, including bridge decks and rails. Road clicks
+must not snap to the logical centerline. At 0.5x/0.25x, a single
+coarse selection follows a road-centered ribbon at the zoom's block size so its
+cross-section contains the whole highway. `RoadPath.SourceCells` retains logical network ownership
+separately from selection. Pointer inspection uses the actual picked surface point; this is not a nearby-road
+status fallback. Generic terrain/placement picking remains in physical map-cell space.
 Road junctions are ordinary intersections regardless of rank. The former
 `Ramp`/`AlongHost` shaping is retired: an acute minor road is not redirected
 along a highway as an invented merge ramp. Flat shoulders keep the terrain
@@ -1029,12 +1311,23 @@ sea or broad non-river bodies. A cached flow atlas carries incoming/outgoing dir
 and outlet-distance phase. `RiverRippleLayout` defines quadratic tracks joining
 water-cell edge midpoints, rounding turns without moving the shoreline or terrain.
 Sparse chunky ripple accents travel downstream at 0.75 world cells per second,
-with eight updates per second and one active cell per eight distance steps.
+with eight updates per second and one active cell per roughly eight distance steps.
+Deterministic per-wave offsets vary arrival intervals while preserving continuous tracks across
+cells and chunks; cluster sizes and brightness also vary. The float flow atlas retains full outlet
+distance so wave identities do not repeat at every eight-cell boundary.
 The coarse base-water texture stays stationary; most pixels do not animate. The existing
 muted water palette remains unchanged. All cached chunks use the same rendered
 flow clock, including chunks first revealed by panning.
 Decorative river motion continues while gameplay is paused, without advancing the simulation.
-Effects-off and reduced-motion modes freeze it without rebuilding terrain geometry.
+`RiverActivityLayout` schedules sparse, staggered splashes and fish jumps independently of
+simulation time. A bounded set of at most 24 open-water sites, one per eight-cell region,
+uses a single reusable colored cube multimesh for fish bodies/tails and chunky splash droplets.
+Candidate sites are cached with terrain; camera changes select the visible nearest sites
+without rescanning terrain or letting an off-screen buffered region consume the activity limit.
+Fish follow a short raised arc and end in a splash; road/bridge corridors are excluded.
+Effects-off and reduced-motion modes freeze flow and hide fish/splashes without rebuilding terrain.
+`ShorelineLayout.BankCell` excludes hilltops, preserving their grass palette beside rivers;
+the existing earthy cliff faces and lowland bank coloring remain intact.
 Road shoulders share one canonical height for each world-space vertex, including cell/chunk
 boundaries, so terrace seams cannot create brown wedges inside the tan incline. Terrace-remnant
 cleanup is limited to the shoreline's land polygons; water beneath bridge approaches is never

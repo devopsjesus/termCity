@@ -72,7 +72,7 @@ public static class GuideContent
     {
         string text = "CITY SIZE AND MILESTONES\n\n" +
             "Population milestones permanently unlock buildings, even if the population later falls.\n" +
-            "The Weekly Report shows your current size and progress toward the next size.\n\n" +
+            "Reports > Milestones shows your current size and next target; scroll for every size and its unlocks.\n\n" +
             string.Join("\n\n", CityProgression.Milestones.Select(m =>
                 $"{(game.HighestMilestone >= m.Population ? "[Reached]" : "[Locked]")} {m.Name}: {m.Population:N0} souls\n" +
                 $"Gold grant: {Fmt.Money(CityProgression.GoldBonus(game, m))}\n" +
@@ -183,6 +183,7 @@ public static class GuideContent
         var rows = game.Map.Content.Roads.Where(r => r.PlayerPlaceable).OrderBy(r => r.Rank).Select(road => new[]
         {
             road.Name,
+            road.WidthCells.ToString(),
             Fmt.Money((int)Math.Round(game.Config.RoadCostPerCell * road.CostMultiplier)),
             Fmt.Money(road.WeeklyUpkeep),
             road.TrafficCapacity.ToString(),
@@ -191,10 +192,12 @@ public static class GuideContent
             "Sims can walk over land without roads. Open-ground travel is six times slower than a track.\n" +
             "Repeated journeys gradually wear paths from buildings to the closest reachable road.",
             TextTable.Text(
-                [new("ROAD"), TableColumn.Right("COST/CELL"), TableColumn.Right("UPKEEP/WK"), TableColumn.Right("TRAFFIC")],
+                [new("ROAD"), TableColumn.Right("WIDTH"), TableColumn.Right("COST/CELL"), TableColumn.Right("UPKEEP/WK"), TableColumn.Right("TRAFFIC")],
                 rows.Select(r => (IReadOnlyList<string>)r).ToArray()),
             "LAYING ROADS\n" +
-            "  T draws a line at any angle: place the first end, move or drag the second, Enter confirms.\n" +
+            "  T draws roads at any angle: click an endpoint to place the preview, or use arrows and Enter.\n" +
+            "  Holding and dragging previews a further extension; release builds it. Parallel overlaps are rejected.\n" +
+            "  Placement keeps the selected road type and continues until Esc; middle-drag pans.\n" +
             "  B previews the selected cells with the default track. The area menu has every road type.\n" +
             "  Every road type is drawn as smooth curves that join one another, whatever the angle.\n" +
             "  Roads cross and branch but never run side by side: a new road may meet another only end-on\n" +

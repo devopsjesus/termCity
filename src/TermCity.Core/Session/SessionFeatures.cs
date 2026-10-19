@@ -100,6 +100,8 @@ public sealed partial class GameSession
     public bool RoadToolActive { get; private set; }
     public bool BuildingToolActive => Preview?.Kind == PlacementKind.Building;
     public bool FixedPlacementToolActive => BuildingToolActive || Preview?.Kind == PlacementKind.RoadTemplate;
+    public bool MapNavigationAllowed => Prompt is null &&
+        (Preview is null || RoadToolActive || FixedPlacementToolActive);
     public string? FixedPlacementError
     {
         get
@@ -325,10 +327,30 @@ public sealed partial class GameSession
         _previewMenu = CaptureMenu() ?? _selectedMenu;
         RoadToolActive = true;
         _lineRoad = road ?? Game.DefaultRoad;
+        Cursor = RoadToolCell(Cursor);
         _roadAnchor = Cursor;
         Anchor = null;
         Selection = null;
         RefreshRoadLine();
+    }
+
+    private Pos RoadToolCell(Pos cell)
+    {
+        cell = Clamp(cell);
+        var path = Game.Network.RoadAtCellCenter(cell.X, cell.Y);
+        if (path is null || Game.Map.HasRoad(cell.X, cell.Y)) return cell;
+        Pos owner = cell;
+        double nearest = double.PositiveInfinity;
+        foreach (var candidate in path.SourceCells)
+        {
+            if (Game.Map.RoadTypeAt(candidate.X, candidate.Y) != path.Type) continue;
+            double distance = (candidate.X - cell.X) * (double)(candidate.X - cell.X) +
+                (candidate.Y - cell.Y) * (double)(candidate.Y - cell.Y);
+            if (distance >= nearest) continue;
+            nearest = distance;
+            owner = candidate;
+        }
+        return owner;
     }
 
     private void RefreshRoadLine()
@@ -336,11 +358,13 @@ public sealed partial class GameSession
         var line = CellLines.Between(_roadAnchor, Cursor);
         var area = CellRect.FromCorners(_roadAnchor, Cursor);
         var road = _lineRoad ?? Game.DefaultRoad;
-        var quote = Game.QuoteRoad(line, road);
-        var laid = Game.PlanRoad(line, road).ToHashSet();
+        var plan = Game.PlanRoad(line, road, out var error);
+        var quote = Game.QuotePlannedRoad(line, plan, road);
+        var laid = plan.ToHashSet();
         bool hasGap = line.Any(p => !laid.Contains(p) && !Game.Map.HasRoad(p.X, p.Y));
         Preview = new(PlacementKind.Road, area, quote,
-            hasGap ? road.Name + " line (gaps)" : road.Name + " line", Road: road, Cells: line.ToHashSet(),
+            error is not null ? road.Name + ": " + error : hasGap ? road.Name + " line (gaps)" : road.Name + " line",
+            Road: road, Cells: line.ToHashSet(),
             ValidCells: laid, RoadStroke: line);
         Changed?.Invoke();
     }
@@ -365,7 +389,18 @@ public sealed partial class GameSession
         }, preview.Building is { } type ? Game.BuildingPlacementWarning(type, preview.Area) : null);
         if (result.Success)
         {
-            ClearPreview();
+            if (preview.Kind == PlacementKind.Road)
+            {
+                RoadToolActive = true;
+                _lineRoad = preview.Road ?? Game.DefaultRoad;
+                _roadAnchor = Cursor;
+                Anchor = null;
+                Selection = null;
+                RefreshRoadLine();
+            }
+            else if (preview.Template is { } template)
+                RefreshRoadTemplate(template);
+            else ClearPreview();
         }
 
         return result;
@@ -399,11 +434,24 @@ public sealed partial class GameSession
             return;
         }
 
+        var road = RoadToolActive ? _lineRoad : null;
+        var template = Preview?.Template;
+        var cursor = Cursor;
+        var roadMenu = _previewMenu;
+        void ResumeRoadPlacement()
+        {
+            if (road is null && template is null) return;
+            PlaceCursor(cursor);
+            if (road is not null) BeginRoadLine(road);
+            else if (template is not null) PreviewRoadTemplate(template);
+            _previewMenu = roadMenu;
+        }
         Game.Paused = true;
         ClearPreview();
         ShowPrompt("Undo last action",
             $"Undo restores the entire city to immediately before the last successful action, including gold, residents and time. The game will remain paused. {UndoCount} action(s) available.",
-            [new("Undo", Undo), new("Cancel", CancelPrompt)]);
+            [new("Undo", () => { Undo(); ResumeRoadPlacement(); }),
+                new("Cancel", () => { CancelPrompt(); ResumeRoadPlacement(); })]);
     }
 
     private void Undo()
@@ -714,17 +762,12 @@ public sealed partial class GameSession
 
     public void ShowMilestone(int index)
     {
-        index = Math.Clamp(index, 0, CityProgression.Milestones.Count - 1);
+        int reachedCount = Math.Max(1, CityProgression.Milestones.Count(m => m.Population <= Game.HighestMilestone));
+        index = Math.Clamp(index, 0, reachedCount - 1);
         Game.Paused = true;
-        var tabs = Enumerable.Range(0, CityProgression.Milestones.Count)
-            .Select(i => MilestoneReport.Build(Game, i))
-            .Select(page => new PromptTab(page.Title, page.Text)).ToArray();
-        ShowTabbedPrompt(MilestoneReport.Title, tabs, index,
-        [
-            new("Previous", () => ShowMilestone(index - 1)),
-            new("Next", () => ShowMilestone(index + 1)),
-            new("Continue", CancelPrompt),
-        ]);
+        var page = MilestoneReport.Build(Game, index);
+        ShowPrompt(new SessionPrompt(MilestoneReport.Title, page.Text,
+            [new("Continue", CancelPrompt)], activeTab: index));
     }
 
     private void UpdateFeedback()

@@ -25,16 +25,35 @@ Each game week, in order:
 
 ### Demand and vacant land
 
-Residential demand uses occupied commercial/industrial buildings, not the number
-of empty plots designated for them. Marking more vacant industry or commerce
-therefore cannot manufacture a housing shortage. Vacant residential zoning also
-does not manufacture business demand. Designating land can reduce demand for that
-same zone by supplying more available plots.
+Demand bars describe **growth pressure**, not a shortage of zoned land. Empty zoning
+does not satisfy resident or business needs and does not change the bars by itself.
+Residential pressure comes from the same expected weekly migrant-family rate used
+by `CityGame.PlanWeek`, including attraction and seasonal travel under Full rules.
+Positive pressure can therefore remain visible while families move into zoned homes;
+existing homes with spare room are filled before new houses are built.
+Within each group, residents prefer the shortest reachable road approach, measured from
+the property perimeter to the visible road bed. Equally close choices remain varied;
+farther plots and roadless settlements remain valid when nearer space is unavailable.
+This preference does not change arrival quotas or require an outside-connected road.
+
+Commercial and industrial pressure uses the lesser of expected weekly business
+arrivals and remaining supported building slots, divided by total supported slots.
+The arrival rate includes the same business-climate multiplier used by weekly growth.
+Missing customers, full supported capacity or zero trade climate show zero demand,
+even when many plots have been zoned. Fractional arrival rates mean some weeks may
+have no growth; the bars are forecasts, not promises that every plot fills immediately.
+Weekly arrival quotas are sampled at the start of each week. Forecasts reflect current
+conditions; arrivals already scheduled for this week may finish after conditions change.
 
 Full-rules business demand and growth capacity share the same housing measure:
 the larger of households (including pending residential removals) and population
 divided by five. Classic uses occupied residential buildings. Existing business
 buildings pending removal still count until they are actually removed.
+`Demand.ExpectedArrivals` and `Demand.SupportedBuildings` are shared by growth
+planning and demand computation; reading a forecast does not advance random state.
+Demand tooltips and reports show forecast rates and separate local blockers:
+missing complete plots, road overlaps, unreachable land and low attraction/trade climate.
+Demand may be positive while a particular plot is unsuitable; that is not missing demand.
 
 `CityAnalysis.Assess` builds a `CityIndicators` snapshot whenever the layout, budget or week changes. Each home has a
 happiness of 70 minus charges, each in points:
@@ -118,6 +137,13 @@ shortfall becomes **arrears**, added to next year's bill, and makes raiders bold
 
 ## Density
 
+Starter homes, market stalls and workshops normally occupy one logical cell.
+Growth may choose a rare 1x2, 2x1 or 2x2 variant, but new default zoned buildings
+never exceed 2x2. A single zoning click reserves one minimum 1x1 plot, so thin
+strips and lone clear cells can settle. A larger visual plot is still one building:
+capacity, households, jobs, taxes and upkeep are not multiplied by footprint area.
+Compact footprints retain existing per-building population/economic capacities and tier gates.
+
 Buildings come in three levels (house/apartments/tower, shop/office/skyscraper, factory/plant/complex). A building may
 upgrade when population, land value (scaled by the scenario's density appetite), clear expansion space, fuel and water, and local
 demand all allow it, and downgrades when land value collapses. City Grew! permanently opens population
@@ -181,6 +207,13 @@ Road proximity gives a land-value and travel bonus, including roads not connecte
 Walking is permitted anywhere on land; bridges allow water crossings.
 Buildings wear a new path segment toward the nearest reachable road each day; repeated journeys
 compact it into a faster path. Paths persist but are not paid roads.
+Established home gardens are protected from footpath wear and rendering. A journey may
+meet a garden at its boundary, but cannot cut through it or hide its lawn and planting.
+Paths connect to ordinary road approaches, not bridge decks or sides. Bridges remain
+usable for normal travel and service deliveries, including crossings over water.
+Natural footpaths never grow or render on hill terrain, even on flat terrace tops or
+hill remnants leveled by nearby road cuts. Roads and ordinary service travel can still
+cross hills. Existing hill wear stays in saves but is not drawn.
 Existing buildings are not removed by the road-clearance rule.
 Roads generated with the map have no upkeep. The city pays upkeep only for roads the player builds.
 Expenses are the upkeep of every civic building (scaled by the funding level), local road upkeep, loan interest and

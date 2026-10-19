@@ -139,7 +139,51 @@ public class InterfaceArtworkTests
         map.PathLayer[map.Index(10, 10)] = 3;
         map.PathLayer[map.Index(14, 10)] = 3;
         map.PathLayer[map.Index(11, 11)] = 3;
-        Assert.All(FootpathLayout.Strokes(map), stroke => Assert.Single(stroke.Points));
+        Assert.Empty(FootpathLayout.Strokes(map));
+    }
+
+    [Fact]
+    public void PersistentWearWithoutACurrentJourneyRendersAContinuousPathNotDots()
+    {
+        var map = TestCity.Flat().Map;
+        map.BuildingPaths = [];
+        for (int x = 10; x <= 16; x++) map.PathLayer[map.Index(x, 10)] = 6;
+        var stroke = Assert.Single(FootpathLayout.Strokes(map));
+        Assert.Equal(new Vector2(10.5f, 10.5f), stroke.Points[0]);
+        Assert.Equal(new Vector2(16.5f, 10.5f), stroke.Points[^1]);
+        Assert.Equal(7, stroke.Points.Count);
+        Assert.All(stroke.Points, point => Assert.Equal(10.5f, point.Y));
+    }
+
+    [Fact]
+    public void PersistentPathBranchesConnectToBuildingsAndRoadsWithoutBridgingUnwornLand()
+    {
+        var map = TestCity.Flat().Map;
+        map.BuildingPaths = [];
+        for (int x = 10; x <= 16; x++) map.PathLayer[map.Index(x, 10)] = 6;
+        for (int y = 11; y <= 13; y++) map.PathLayer[map.Index(13, y)] = 6;
+        map.SetRoad(17, 10, true);
+        map.SetBuildingFootprint(map.Content.Buildings.Get("Town Well"), new(9, 10, 1, 1));
+        var strokes = FootpathLayout.Strokes(map);
+        Assert.All(strokes, stroke => Assert.True(stroke.Points.Count >= 2));
+        Assert.Contains(strokes, stroke => stroke.EndsAtRoad && stroke.Points[^1] == new Vector2(17.5f, 10.5f));
+        Assert.Contains(strokes, stroke => stroke.Points[0] == new Vector2(10, 10.5f) ||
+            stroke.Points[^1] == new Vector2(10, 10.5f));
+        Assert.Contains(strokes, stroke => stroke.Points[0] == new Vector2(13.5f, 10.5f) ||
+            stroke.Points[^1] == new Vector2(13.5f, 10.5f));
+        Assert.DoesNotContain(strokes.SelectMany(stroke => stroke.Points), point => point.X < 9.9f);
+    }
+
+    [Fact]
+    public void IsolatedPersistentWearAndWaterCellsDoNotProduceDotAnomalies()
+    {
+        var map = TestCity.Flat().Map;
+        map.BuildingPaths = [];
+        map.PathLayer[map.Index(10, 10)] = 6;
+        map.PathLayer[map.Index(14, 10)] = 6;
+        map.SetTerrain(14, 10, map.Content.Terrains.Get("Water"));
+        Assert.Empty(FootpathLayout.Strokes(map));
+        Assert.Equal(6, map.PathLayer[map.Index(10, 10)]);
     }
 
     [Fact]
@@ -235,6 +279,7 @@ public class InterfaceArtworkTests
         Assert.Contains(houses, house => !house.CrosswiseRoof);
         Assert.Contains(houses, house => house.Wing);
         Assert.Contains(houses, house => house.Chimney);
+        Assert.Equal(Enum.GetValues<HouseStyle>().Order(), houses.Select(house => house.Style).Distinct().Order());
         Assert.Equal(HouseAppearance.At(10, 12, 1), HouseAppearance.At(10, 12, 1));
         Assert.True(HouseAppearance.At(10, 12, 3).Height > HouseAppearance.At(10, 12, 1).Height);
         Assert.All(houses, house =>

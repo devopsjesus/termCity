@@ -116,7 +116,7 @@ public partial class CityMinimap : Control
 
     private void HandlePointer(InputEvent input)
     {
-        if (Session.Prompt is not null || Session.Preview is not null)
+        if (!Session.MapNavigationAllowed)
         {
             _dragging = false;
             return;

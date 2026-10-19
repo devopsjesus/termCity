@@ -78,8 +78,11 @@ public class TrafficCircleTests
         session.MoveCursor(1, 0);
         Assert.Equal(11, session.Preview.Area.X);
         Assert.True(session.ConfirmPreview().Success);
-        Assert.Null(session.Preview);
+        Assert.True(session.FixedPlacementToolActive);
+        Assert.Same(RoadTemplate.TrafficCircle, session.Preview!.Template);
         Assert.Equal(1, session.UndoCount);
+        session.CancelPreview();
+        Assert.False(session.FixedPlacementToolActive);
         session.RequestUndo();
         session.SelectPrompt(0);
         Assert.False(session.Game.Map.HasRoad(11, 5));

@@ -351,6 +351,8 @@ public sealed class WaterGenerator : ITerrainGenerator
         {
             cx = rng.Chance(0.5) ? 0 : map.Width - 1;
             cy = rng.Chance(0.5) ? 0 : map.Height - 1;
+            side = cy == 0 ? MapSide.North : MapSide.South;
+            alongX = true;
         }
         else
         {
@@ -528,7 +530,7 @@ public sealed class WaterGenerator : ITerrainGenerator
                     continue;
                 }
 
-                segments.Add(MakeSegment(map, rng, source, target));
+                segments.Add(MakeSegment(map, rng, source, target, mouth: true));
             }
             else
             {
@@ -551,14 +553,15 @@ public sealed class WaterGenerator : ITerrainGenerator
 
                 segments.Add(MakeSegment(map, rng, a, join));
                 segments.Add(MakeSegment(map, rng, b, join));
-                segments.Add(MakeSegment(map, rng, join, target));
+                segments.Add(MakeSegment(map, rng, join, target, mouth: true));
             }
 
             if (segments.All(s => IsRiverClear(map, ids, s, riverId, body.Id)))
             {
                 foreach (var segment in segments)
                 {
-                    Commit(map, terrain, ids, riverId, segment.Cells);
+                    Commit(map, terrain, ids, riverId,
+                        segment.Cells.Where(cell => ids[cell.Y * map.Width + cell.X] != body.Id));
                 }
 
                 return true;
@@ -581,6 +584,10 @@ public sealed class WaterGenerator : ITerrainGenerator
         for (int tries = 0; tries < 20; tries++)
         {
             var side = (MapSide)rng.Next(4);
+            if (rng.Chance(0.8))
+                side = body.Side is { } shore ? (MapSide)(((int)shore + 2) % 4) :
+                    body.Span >= body.Depth ? (rng.Chance(0.5) ? MapSide.North : MapSide.South) :
+                    (rng.Chance(0.5) ? MapSide.East : MapSide.West);
             if (body.Side == side && body.Kind != WaterKind.InlandLake)
             {
                 continue;
@@ -599,7 +606,7 @@ public sealed class WaterGenerator : ITerrainGenerator
         return (0, 0);
     }
 
-    private static Segment MakeSegment(GameMap map, GameRandom rng, (int X, int Y) from, (int X, int Y) to)
+    private static Segment MakeSegment(GameMap map, GameRandom rng, (int X, int Y) from, (int X, int Y) to, bool mouth = false)
     {
         double length = Distance(from, to);
         double dx = to.X - from.X, dy = 2.0 * (to.Y - from.Y);
@@ -628,14 +635,20 @@ public sealed class WaterGenerator : ITerrainGenerator
 
             // A stamp about five columns by three rows, widening and narrowing a little along the way.
             double ry = 1.15 + 0.35 * noise.Noise(s * length * 0.025, offset + 50);
-            double rx = 2 * ry;
+            double alongRadius = 2 * ry;
+            double spread = mouth ? Math.Clamp((s - 0.82) / 0.18, 0, 1) : 0;
+            spread = spread * spread * (3 - 2 * spread);
+            double acrossRadius = alongRadius * (1 + 0.65 * spread);
             double centerY = vy / 2;
-            for (int yy = (int)Math.Floor(centerY - ry); yy <= (int)Math.Ceiling(centerY + ry); yy++)
+            for (int yy = (int)Math.Floor(centerY - acrossRadius / 2); yy <= (int)Math.Ceiling(centerY + acrossRadius / 2); yy++)
             {
-                for (int xx = (int)Math.Floor(vx - rx); xx <= (int)Math.Ceiling(vx + rx); xx++)
+                for (int xx = (int)Math.Floor(vx - acrossRadius); xx <= (int)Math.Ceiling(vx + acrossRadius); xx++)
                 {
-                    double ex = (xx - vx) / rx, ey = (yy - centerY) / ry;
-                    if (ex * ex + ey * ey <= 1.05 && map.InBounds(xx, yy))
+                    double ex = xx - vx, ey = 2 * (yy - centerY);
+                    double along = length > 0 ? (ex * dx + ey * dy) / length : ex;
+                    double across = ex * px + ey * py;
+                    if (along * along / (alongRadius * alongRadius) + across * across / (acrossRadius * acrossRadius) <= 1.05 &&
+                        map.InBounds(xx, yy))
                     {
                         cells.Add((xx, yy));
                     }

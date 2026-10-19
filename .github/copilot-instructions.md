@@ -121,16 +121,22 @@ commands.
   headless validation; do not open graphical smoke windows overnight. Preserve
   existing user game windows. Suppress already-scheduled audio alerts as well.
   Night mode is currently **OFF** (disabled October 12, 2026). The normal
-  build/test/preview announcement rules below are active.
+  completion/preview rules below are active.
 
 - For renderer changes, inspect a graphical capture and test rotation, zoom,
   picking and previews, not just compilation. Preserve batching, cached terrain,
   buffered panning and separate indicator updates; selection must not rebuild
   the entire city. Check large random maps and populated scenarios using the
   existing perspective performance smoke test and its frame/interaction budgets.
-- After a successful build, announce that the build passed and tests are starting
-  using the same local herald voice described below. Do not use audio to announce
-  that tests passed; report successful test results in chat only.
+- When performance is close to a budget and requested functionality and correctness
+  checks pass, finish the work instead of repeatedly chasing incremental gains.
+  Note the measured result, budget and overrun in the final chat summary; do not
+  hide the finding or weaken the benchmark. Near-limit performance findings alone
+  do not block completion. Crashes, correctness failures and substantial
+  regressions still require fixes. Continue deeper optimization only when asked.
+- Keep intermediate builds and tests quiet. Use the local herald voice only after
+  the final game build and requested functional validation are finished.
+  Do not use audio to announce test results.
   If a game window is already open, preserve it and do not open another one.
   Otherwise, launch that exact latest Debug build while validation runs; confirm
   the owned process stays alive and startup reports no errors. Do not launch
@@ -138,13 +144,13 @@ commands.
 - Monitor only whether the mouse has moved since launching the preview, not
   keystrokes or other user activity. If tests fail before any mouse movement,
   close only the preview process launched for that validation attempt, fix the
-  failure, rebuild, announce and relaunch while rerunning relevant tests.
+  failure, rebuild and relaunch quietly while rerunning relevant tests.
   Once the mouse has moved, do not automatically close the user's preview;
   report the failure and obtain permission before interrupting it. If pointer
   monitoring is unavailable, do not assume the user has not interacted.
-- Report when tests finish, explicitly distinguishing passed from failed.
-  Successful test results must be silent, not spoken.
-  These build/test announcements are progress alerts, not task completion.
+- Report validation outcomes in the final chat summary, explicitly distinguishing
+  passed checks from failed checks and near-limit performance findings.
+  Test results must be silent, not spoken.
   Reserve "All is ready, sire" for fully verified completion.
 - Announce completion with a brief generic medieval-soldier/herald-style
   synthesized line, not a chime, only when requested work is fully finished and
@@ -156,7 +162,8 @@ commands.
   need not sound 16-bit, and should not use robotic/retro voice effects or Daniel's
   previous slow delivery. Do not claim stock local speech has neural-voice quality.
   Do not announce completion during intermediate progress,
-  unfinished background tests or failed validation; build/test progress alerts
-  are permitted as specified above. If local speech is unavailable
+  unfinished background tests or unresolved functional validation failures.
+  Disclosed near-limit performance findings follow the completion policy above.
+  If local speech is unavailable
   or fails, report that briefly rather than claim it played; do not install voice
   tooling or download audio solely for this notification.

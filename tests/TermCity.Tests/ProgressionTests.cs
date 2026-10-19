@@ -77,7 +77,9 @@ public class ProgressionTests
         Assert.False(session.GuideVisible);
         Assert.True(game.GuideDismissed);
         Assert.Equal("Your City Grew!", session.Prompt!.Title);
-        Assert.Equal("Village", session.Prompt.Tabs![session.Prompt.ActiveTab].Title);
+        Assert.Equal(2, session.Prompt.ActiveTab);
+        Assert.Null(session.Prompt.Tabs);
+        Assert.Equal("Continue", Assert.Single(session.Prompt.Choices).Label);
         Assert.Contains("VILLAGE GREEN", session.Prompt.Text);
         Assert.DoesNotContain("Tavern", session.Prompt.Text);
         Assert.Contains("STONE KEEP", session.Prompt.Text);

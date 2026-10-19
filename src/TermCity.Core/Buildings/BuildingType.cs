@@ -129,7 +129,6 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Cottage",
-            Width = 2,
             PowerUse = 2,
             WaterUse = 2,
             Glyphs = ["⌂", "⌂", "⌂", "▟"],
@@ -141,7 +140,6 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Market Stall",
-            Width = 2,
             PowerUse = 3,
             WaterUse = 2,
             Glyphs = ["▣", "▦", "▣"],
@@ -153,7 +151,6 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Workshop",
-            Width = 2,
             PowerUse = 6,
             WaterUse = 4,
             Glyphs = ["▤", "▩", "▤"],
@@ -167,7 +164,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Burgage House",
-            Width = 2, Height = 2,
+            Height = 2,
             PowerUse = 6,
             WaterUse = 6,
             Glyphs = ["▥", "▥", "▧"],
@@ -181,7 +178,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Merchant House",
-            Width = 3, Height = 2,
+            Width = 2,
             PowerUse = 9,
             WaterUse = 5,
             Glyphs = ["▥", "▧", "▥"],
@@ -195,7 +192,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Mill",
-            Width = 3, Height = 2,
+            Width = 2, Height = 2,
             PowerUse = 14,
             WaterUse = 10,
             Glyphs = ["▥", "▨", "▥"],
@@ -211,7 +208,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Tenement",
-            Width = 2, Height = 3,
+            Width = 2, Height = 2,
             PowerUse = 14,
             WaterUse = 14,
             Glyphs = ["█", "▐", "█"],
@@ -225,7 +222,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Market Hall",
-            Width = 4, Height = 2,
+            Width = 2, Height = 2,
             PowerUse = 28,
             WaterUse = 12,
             Glyphs = ["█", "▐", "▌"],
@@ -239,7 +236,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Great Forge",
-            Width = 4, Height = 2,
+            Width = 2, Height = 2,
             PowerUse = 30,
             WaterUse = 20,
             Glyphs = ["▓", "▒", "▓"],
@@ -272,7 +269,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(Civic("Charcoal Burners", ServiceKind.Power, "Ψ", 0xff8c5a, cost: 34_000, upkeep: 100,
             capacity: 1_200, pollution: 8, text: "Cheap, plentiful fuel for hearths and forges; the smoke carries a long way"));
         registry.Register(Civic("Woodlot", ServiceKind.Power, "☼", 0xffe066, cost: 8_000, upkeep: 40,
-            capacity: 300, text: "Coppiced wood: clean fuel, but each lot supplies far less"));
+            capacity: 300, text: "A fenced yard of stacked firewood: clean fuel, but each lot supplies far less"));
         registry.Register(Civic("Aqueduct", ServiceKind.Water, "◍", 0x66c7ff, cost: 14_000, upkeep: 60,
             capacity: 900, water: true, text: "Channels water from a river, mere or the sea; must stand on the shore"));
         registry.Register(Civic("Town Well", ServiceKind.Water, "◎", 0x8fd8ff, cost: 4_000, upkeep: 20,

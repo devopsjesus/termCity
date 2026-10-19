@@ -41,10 +41,12 @@ public partial class Main : Control
             var game = CityGame.New(_options.Config,
                 startingDate: !_options.SmokeTest && !_options.DumpMap ? DateTime.Now : null);
             game.Paused = true;
+            DebugStarterSetup? starter = _options.DebugStarter ? DebugStarterSetup.Apply(game) : null;
             string savePath = ProjectSettings.GlobalizePath(
                 _options.SmokeTest ? "user://smoke/quicksave.json" : "user://quicksave.json");
             Session = new GameSession(game, savePath,
-                showGuide: !_options.Load && !_options.SmokeTest && !_options.DumpMap)
+                showGuide: !_options.Load && !_options.SmokeTest && !_options.DumpMap && !_options.DebugStarter,
+                initialCameraTarget: starter?.CameraTarget)
             {
                 StartAtCurrentWeek = !_options.SmokeTest && !_options.DumpMap,
 #if DEBUG
@@ -55,6 +57,7 @@ public partial class Main : Control
             {
                 throw new IOException(Session.Message);
             }
+            if (!_options.Load && !_options.SmokeTest && !_options.DumpMap) Session.SetZoom(1);
             if (_options.DumpMap)
             {
                 var text = new StringBuilder($"Seed {Session.Game.Config.Seed}, {Session.Game.Map.Width}x{Session.Game.Map.Height}\n");
@@ -79,7 +82,11 @@ public partial class Main : Control
             Map.VerifyGlyphs(Session.Game.Map.Content);
             CreateEffects();
             CreateLayout(font);
-            if (!_options.SmokeTest) Map.SetPerspective(true);
+            if (!_options.SmokeTest)
+            {
+                Map.SetPerspective(true);
+                if (!_options.Load && starter is null) Session.CenterOn(Session.Cursor);
+            }
             CreateMusic();
             CreateClicks();
             Session.Placed += PlayPlacementClick;
@@ -92,6 +99,12 @@ public partial class Main : Control
             GetWindow().FocusExited += OnFocusExited;
             _started = true;
             UpdateUi();
+            if (starter is not null)
+                GD.Print($"TERMCITY_DEBUG_STARTER_OK spur={starter.Spur} well={starter.Well} " +
+                    $"woodlot={starter.Woodlot} residential={starter.Residential} " +
+                    $"camera-target={starter.CameraTarget} " +
+                    $"residential-cells={Session.Game.Map.ZoneCells(TermCity.Core.World.ZoneType.Residential).Count()} " +
+                    $"paused={Session.Game.Paused} clock-suspended={Session.ClockSuspended}");
             if (_options.SmokeTest)
             {
                 Callable.From(RunSmokeTest).CallDeferred();
@@ -228,7 +241,16 @@ public partial class Main : Control
                 GodotSmoke.Run(this);
                 await GodotSmoke.RunNativeInput(this);
             }
-            await GodotSmoke.VerifyBuildingRendering(this);
+            if (_options.MilestoneSmokeTest)
+                await GodotSmoke.VerifyReachedMilestoneDialog(this, _options.CapturePath);
+            else await GodotSmoke.VerifyBuildingRendering(this);
+            if (_options.WoodlotSmokeTest)
+            {
+                await GodotSmoke.VerifyWoodlotArtwork(this, _options.CapturePath);
+                await GodotSmoke.VerifyActualSubmenuModels(this, _options.CapturePath);
+            }
+            if (_options.PlacementSmokeTest && !_options.PerspectiveSmokeTest)
+                await GodotSmoke.VerifyPlacementMapNavigation(this, _options.CapturePath);
             if (_options.PerspectiveSmokeTest) await GodotSmoke.VerifyPerspectiveRendering(this, _options.CapturePath);
             if (_options.PerspectivePerformanceTest) await PerspectivePerformanceSmoke.Run(this);
             if (headless)

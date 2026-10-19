@@ -41,7 +41,7 @@ public sealed record CityStats(
     };
 }
 
-/// <summary>How much residents want more of each zone type, from 0 (none) to 1 (strong).</summary>
+/// <summary>Growth pressure from prospective arrivals and unfilled business capacity, from 0 to 1.</summary>
 public readonly record struct Demand(double Residential, double Commercial, double Industrial)
 {
     public static int SupportingHomes(CityStats stats, GameConfig config) => config.FullRules
@@ -56,38 +56,47 @@ public readonly record struct Demand(double Residential, double Commercial, doub
         _ => 0,
     };
 
-    public static Demand Compute(CityStats stats, GameConfig config)
+    public static int SupportedBuildings(CityStats stats, GameConfig config, ZoneType zone)
     {
-        int zonedR = stats.Residential.Zoned;
-        int filledR = SupportingHomes(stats, config);
-
-        // Empty business plots are future supply, not existing employers needing more homes.
-        int neededForCommercial = stats.Commercial.Occupied == 0 ? 0 :
-            config.ResidentialPerCommercial * (stats.Commercial.Occupied - 1) + 1;
-        int neededForIndustrial = stats.Industrial.Occupied == 0 ? 0 :
-            config.ResidentialPerIndustrial * (stats.Industrial.Occupied - 1) + 1;
-        int neededR = Math.Max(config.MinResidentialCells, Math.Max(neededForCommercial, neededForIndustrial));
-
-        double residential = Math.Clamp((neededR - zonedR) / (double)neededR, 0, 1);
-        if (zonedR > 0 && stats.Residential.Filled >= zonedR)
-        {
-            // Every home is taken: people want somewhere else to live.
-            residential = Math.Max(residential, 0.6);
-        }
-
-        double commercial = 0, industrial = 0;
-        if (filledR >= config.MinResidentialCells)
-        {
-            commercial = ShortfallFor(filledR, config.ResidentialPerCommercial, stats.Commercial.Zoned);
-            industrial = ShortfallFor(filledR, config.ResidentialPerIndustrial, stats.Industrial.Zoned);
-        }
-
-        return new Demand(residential, commercial, industrial);
+        if (zone == ZoneType.Residential) return int.MaxValue;
+        int homes = SupportingHomes(stats, config);
+        if (homes < config.MinResidentialCells) return 0;
+        int ratio = zone == ZoneType.Commercial ? config.ResidentialPerCommercial : config.ResidentialPerIndustrial;
+        return (int)Math.Ceiling(homes / (double)ratio);
     }
 
-    private static double ShortfallFor(int filledResidential, int ratio, int zoned)
+    public static double ExpectedArrivals(CityStats stats, GameConfig config, ZoneType zone,
+        double attraction = 1, double businessClimate = 1, double travel = 1)
     {
-        int allowed = (int)Math.Ceiling(filledResidential / (double)ratio);
-        return Math.Clamp((allowed - zoned) / (double)allowed, 0, 1);
+        if (zone == ZoneType.Residential && config.FullRules)
+        {
+            int effective = Math.Max(stats.Residential.Filled, stats.Population / 5);
+            return (config.MaxNewResidentialPerWeek + effective * config.MigrationRatePerWeek) * attraction * travel;
+        }
+        int existing = zone == ZoneType.Residential ? stats.Residential.Occupied : SupportedBuildings(stats, config, zone);
+        int baseCap = zone switch
+        {
+            ZoneType.Residential => config.MaxNewResidentialPerWeek,
+            ZoneType.Commercial => config.MaxNewCommercialPerWeek,
+            ZoneType.Industrial => config.MaxNewIndustrialPerWeek,
+            _ => 0,
+        };
+        double rate = baseCap + Math.Ceiling(Math.Max(0, existing) * Math.Max(0, config.GrowthRatePerWeek));
+        return rate * (config.FullRules && zone != ZoneType.Residential ? businessClimate : 1);
+    }
+
+    public static Demand Compute(CityStats stats, GameConfig config,
+        double attraction = 1, double businessClimate = 1, double travel = 1)
+    {
+        double Pressure(ZoneType zone)
+        {
+            double arrivals = ExpectedArrivals(stats, config, zone, attraction, businessClimate, travel);
+            if (zone == ZoneType.Residential)
+                return Math.Clamp(arrivals / Math.Max(1, config.MaxNewResidentialPerWeek), 0, 1);
+            int supported = SupportedBuildings(stats, config, zone);
+            int remaining = Math.Max(0, supported - stats.For(zone).Occupied);
+            return supported == 0 ? 0 : Math.Clamp(Math.Min(remaining, arrivals) / supported, 0, 1);
+        }
+        return new(Pressure(ZoneType.Residential), Pressure(ZoneType.Commercial), Pressure(ZoneType.Industrial));
     }
 }

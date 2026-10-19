@@ -11,6 +11,32 @@ namespace TermCity.Tests;
 public class GodotPresentationTests
 {
     [Fact]
+    public void MilestoneSmokeIsExplicitAndSupportsDialogCaptures()
+    {
+        var options = GodotOptions.Parse(["--milestone-smoke-test", "--capture", "/tmp/milestone.png"]);
+        Assert.True(options.SmokeTest);
+        Assert.True(options.BuildingSmokeTest);
+        Assert.True(options.MilestoneSmokeTest);
+        Assert.Equal("/tmp/milestone.png", options.CapturePath);
+        Assert.False(GodotOptions.Parse([]).MilestoneSmokeTest);
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--milestone-smoke-test", "--load"]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--milestone-smoke-test", "--size", "SF"]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--milestone-smoke-test", "--perspective-smoke-test"]));
+    }
+
+    [Fact]
+    public void WoodlotSmokeIsExplicitAndSupportsArtworkCaptures()
+    {
+        var options = GodotOptions.Parse(["--woodlot-smoke-test", "--capture", "/tmp/woodlot.png"]);
+        Assert.True(options.SmokeTest);
+        Assert.True(options.BuildingSmokeTest);
+        Assert.True(options.WoodlotSmokeTest);
+        Assert.False(options.PerspectiveSmokeTest);
+        Assert.Equal("/tmp/woodlot.png", options.CapturePath);
+        Assert.False(GodotOptions.Parse([]).WoodlotSmokeTest);
+    }
+
+    [Fact]
     public void PerspectiveSmokeIsExplicitAndAllowsLocalCapture()
     {
         var options = GodotOptions.Parse(["--perspective-smoke-test", "--capture", "/tmp/termcity-perspective.png"]);

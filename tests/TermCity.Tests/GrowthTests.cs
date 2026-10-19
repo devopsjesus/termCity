@@ -59,15 +59,15 @@ public class GrowthTests
         ZoneRow(game, 19, 10, 5, ZoneType.Industrial);
 
         TestCity.Advance(game, 30);
-        Assert.InRange(game.Stats.Residential.Filled, 1, 4);
+        Assert.InRange(game.Stats.Residential.Filled, 1, 9);
         Assert.Equal(0, game.Stats.Commercial.Filled);
         Assert.Equal(0, game.Stats.Industrial.Filled);
 
         ZoneRow(game, 21, 9, 31, ZoneType.Residential);
         TestCity.Advance(game, 30);
         Assert.True(game.Stats.Residential.Filled >= 10);
-        Assert.Equal(1, game.Stats.Commercial.Filled);
-        Assert.Equal(1, game.Stats.Industrial.Filled);
+        Assert.Equal(game.SupportedCells(ZoneType.Commercial), game.Stats.Commercial.Filled);
+        Assert.Equal(game.SupportedCells(ZoneType.Industrial), game.Stats.Industrial.Filled);
     }
 
     [Fact]
@@ -80,7 +80,7 @@ public class GrowthTests
 
         TestCity.Advance(game, 80);
         int homes = game.Stats.Residential.Filled;
-        Assert.InRange(homes, 20, 30);
+        Assert.InRange(homes, 40, 60);
         Assert.Equal((int)Math.Ceiling(homes / 20.0), game.Stats.Commercial.Filled);
         Assert.Equal((int)Math.Ceiling(homes / 10.0), game.Stats.Industrial.Filled);
     }
@@ -160,13 +160,16 @@ public class GrowthTests
         ZoneRow(game, 21, 0, 40, ZoneType.Residential);
         TestCity.Advance(game, 20);
         var demand = game.Demand;
-        Assert.True(demand.Commercial > 0.5);
-        Assert.True(demand.Industrial > 0.5);
+        Assert.True(demand.Commercial > 0);
+        Assert.True(demand.Industrial > 0);
 
         ZoneRow(game, 19, 0, 5, ZoneType.Commercial);
-        ZoneRow(game, 19, 10, 5, ZoneType.Industrial);
-        Assert.Equal(0.0, game.Demand.Commercial);
-        Assert.Equal(0.0, game.Demand.Industrial);
+        ZoneRow(game, 19, 10, 10, ZoneType.Industrial);
+        Assert.Equal(demand.Commercial, game.Demand.Commercial);
+        Assert.Equal(demand.Industrial, game.Demand.Industrial);
+        TestCity.Advance(game, 20);
+        Assert.Equal(0, game.Demand.Commercial);
+        Assert.Equal(0, game.Demand.Industrial);
     }
 
     [Fact]

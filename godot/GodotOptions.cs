@@ -10,7 +10,11 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
     public bool Help { get; init; }
     public bool DumpMap { get; init; }
     public bool ReducedMotion { get; init; }
+    public bool DebugStarter { get; init; }
     public bool BuildingSmokeTest { get; init; }
+    public bool MilestoneSmokeTest { get; init; }
+    public bool WoodlotSmokeTest { get; init; }
+    public bool PlacementSmokeTest { get; init; }
     public bool PerspectiveSmokeTest { get; init; }
     public bool PerspectivePerformanceTest { get; init; }
     public int FramesPerSecond { get; init; } = 30;
@@ -24,9 +28,13 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
           --fps <n>         Maximum rendered frames per second, 5-60 (default: 30)
           --dump-map        Print the map and exit
           --reduced-motion  Turn all visual effects off (the V key cannot turn them back on)
+          --debug-starter   Debug only: well, woodlot, 4x10 homes beside the spur; start unpaused
           -h, --help        Show this help
           --smoke-test     Run engine integration checks and exit
           --building-smoke-test Verify building sprites at every zoom and exit
+          --milestone-smoke-test Verify reached-only unlocks and narrow milestone dialogs
+          --woodlot-smoke-test Verify fenced firewood yard, picking and model previews
+          --placement-smoke-test Verify map controls and clicked placement while building
           --perspective-smoke-test Verify tilted 3D camera, rotation and picking
           --perspective-performance-test Check zoom, pan and selection performance
           --capture <path> Save a PNG during a graphical smoke run
@@ -37,10 +45,14 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
         var config = new GameConfig { Seed = Random.Shared.Next() };
         bool smokeTest = false;
         bool buildingSmokeTest = false;
+        bool milestoneSmokeTest = false;
+        bool woodlotSmokeTest = false;
+        bool placementSmokeTest = false;
         bool perspectiveSmokeTest = false;
         bool perspectivePerformanceTest = false;
         string? capturePath = null;
         bool load = false, help = false, dump = false, reducedMotion = false;
+        bool debugStarter = false;
         string? loadPath = null;
         int fps = 30;
         for (int i = 0; i < arguments.Length; i++)
@@ -61,6 +73,11 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
                 reducedMotion = true;
                 continue;
             }
+            if (argument == "--debug-starter")
+            {
+                debugStarter = true;
+                continue;
+            }
             if (argument == "--load")
             {
                 load = true;
@@ -79,6 +96,27 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
             {
                 smokeTest = true;
                 buildingSmokeTest = true;
+                continue;
+            }
+            if (argument == "--woodlot-smoke-test")
+            {
+                smokeTest = true;
+                buildingSmokeTest = true;
+                woodlotSmokeTest = true;
+                continue;
+            }
+            if (argument == "--placement-smoke-test")
+            {
+                smokeTest = true;
+                buildingSmokeTest = true;
+                placementSmokeTest = true;
+                continue;
+            }
+            if (argument == "--milestone-smoke-test")
+            {
+                smokeTest = true;
+                buildingSmokeTest = true;
+                milestoneSmokeTest = true;
                 continue;
             }
             if (argument == "--perspective-smoke-test")
@@ -140,12 +178,28 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
         {
             throw new ArgumentException("--capture requires --smoke-test.");
         }
+        if (milestoneSmokeTest && (load || config.Scenario != CityScenario.Random ||
+            woodlotSmokeTest || perspectiveSmokeTest || perspectivePerformanceTest))
+            throw new ArgumentException("--milestone-smoke-test requires a new random city and cannot be combined with other model smoke modes.");
+        if (debugStarter && !help)
+        {
+            if (!CityGame.DebugToolsAvailable)
+                throw new ArgumentException("--debug-starter requires a Debug build.");
+            if (load || config.Scenario != CityScenario.Random)
+                throw new ArgumentException("--debug-starter requires a new random city, not a saved city or populated scenario.");
+            if (smokeTest || dump)
+                throw new ArgumentException("--debug-starter cannot be combined with smoke tests or --dump-map.");
+        }
         return new(config, smokeTest, capturePath)
         {
             Load = load, LoadPath = loadPath, Help = help, DumpMap = dump, FramesPerSecond = fps, ReducedMotion = reducedMotion,
             BuildingSmokeTest = buildingSmokeTest,
+            MilestoneSmokeTest = milestoneSmokeTest,
+            WoodlotSmokeTest = woodlotSmokeTest,
+            PlacementSmokeTest = placementSmokeTest,
             PerspectiveSmokeTest = perspectiveSmokeTest,
             PerspectivePerformanceTest = perspectivePerformanceTest,
+            DebugStarter = debugStarter,
         };
     }
 }

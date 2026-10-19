@@ -27,10 +27,9 @@ internal static class PerspectivePerformanceSmoke
             watch.Restart();
             view.Sync(session, host.Map.Size);
             watch.Stop();
-            float zoomScale = zoom > 0 ? 2 : 1f / session.Stride;
-            float expectedSpan = Math.Max(4, host.Map.Size.Y / (22 * zoomScale * PerspectiveCity.NormalMagnification));
+            float expectedSpan = Math.Max(4, host.Map.Size.Y / (22 * PerspectiveCity.Magnification(zoom)));
             Require(Math.Abs(view.CameraSpan - expectedSpan) < 0.0001f,
-                "The normal view must use the closer 1.8x baseline at every zoom.");
+                "Perspective views must use the tuned normal/close scale and unchanged overview zoom scales.");
             Require(view.RenderSize == new Vector2I((int)host.Map.Size.X, (int)host.Map.Size.Y),
                 "The scene must render at native map-panel resolution, not upscale half-resolution details.");
             worstCold = Math.Max(worstCold, watch.Elapsed.TotalMilliseconds);
@@ -102,11 +101,36 @@ internal static class PerspectivePerformanceSmoke
             GD.Print($"TERMCITY_MINIMAP_SAMPLE target={target.X},{target.Y} cpu={cpu:0.0}ms " +
                 $"click-to-render={watch.Elapsed.TotalMilliseconds:0.0}ms " +
                 $"ground={view.GroundBuildMilliseconds:0.0}ms objects={view.ObjectBuildMilliseconds:0.0}ms " +
-                $"terrain-pixels={view.TerrainPixelsMilliseconds:0.0}ms road-pixels={view.RoadPixelsMilliseconds:0.0}ms");
+                $"terrain-pixels={view.TerrainPixelsMilliseconds:0.0}ms road-pixels={view.RoadPixelsMilliseconds:0.0}ms " +
+                $"road-borders={view.RoadBorderMilliseconds:0.0}ms");
             var projected = view.ScreenPoint(new(target.X + 0.5f, 0, target.Y + 0.5f));
             Require(projected.DistanceTo(host.Map.Size / 2) < host.Map.Grid.PixelHeight * 2,
                 "A real minimap click must center the requested destination.");
         }
+        var previewStart = Enumerable.Range(0, session.Game.Map.Width * session.Game.Map.Height)
+            .Select(session.Game.Map.PosOf).Where(p => p.X < session.Game.Map.Width - 12 &&
+                session.Game.CanBuildOn(p.X, p.Y))
+            .OrderBy(p => Math.Abs(p.X - center.X) + Math.Abs(p.Y - center.Y)).First();
+        session.PlaceCursor(previewStart);
+        session.CenterOn(previewStart);
+        host.Map.RefreshCells();
+        view.Sync(session, host.Map.Size);
+        int previewBuilds = view.GeometryBuilds;
+        session.BeginRoadLine(session.Game.Map.Content.Roads.Default);
+        double worstRoadPreview = 0;
+        for (int length = 4; length <= 10; length += 2)
+        {
+            watch.Restart();
+            session.UpdateDrag(previewStart.Offset(length, 0));
+            view.Sync(session, host.Map.Size);
+            watch.Stop();
+            worstRoadPreview = Math.Max(worstRoadPreview, watch.Elapsed.TotalMilliseconds);
+            Require(view.GeometryBuilds == previewBuilds,
+                "Updating a road-placement preview must not rebuild the existing city.");
+        }
+        session.CancelPreview();
+        GD.Print($"TERMCITY_ROAD_PREVIEW_PERFORMANCE worst={worstRoadPreview:0.0}ms existing-city-rebuilds=0");
+        Require(worstRoadPreview < 100, $"Road preview updates took {worstRoadPreview:0.0}ms; budget is 100ms.");
         Require(minimapWorst < 250, $"Minimap click-to-render took {minimapWorst:0.0}ms; budget is 250ms.");
         GD.Print($"TERMCITY_PERSPECTIVE_PERFORMANCE_OK nodes={worstNodes} cold={worstCold:0.0}ms " +
             $"selection={worstSelection:0.0}ms pan={worstPan:0.0}ms pick={worstPick:0.0}ms frame-p90={p90:0.0}ms " +

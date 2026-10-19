@@ -17,9 +17,10 @@ public class RiverRippleTests
         Assert.Equal(3, active);
         var track = RiverRippleLayout.At(map, flow, 12, 7);
         Assert.Equal(24, track.Distance);
-        Assert.True(track.Position(0.8)!.Value.Y > track.Position(0.4)!.Value.Y);
-        var before = track.Position((1 - 0.0001) / RiverRippleLayout.Speed)!.Value + new Vector2(12, 7);
-        var after = RiverRippleLayout.At(map, flow, 12, 8).Position((1 + 0.0001) / RiverRippleLayout.Speed)!.Value + new Vector2(12, 8);
+        double start = RiverRippleLayout.WaveOffset(3) / RiverRippleLayout.Speed;
+        Assert.True(track.Position(start + 0.8)!.Value.Y > track.Position(start + 0.4)!.Value.Y);
+        var before = track.Position(start + (1 - 0.0001) / RiverRippleLayout.Speed)!.Value + new Vector2(12, 7);
+        var after = RiverRippleLayout.At(map, flow, 12, 8).Position(start + (1 + 0.0001) / RiverRippleLayout.Speed)!.Value + new Vector2(12, 8);
         Assert.InRange(Vector2.Distance(before, after), 0, 0.001f);
         Assert.Null(RiverRippleLayout.At(map, flow, 10, 10).Position(0));
         Assert.Null(RiverRippleLayout.At(map, flow, 12, 31).Position(0));
@@ -36,7 +37,9 @@ public class RiverRippleTests
         var corner = RiverRippleLayout.At(map, flow, 12, 16);
         Assert.Equal(new Pos(0, 1), corner.Incoming);
         Assert.Equal(new Pos(1, 0), corner.Outgoing);
-        double start = (8 - corner.Distance % 8) / (double)RiverRippleLayout.Speed;
+        int wave = corner.Distance / RiverRippleLayout.Spacing + 1;
+        double start = (wave * RiverRippleLayout.Spacing + RiverRippleLayout.WaveOffset(wave) -
+            corner.Distance) / RiverRippleLayout.Speed;
         for (int step = 0; step < 100; step++)
         {
             var position = corner.Position(start + step / 100.0 / RiverRippleLayout.Speed)!.Value;
@@ -50,5 +53,27 @@ public class RiverRippleTests
         var after = corner.Position(start + 0.0001 / RiverRippleLayout.Speed)!.Value + new Vector2(12, 16);
         Assert.InRange(Vector2.Distance(before, after), 0, 0.001f);
         Assert.Equal(corner, RiverRippleLayout.At(map, new WaterFlowField(map), 12, 16));
+    }
+
+    [Fact]
+    public void RippleIntervalsVaryButKeepDownstreamSpeedAndSparseCoverage()
+    {
+        var track = new RiverRippleLayout.Track(new(0, 1), new(0, 1), 137, true);
+        var arrivals = Enumerable.Range(18, 20).Select(wave =>
+            (wave * RiverRippleLayout.Spacing + RiverRippleLayout.WaveOffset(wave) - track.Distance) /
+            RiverRippleLayout.Speed).ToArray();
+        var intervals = arrivals.Zip(arrivals.Skip(1), (a, b) => b - a).ToArray();
+        Assert.True(intervals.Max() - intervals.Min() > 2);
+        Assert.True(intervals.Select(interval => Math.Round(interval, 4)).Distinct().Count() > 8);
+        foreach (double arrival in arrivals)
+        {
+            Assert.Null(track.Position(arrival - 0.01));
+            var start = track.Position(arrival + 0.1)!.Value;
+            var end = track.Position(arrival + 0.6)!.Value;
+            Assert.True(end.Y > start.Y);
+            Assert.Null(track.Position(arrival + 1.01 / RiverRippleLayout.Speed));
+        }
+        int active = Enumerable.Range(0, 1000).Count(step => track.Position(step / 10.0) is not null);
+        Assert.InRange(active, 100, 150);
     }
 }
