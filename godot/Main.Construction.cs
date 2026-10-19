@@ -159,6 +159,7 @@ public partial class Main
         _modalScroll = scroll;
         _modalContentWidth = 1040;
         var content = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        content.MinimumSizeChanged += () => Callable.From(CenterModal).CallDeferred();
         content.AddThemeConstantOverride("separation", RailPadding - 1);
         Label Heading(string text, string name, string color)
         {
@@ -305,11 +306,14 @@ public partial class Main
             "ConstructionCancel", Session.CancelPrompt);
         _constructionAdd = actions.GetChild<Button>(0);
         var actionPadding = new MarginContainer { Name = "ConstructionActionPadding" };
-        actionPadding.AddThemeConstantOverride("margin_top", TerminalFrame.Inset + 12 - (RailPadding - 1));
+        actionPadding.AddThemeConstantOverride("margin_top", TerminalFrame.Inset + 12);
         actionPadding.AddChild(actions);
-        content.AddChild(actionPadding);
         scroll.AddChild(content);
-        padding.AddChild(scroll);
+        var layout = new VBoxContainer();
+        layout.AddThemeConstantOverride("separation", 0);
+        layout.AddChild(scroll);
+        layout.AddChild(actionPadding);
+        padding.AddChild(layout);
         body.AddChild(padding);
         SelectConstruction(_constructionIndex);
         _promptButtons[_constructionIndex].GrabFocus();
