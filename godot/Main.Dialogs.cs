@@ -812,8 +812,10 @@ public partial class Main
             float helpWidth = helpVisible ? Math.Min(360, availableWidth * 0.4f) : 0;
             float gap = helpVisible ? _modalColumns!.GetThemeConstant("separation") : 0;
             var content = _modalScroll.GetChild<Control>(0);
+            float outsideScrollHeight = _modal.GetCombinedMinimumSize().Y - _modalScroll.GetCombinedMinimumSize().Y;
             _modalScroll.CustomMinimumSize = new Vector2(Math.Max(1, Math.Min(_modalContentWidth, availableWidth - helpWidth - gap)),
-                Math.Max(1, Math.Min(content.GetCombinedMinimumSize().Y, Size.Y - topEdge - 64)));
+                Math.Max(1, Math.Min(content.GetCombinedMinimumSize().Y,
+                    Size.Y - topEdge - Math.Max(64, outsideScrollHeight + 28))));
             if (helpVisible)
                 _choiceHelpScroll!.CustomMinimumSize = new Vector2(helpWidth, _modalScroll.CustomMinimumSize.Y);
             _modal.Size = _modal.GetCombinedMinimumSize();

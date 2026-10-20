@@ -4656,12 +4656,15 @@ internal static class GodotSmoke
         foreach (var slot in stableHeader) slot.Label.Text = slot.Text;
         host.FitHeaderFonts();
         await Frames();
+        int originalZoom = session.ZoomLevel;
+        session.SetZoom(0);
         int beforeZoom = session.ZoomLevel;
         zoomIndicator.GetParent().GetChild<Button>(2).EmitSignal(Button.SignalName.Pressed);
         Require(session.ZoomLevel == beforeZoom + 1 && zoomIndicator.Text == session.ZoomLabel,
             "Minimap zoom-in button failed.");
         zoomIndicator.GetParent().GetChild<Button>(0).EmitSignal(Button.SignalName.Pressed);
         Require(session.ZoomLevel == beforeZoom, "Minimap zoom-out button failed.");
+        session.SetZoom(originalZoom);
         foreach (var zone in Zones.Placeable)
         {
             var letter = Descendants(host).OfType<Label>().Single(l => l.Name == $"Demand{Zones.Get(zone).Letter}");
@@ -5778,6 +5781,14 @@ internal static class GodotSmoke
         await KeyEvent(Key.Escape);
         session.ClearSelection();
         await KeyEvent(Key.T);
+        var roadStart = session.ScreenToMap(8, 6);
+        foreach (var cell in new CellRect(roadStart.X - 6, roadStart.Y - 6, 16, 13).Cells())
+        {
+            session.Game.Map.ClearCell(cell.X, cell.Y);
+            session.Game.Map.SetTerrain(cell.X, cell.Y, session.Game.Map.Content.Terrains.Base);
+        }
+        session.Game.Touch();
+        session.BeginDrag(roadStart);
         host.Map.EmitSignal(Control.SignalName.GuiInput, new InputEventMouseButton
         {
             ButtonIndex = MouseButton.Left,
@@ -5891,6 +5902,13 @@ internal static class GodotSmoke
         Require(narrowCatalog.Position.X >= 0 && narrowCatalog.Position.Y >= 0 &&
             narrowCatalog.GetGlobalRect().End.X <= host.Size.X && narrowCatalog.GetGlobalRect().End.Y <= host.Size.Y,
             $"Construction catalog must fit the minimum window: dialog={narrowCatalog.GetGlobalRect()}, window={host.Size}.");
+        var narrowScroll = Descendants(narrowCatalog).OfType<ScrollContainer>()
+            .Single(n => n.Name == "ConstructionCatalog");
+        Require(Descendants(narrowCatalog).OfType<Button>()
+            .Where(button => button.Name == "ConstructionAdd" || button.Name == "ConstructionCancel")
+            .All(button => button.GlobalPosition.Y >= narrowScroll.GetGlobalRect().End.Y &&
+                button.GetGlobalRect().End.Y <= narrowCatalog.GetGlobalRect().End.Y - TerminalFrame.Inset),
+            "Both construction actions must remain visible below scrolling content at minimum window size.");
         await KeyEvent(Key.Escape);
         if (headless) window.ContentScaleSize = originalSize;
         else window.Size = originalSize;
@@ -6441,6 +6459,11 @@ internal static class GodotSmoke
         float contentBottom = Descendants(dialog).OfType<Label>()
             .Where(label => label.IsVisibleInTree() && label.GetParent() == catalogLayout.GetParent())
             .Select(label => label.GetGlobalRect().End.Y).Append(catalogLayout.GetGlobalRect().End.Y).Max();
+        var catalogScroll = Descendants(dialog).OfType<ScrollContainer>().Single(n => n.Name == "ConstructionCatalog");
+        contentBottom = Math.Min(contentBottom, catalogScroll.GetGlobalRect().End.Y);
+        Require(!Descendants(catalogScroll).Contains(Add()) &&
+            Add().GetGlobalRect().End.Y <= dialog.GetGlobalRect().End.Y - TerminalFrame.Inset,
+            "Construction actions must remain outside the scrolling content and inside the dialog frame.");
         Require(Math.Abs(Add().GlobalPosition.Y - contentBottom -
             (dialog.GetGlobalRect().End.Y - Add().GetGlobalRect().End.Y)) < 1,
             $"Construction action spacing: top={Add().GlobalPosition.Y - contentBottom}, " +
