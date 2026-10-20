@@ -196,7 +196,8 @@ public static class GuideContent
                 rows.Select(r => (IReadOnlyList<string>)r).ToArray()),
             "LAYING ROADS\n" +
             "  T draws roads at any angle: click an endpoint to place the preview, or use arrows and Enter.\n" +
-            "  Holding and dragging previews a further extension; release builds it. Parallel overlaps are rejected.\n" +
+            "  Holding and dragging previews a further extension; release builds it.\n" +
+            "  Parallel overlaps are rejected.\n" +
             "  Placement keeps the selected road type and continues until Esc; middle-drag pans.\n" +
             "  B previews the selected cells with the default track. The area menu has every road type.\n" +
             "  Every road type is drawn as smooth curves that join one another, whatever the angle.\n" +

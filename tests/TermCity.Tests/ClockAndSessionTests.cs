@@ -373,13 +373,15 @@ public class SessionTests
         var s = NewSession();
         s.SelectCell(new Pos(10, 10));
         s.Zone(ZoneType.Commercial);
+        int zoned = s.Game.Stats.Commercial.Zoned;
+        Assert.True(zoned > 0);
         Assert.True(s.QuickSave());
         s.Demolish();
         s.SelectCell(new Pos(10, 10));
         s.Game.Demolish(new CellRect(10, 10, 2, 1));
         Assert.Equal(0, s.Game.Stats.Commercial.Zoned);
         Assert.True(s.QuickLoad());
-        Assert.Equal(2, s.Game.Stats.Commercial.Zoned);
+        Assert.Equal(zoned, s.Game.Stats.Commercial.Zoned);
         File.Delete(s.SavePath);
     }
 }

@@ -46,7 +46,8 @@ public class ScenarioBridgeTests
                 float x = (float)path.Xs[endpoint] / RoadCurves.CellWidth;
                 float y = (float)path.Ys[endpoint] / RoadCurves.CellHeight;
                 var at = layout.RoadAt(new(x, y));
-                if (at?.Bridge != true) continue;
+                // A branch meeting a road at its abutment ends under that road's deck, not in open water.
+                if (at?.Bridge != true || !ReferenceEquals(at.Path, path)) continue;
                 Assert.True(map.TerrainAt((int)MathF.Floor(x), (int)MathF.Floor(y)).Buildable,
                     $"Seed {seed}: {path.Type.Name} bridge endpoint ({x},{y}) is in visible water.");
             }
@@ -83,7 +84,13 @@ public class ScenarioBridgeTests
             for (int x = 0; x < 8; x++) map.SetTerrain(x, y, map.Content.Terrains.Get("Water"));
         HighwayGenerator.Generate(new GenerationContext(map, 42));
         Assert.NotEmpty(map.RoadCells);
-        Assert.All(map.RoadCells, index => Assert.True(map.TerrainAt(index % map.Width, index / map.Width).Buildable));
+        // Water spans the whole west edge, so the only outside link is one straight bridge from the map edge to land.
+        Assert.All(map.RoadCells.Where(index => !map.TerrainAt(index % map.Width, index / map.Width).Buildable), index =>
+        {
+            int x = index % map.Width, y = index / map.Width;
+            int connections = RoadNetwork.Neighbors.Count(direction => map.HasRoad(x + direction.Dx, y + direction.Dy));
+            Assert.Equal(map.IsEdge(x, y) ? 1 : 2, connections);
+        });
     }
 
     [Theory]

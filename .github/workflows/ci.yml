@@ -22,7 +22,7 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - run: dotnet build TermCity.slnx -c Release
-      - run: dotnet test TermCity.slnx -c Release --no-build
+      - run: dotnet test TermCity.slnx -c Release --no-build --filter "Category!=Playthrough"
 
   godot:
     name: Godot desktop smoke

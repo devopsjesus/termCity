@@ -91,7 +91,8 @@ and next-step coaching. `CityGame` records peaks independently of any session or
 save/load/autosave guards and feedback. It has no Godot dependency.
 
 Accelerated default-rules gameplay regression tests cover two seeds on each random map size,
-using paid actions, no loans and a mid-play save/load. The target is the final 10,000-person milestone:
+using paid actions, no loans and a mid-play save/load. They take up to about an hour on large maps, so CI
+skips them (`--filter "Category!=Playthrough"`); run them locally. The target is the final 10,000-person milestone:
 
 ```bash
 dotnet test tests/TermCity.Tests/TermCity.Tests.csproj --filter 'Category=Playthrough' --logger 'console;verbosity=detailed'
