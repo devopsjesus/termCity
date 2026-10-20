@@ -16,6 +16,8 @@ public static class SidebarReport
     {
         if (!game.Config.FullRules)
             return new("Service coverage is not simulated in classic rules.", NoneColor);
+        if (!CityProgression.IsServiceUnlocked(game, kind, game.Stats.Population))
+            return new($"Locked until {CityProgression.ServiceUnlockPopulation(game, kind):N0} souls; not expected", NoneColor);
         if (kind is ServiceKind.Power or ServiceKind.Water)
         {
             var supply = kind == ServiceKind.Power ? game.Services.Power : game.Services.Water;
@@ -34,6 +36,8 @@ public static class SidebarReport
     public static string ServiceStatusDetails(CityGame game, ServiceKind kind)
     {
         if (!game.Config.FullRules) return ServiceStatus(game, kind).Text;
+        if (!CityProgression.IsServiceUnlocked(game, kind, game.Stats.Population))
+            return ServiceStatus(game, kind).Text;
         if (kind is ServiceKind.Power or ServiceKind.Water)
         {
             var supply = kind == ServiceKind.Power ? game.Services.Power : game.Services.Water;
@@ -80,8 +84,9 @@ public static class SidebarReport
         {
             var indicators = game.Indicators;
             Add("Season", Seasons.Name(game.Season), PeopleColor);
-            Add("Grain", $"{game.GrainWeeks:0.#} weeks" + (game.Hunger >= 0.1 ? " FAMINE" : ""),
-                game.Hunger >= 0.1 ? BadColor : game.GrainWeeks < 2 ? WarningColor : GoodColor);
+            Add("Grain", game.GrainRequired ? $"{game.GrainWeeks:0.#} weeks" + (game.Hunger >= 0.1 ? " FAMINE" : "") :
+                "Village (500)",
+                !game.GrainRequired ? NoneColor : game.Hunger >= 0.1 ? BadColor : game.GrainWeeks < 2 ? WarningColor : GoodColor);
             Add("Mood", indicators.Mood,
                 indicators.Happiness < 50 ? BadColor : indicators.Happiness < 65 ? WarningColor : GoodColor);
             double fuel = SupplyLevel(game.Services.Power), water = SupplyLevel(game.Services.Water);

@@ -56,20 +56,23 @@ internal static class Disasters
         while (frontier.Count > 0 && burned.Count < 90)
         {
             int i = frontier.Dequeue();
+            if (map.BuildingLayer[i] == 0) continue;
+            i = map.BuildingAnchor(i);
+            var footprint = map.BuildingFootprintAt(i % map.Width, i / map.Width);
             double cover = game.Services.Coverage(ServiceKind.Fire, i) / 100.0;
             deaths += Burn(game, i, cover);
             burned.Add(i);
             double spread = 0.74 * (1 - 0.85 * cover);
-            int x = i % map.Width, y = i / map.Width;
+            foreach (var p in footprint.Cells())
             foreach (var (dx, dy) in RoadNetwork.Neighbors)
             {
-                int nx = x + dx, ny = y + dy;
+                int nx = p.X + dx, ny = p.Y + dy;
                 if (!map.InBounds(nx, ny))
                 {
                     continue;
                 }
 
-                int ni = map.Index(nx, ny);
+                int ni = map.BuildingAnchor(map.Index(nx, ny));
                 // Thatch and timber catch from one roof to the next; stone and slate (taller buildings) hold the flames.
                 double fuel = map.BuildingLayer[ni] == 0 ? 0 : map.Content.Buildings[map.BuildingLayer[ni]].Level switch { >= 3 => 0.6, 2 => 0.8, _ => 1.0 };
                 if (map.BuildingLayer[ni] != 0 && seen.Add(ni) && game.Rng.Chance(spread * fuel))
@@ -272,8 +275,8 @@ internal static class Disasters
             if (dx * dx + dy * dy <= 16 * 16 && game.Rng.Chance(0.35))
             {
                 var p = map.PosOf(i);
-                map.SetBuilding(p.X, p.Y, null);
                 tally.MovedOut += map.HouseholdLayer[i].Total;
+                map.SetBuilding(p.X, p.Y, null);
                 map.SetHousehold(p.X, p.Y, default);
                 hit.Add(i);
             }

@@ -25,16 +25,35 @@ Each game week, in order:
 
 ### Demand and vacant land
 
-Residential demand uses occupied commercial/industrial buildings, not the number
-of empty plots designated for them. Marking more vacant industry or commerce
-therefore cannot manufacture a housing shortage. Vacant residential zoning also
-does not manufacture business demand. Designating land can reduce demand for that
-same zone by supplying more available plots.
+Demand bars describe **growth pressure**, not a shortage of zoned land. Empty zoning
+does not satisfy resident or business needs and does not change the bars by itself.
+Residential pressure comes from the same expected weekly migrant-family rate used
+by `CityGame.PlanWeek`, including attraction and seasonal travel under Full rules.
+Positive pressure can therefore remain visible while families move into zoned homes;
+existing homes with spare room are filled before new houses are built.
+Within each group, residents prefer the shortest reachable road approach, measured from
+the property perimeter to the visible road bed. Equally close choices remain varied;
+farther plots and roadless settlements remain valid when nearer space is unavailable.
+This preference does not change arrival quotas or require an outside-connected road.
+
+Commercial and industrial pressure uses the lesser of expected weekly business
+arrivals and remaining supported building slots, divided by total supported slots.
+The arrival rate includes the same business-climate multiplier used by weekly growth.
+Missing customers, full supported capacity or zero trade climate show zero demand,
+even when many plots have been zoned. Fractional arrival rates mean some weeks may
+have no growth; the bars are forecasts, not promises that every plot fills immediately.
+Weekly arrival quotas are sampled at the start of each week. Forecasts reflect current
+conditions; arrivals already scheduled for this week may finish after conditions change.
 
 Full-rules business demand and growth capacity share the same housing measure:
 the larger of households (including pending residential removals) and population
-divided by five. Classic uses occupied residential cells. Existing business
+divided by five. Classic uses occupied residential buildings. Existing business
 buildings pending removal still count until they are actually removed.
+`Demand.ExpectedArrivals` and `Demand.SupportedBuildings` are shared by growth
+planning and demand computation; reading a forecast does not advance random state.
+Demand tooltips and reports show forecast rates and separate local blockers:
+missing complete plots, road overlaps, unreachable land and low attraction/trade climate.
+Demand may be positive while a particular plot is unsuitable; that is not missing demand.
 
 `CityAnalysis.Assess` builds a `CityIndicators` snapshot whenever the layout, budget or week changes. Each home has a
 happiness of 70 minus charges, each in points:
@@ -51,11 +70,19 @@ happiness of 70 minus charges, each in points:
 | Traffic | up to 18 |
 | Unemployment | 45 x (rate - 6%) |
 | Taxes | rate above the scenario's fair rate, clamped to -4..20 |
-| No road access | 10 |
+| Slow walking journeys without nearby roads | 5 |
 
 Service *need* grows with population (fire from 300 people, the sheriff 600, physic 700, schools 450, greens 900, defence 400, faith 500), so a
 hamlet is not punished for lacking a sheriff it does not need yet. Jobs come from working commercial and industrial buildings plus a base of
 informal work, so a few families are not "unemployed" before the first shop opens.
+
+Locked services are not expected: their missing coverage does not reduce happiness or
+trigger petitions until at least one building of that service kind is permanently unlocked.
+Fire, sheriff, physic and learning begin at Growing Hamlet (250 souls); commons begin at 500.
+Faith, defence and starter supplies have ungated options. Expectations remain available
+after a population decline, matching permanent building unlocks. Status reports label
+locked services "not expected"; newly available services distinguish missing dispatch,
+slow arrivals and capacity.
 
 ## Attraction and climate
 
@@ -77,6 +104,12 @@ Medieval lives are short and hard (see [MEDIEVAL.md](MEDIEVAL.md)):
 - Famine adds deaths and emigration; plague adds weeks of extra deaths blunted by physic.
 
 ## Seasons, grain and famine
+
+Grain management starts at the permanent **Village (500 souls)** milestone.
+Market Cross and Granary unlock at the same milestone; Guildhall keeps its later gate.
+Before Village there are no grain imports, consumption, hunger penalties, famine events,
+or grain petitions. The sidebar shows the unlock instead of a warning gauge.
+After reaching Village, grain rules remain active even if the population later falls.
 
 The year starts in midwinter: winter weeks 49-9, spring 10-22, summer 23-35, autumn 36-48. Farmland yields at harvest
 (`Harvest`): the town keeps a grain store measured in weeks of need, households keep up to 10 weeks in their own bins and a
@@ -104,16 +137,23 @@ shortfall becomes **arrears**, added to next year's bill, and makes raiders bold
 
 ## Density
 
+Starter homes, market stalls and workshops normally occupy one logical cell.
+Growth may choose a rare 1x2, 2x1 or 2x2 variant, but new default zoned buildings
+never exceed 2x2. A single zoning click reserves one minimum 1x1 plot, so thin
+strips and lone clear cells can settle. A larger visual plot is still one building:
+capacity, households, jobs, taxes and upkeep are not multiplied by footprint area.
+Compact footprints retain existing per-building population/economic capacities and tier gates.
+
 Buildings come in three levels (house/apartments/tower, shop/office/skyscraper, factory/plant/complex). A building may
-upgrade when population, land value (scaled by the scenario's density appetite), road class, power and water, and local
+upgrade when population, land value (scaled by the scenario's density appetite), clear expansion space, fuel and water, and local
 demand all allow it, and downgrades when land value collapses. City Grew! permanently opens population
-eligibility at 500 souls for level 2 and 5,000 for level 3. Road class, utilities, land value and the
+eligibility at 500 souls for level 2 and 5,000 for level 3. Utilities, land value and the
 lord's seat still apply. Current population or the highest achieved milestone satisfies the size gate.
 
 ## City-size progression and the optional guide
 
 `CityProgression` is the shared source of milestones and building gates. A building's `MinPopulation`
-rounds up to the next milestone (100, 500, 1,000, 2,500, 5,000, 10,000); zero remains ungated.
+rounds up to the next milestone (100, 250, 500, 1,000, 2,500, 5,000, 10,000); zero remains ungated.
 The simulation records every crossed milestone, including on the final day before weekly mortality.
 The session announces all newly crossed stages together in a pausing City Grew! dialog. The service
 menu, placement preview, quote and final action all use the same permanent unlock check.
@@ -128,17 +168,24 @@ F6 can enable it again. Unlock announcements and the F7 milestone list are alway
 
 Gold is the currency (`Fmt.Money` prints `15,000g`). Tithes and rents (the tax) = filled cell value x tax rate, reduced by unemployment and unfilled jobs and lifted by education.
 Starter supplies are a Woodlot (8,000g; 300 fuel; 40g/week) and Town Well (4,000g; 260 water; 20g/week).
-They remain ungated and leave room in the 50,000g initial treasury for roads, care and reserves.
+These starter fuel/water supplies remain ungated and leave room in the 50,000g initial treasury for roads, care and reserves.
 An Aqueduct is a larger option at 14,000g and 60g/week; terrain can increase its construction cost.
-Every utility must have at least one footprint cell served by an edge-connected road. Disconnected
-utilities produce nothing but still charge upkeep, and homes without fuel or water pay no taxes.
-Placement warns about inactive services without preventing construction; connecting a road activates
-them. The building menu shows weekly upkeep, and the cell inspector shows active/inactive status.
-Within each service family, higher-priced tiers provide more output and lower upkeep per unit.
-Utilities are compared by supply; area services use the sum of actual strength-weighted coverage
-over unobstructed land. At full funding, every upgrade has a lower construction-plus-upkeep cost
-per output unit within 52 weeks on flat ground. Starter affordability, capacities, coverage,
-population gates and special benefits or drawbacks are unchanged.
+Utilities operate without roads. Fuel and water deliveries must have time to arrive over land
+or bridges, and demand must fit supply. Unsupplied homes pay no taxes.
+Area services route to residents by least travel time, without a hard radius limit. Their radius
+sets a walking-distance timely-response target (`radius * 6 / 24` game days). Open land costs 6 travel units per step,
+compacted paths 2, roads 1/rank; terrain modifies walking cost. Longer trips reduce timely
+coverage but never end it. First arrival is delayed by travel time after construction.
+Area service staffing is `max(300, radius² * 6) * effective funding` residents per provider.
+Residents use their nearest provider; overload increases response time and reduces quality.
+Bottom-right petitions distinguish waiting for arrival, slow response and nearing/full capacity.
+Starter prices, utility outputs, population gates and special benefits remain unchanged.
+
+Area-service ranges are 50% larger than the previous defaults (rounded up). Examples:
+Fire Watch 27, Apothecary/Chantry School 18, Sheriff's Hall 24, Village Green 12,
+Parish Church/Market Cross 27, Monastery/Stone Keep 42 and Castle 57 cells.
+The increased ranges also enlarge response targets and radius-based staffing; prices
+and upkeep are unchanged. Pollution and air-cleanup radii are not enlarged.
 
 | Rebalanced upgrade | Construction | Upkeep/week |
 |---|---:|---:|
@@ -156,9 +203,18 @@ Road tiers already have better construction and running cost per unit of traffic
 
 Buildings occupy complete logical cells. New civic buildings and automatic zone growth reject
 cells intersected by the visible road bed, including angled-road smoothing and junction blends.
-Road access retains the normal two-cell land-based reach and also includes clear ground within
-0.75 cell widths horizontally and 0.75 cell heights vertically of a connected visible road bed.
-Disconnected roads never grant access. Existing buildings are not removed by this clearance rule.
+Road proximity gives a land-value and travel bonus, including roads not connected to the map edge.
+Walking is permitted anywhere on land; bridges allow water crossings.
+Buildings wear a new path segment toward the nearest reachable road each day; repeated journeys
+compact it into a faster path. Paths persist but are not paid roads.
+Established home gardens are protected from footpath wear and rendering. A journey may
+meet a garden at its boundary, but cannot cut through it or hide its lawn and planting.
+Paths connect to ordinary road approaches, not bridge decks or sides. Bridges remain
+usable for normal travel and service deliveries, including crossings over water.
+Natural footpaths never grow or render on hill terrain, even on flat terrace tops or
+hill remnants leveled by nearby road cuts. Roads and ordinary service travel can still
+cross hills. Existing hill wear stays in saves but is not drawn.
+Existing buildings are not removed by the road-clearance rule.
 Roads generated with the map have no upkeep. The city pays upkeep only for roads the player builds.
 Expenses are the upkeep of every civic building (scaled by the funding level), local road upkeep, loan interest and
 administration: a share of tax income (up to 55%) that grows with population from 2,000 up to 50,000 people, so large

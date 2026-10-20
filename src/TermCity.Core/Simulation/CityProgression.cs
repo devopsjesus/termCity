@@ -12,6 +12,8 @@ public sealed record CitySizeProgress(string CurrentName, string? NextName, int 
 /// <summary>Permanent city-size achievements, independent of the optional guide.</summary>
 public static class CityProgression
 {
+    public const int CareUnlockPopulation = 250;
+    public const int GrainUnlockPopulation = 500;
     public static CitySizeProgress SizeProgress(CityGame game)
     {
         var current = Milestones.LastOrDefault(m => m.Population <= game.HighestMilestone);
@@ -22,8 +24,9 @@ public static class CityProgression
 
     public static IReadOnlyList<CityMilestone> Milestones { get; } = Array.AsReadOnly(new[]
     {
-        new CityMilestone(100, "Hamlet", "Keep jobs growing with homes; add local care as the weekly surplus allows."),
-        new CityMilestone(500, "Village", "Burgage houses can redevelop with a motte, road access and good land value. Spread care around homes."),
+        new CityMilestone(100, "Hamlet", "Keep jobs, fuel and water growing with homes. Local care unlocks at 250 souls."),
+        new CityMilestone(CareUnlockPopulation, "Growing Hamlet", "Fire Watch, sheriff's watch, physic and learning unlock. Fund care as the surplus allows."),
+        new CityMilestone(500, "Village", "Grain management, Market Cross and Granary unlock. Burgage houses need a motte, room and land value."),
         new CityMilestone(1_000, "Market Town", "Expand fuel and water before zoning another district; retain a winter reserve."),
         new CityMilestone(2_500, "Borough", "A castle anchors the town. Check traffic and upgrade the busiest tracks."),
         new CityMilestone(5_000, "City", "Build a cathedral only when its upkeep is affordable; maintain jobs and services."),
@@ -35,7 +38,18 @@ public static class CityProgression
             Milestones.FirstOrDefault(m => m.Population >= building.MinPopulation)?.Population ?? building.MinPopulation;
 
     public static bool IsUnlocked(CityGame game, BuildingType building) =>
-        building.MinPopulation <= 0 || Math.Max(game.HighestMilestone, game.Stats.Population) >= RequiredPopulation(building);
+        (!building.DebugOnly || CityGame.DebugToolsAvailable) &&
+        (building.IsMonument && CityGame.DebugToolsAvailable ||
+            building.MinPopulation <= 0 || Math.Max(Math.Max(game.HighestMilestone, game.HighestPopulation),
+                game.Stats.Population) >= RequiredPopulation(building));
+
+    public static bool IsServiceUnlocked(CityGame game, ServiceKind kind, int population) =>
+        kind == ServiceKind.None || game.Map.Content.Buildings.Any(b => b.PlayerPlaceable && b.Service == kind &&
+            RequiredPopulation(b) <= Math.Max(game.HighestMilestone, population));
+
+    public static int ServiceUnlockPopulation(CityGame game, ServiceKind kind) =>
+        game.Map.Content.Buildings.Where(b => b.PlayerPlaceable && b.Service == kind)
+            .Select(RequiredPopulation).DefaultIfEmpty(int.MaxValue).Min();
 
     public static int GoldBonus(CityGame game, CityMilestone milestone)
     {
@@ -57,7 +71,7 @@ public static class CityProgression
             .Where(b => b.PlayerPlaceable && b.MinPopulation > 0 && RequiredPopulation(b) == milestone.Population)
             .Select(b => b.Name).ToList();
         if (milestone.Population == 500) names.Add("burgage-house redevelopment (with a lord's seat and land value)");
-        if (milestone.Population == 5_000) names.Add("tenement redevelopment (with a keep, cobbles and land value)");
+        if (milestone.Population == 5_000) names.Add("tenement redevelopment (with a keep, clear land and land value)");
         return names.Count == 0 ? "All earlier buildings remain available." : "Now available: " + string.Join(", ", names) + ".";
     }
 
@@ -68,16 +82,24 @@ public static class CityProgression
     public static string NextStep(CityGame game)
     {
         if (game.Stats.Residential.Zoned == 0)
-            return "1. Find an edge-connected road. Zone 20-30 homes (R); leave open plots for services. F6: guide.";
+            return "1. Zone broad homesteads (R); leave service plots. Roads speed arrivals. F6: guide.";
         if (GrowthDiagnostics.ForZone(game, World.ZoneType.Residential).EligibleVacancies == 0 &&
             game.Stats.Residential.Occupied == 0)
-            return "2. Connect homes to the King's Road or map edge with a short track (T). F8 checks access.";
+        {
+            var size = game.MinimumGrowthSize(World.ZoneType.Residential);
+            return $"2. Give cottages clear {size.Width}x{size.Height} plots. Water crossings need bridges. F8 checks growth.";
+        }
+        if (game.Stats.Residential.Occupied == 0 && game.VacantPlots(World.ZoneType.Residential).Count == 0)
+        {
+            var size = game.MinimumGrowthSize(World.ZoneType.Residential);
+            return $"2. Cottages need adjacent zoned cells in a {size.Width}x{size.Height} plot. Drag a wider area with R; P resumes settlement.";
+        }
         if (game.Config.FullRules && game.Services.ActiveCounts[(int)ServiceKind.Power] == 0)
-            return "3. Build a Woodlot (8,000g) by a connected road: Enter > Services. Homes need fuel.";
+            return "3. Build a Woodlot (8,000g) near homes: Enter > Services. Roads speed fuel deliveries.";
         if (game.Config.FullRules && game.Services.ActiveCounts[(int)ServiceKind.Water] == 0)
-            return "4. Build a Town Well (4,000g) by a connected road. Save gold for roads and winter.";
+            return "4. Build a Town Well (4,000g) near homes. Save gold for roads and winter.";
         if (game.Config.FullRules && (game.Services.Power.Ratio < 1 || game.Services.Water.Ratio < 1))
-            return "Supplies are short! Add connected fuel/water before homes. Rebuild lost supplies with reserve gold.";
+            return "Deliveries are at capacity! Add fuel/water before homes; shorten journeys with roads.";
         if (game.Stats.Residential.Occupied < game.Config.MinResidentialCells)
             return $"5. {(game.Paused ? "Resume (P)" : "Let families settle")}: reach {game.Config.MinResidentialCells} occupied homes, then zone jobs (C/I).";
         if (game.Stats.Commercial.Zoned == 0 || game.Stats.Industrial.Zoned == 0 || game.Indicators.Unemployment > 0.12)

@@ -12,6 +12,8 @@ public sealed class RoadGeometry
     private readonly bool[] _occupied;
     private readonly byte[] _access;
     private readonly List<int> _accessCells = [];
+    private readonly Dictionary<int, RoadPath?> _centerRoads = [];
+    private readonly RoadMeshLayout _mesh;
 
     public RoadGeometry(GameMap map, IReadOnlyList<RoadPath> paths)
     {
@@ -19,52 +21,31 @@ public sealed class RoadGeometry
         _height = map.Height;
         _occupied = new bool[_width * _height];
         _access = new byte[_occupied.Length];
-        var field = new float[_occupied.Length];
-        Array.Fill(field, float.PositiveInfinity);
-        const double bed = RoadVectorLayer.BedHalfWidth;
-        double toleranceX = ConnectionTolerance * RoadCurves.CellWidth;
-        double toleranceY = ConnectionTolerance * RoadCurves.CellHeight;
-        double marginX = bed + toleranceX, marginY = bed + toleranceY;
+        _mesh = new RoadMeshLayout(map, paths);
 
-        foreach (var path in paths)
+        foreach (var segment in _mesh.Segments)
         {
-            var distances = new Dictionary<int, float>();
-            int segments = path.Closed ? path.Count : Math.Max(1, path.Count - 1);
-            for (int segment = 0; segment < segments; segment++)
+            double bed = segment.Type.WidthCells / 2.0;
+            double margin = bed + ConnectionTolerance;
+            double ax = segment.A.X, ay = segment.A.Y, bx = segment.B.X, by = segment.B.Y;
+            int x0 = Math.Max(0, (int)Math.Floor(Math.Min(Math.Min(ax, bx) - margin, segment.Road.Min(p => p.X)) - Precision));
+            int y0 = Math.Max(0, (int)Math.Floor(Math.Min(Math.Min(ay, by) - margin, segment.Road.Min(p => p.Y)) - Precision));
+            int x1 = Math.Min(_width - 1, (int)Math.Floor(Math.Max(Math.Max(ax, bx) + margin, segment.Road.Max(p => p.X)) + Precision));
+            int y1 = Math.Min(_height - 1, (int)Math.Floor(Math.Max(Math.Max(ay, by) + margin, segment.Road.Max(p => p.Y)) + Precision));
+            for (int y = y0; y <= y1; y++)
             {
-                int next = (segment + 1) % path.Count;
-                double ax = path.Xs[segment], ay = path.Ys[segment], bx = path.Xs[next], by = path.Ys[next];
-                int x0 = Math.Max(0, (int)Math.Floor((Math.Min(ax, bx) - marginX - Precision) / RoadCurves.CellWidth));
-                int y0 = Math.Max(0, (int)Math.Floor((Math.Min(ay, by) - marginY - Precision) / RoadCurves.CellHeight));
-                int x1 = Math.Min(_width - 1, (int)Math.Floor((Math.Max(ax, bx) + marginX + Precision) / RoadCurves.CellWidth));
-                int y1 = Math.Min(_height - 1, (int)Math.Floor((Math.Max(ay, by) + marginY + Precision) / RoadCurves.CellHeight));
-                for (int y = y0; y <= y1; y++)
+                for (int x = x0; x <= x1; x++)
                 {
-                    for (int x = x0; x <= x1; x++)
+                    int index = y * _width + x;
+                    _occupied[index] |= RoadMeshLayout.OverlapsCell(segment.Road, x, y);
+                    if (map.TerrainAt(x, y).Buildable &&
+                        DistanceToRectangle(ax, ay, bx, by, x - ConnectionTolerance, y - ConnectionTolerance,
+                            x + 1 + ConnectionTolerance, y + 1 + ConnectionTolerance) <= bed + Precision)
                     {
-                        int index = y * _width + x;
-                        double left = x * RoadCurves.CellWidth, top = y * RoadCurves.CellHeight;
-                        double right = left + RoadCurves.CellWidth, bottom = top + RoadCurves.CellHeight;
-                        float distance = (float)DistanceToRectangle(ax, ay, bx, by, left, top, right, bottom);
-                        if (!distances.TryGetValue(index, out float previous) || distance < previous)
-                            distances[index] = distance;
-                        if (path.Connected && map.TerrainAt(x, y).Buildable &&
-                            DistanceToRectangle(ax, ay, bx, by, left - toleranceX, top - toleranceY,
-                                right + toleranceX, bottom + toleranceY) <= bed + Precision)
-                        {
-                            if (_access[index] == 0) _accessCells.Add(index);
-                            _access[index] = (byte)Math.Max(_access[index], path.Type.Rank);
-                        }
+                        if (_access[index] == 0) _accessCells.Add(index);
+                        _access[index] = (byte)Math.Max(_access[index], segment.Type.Rank);
                     }
                 }
-            }
-
-            foreach (var (index, distance) in distances)
-            {
-                // Per-path rectangle minima are a conservative bound on the renderer's blended field:
-                // a cell is reserved whenever any part of its interior could be occupied by the road.
-                field[index] = RoadVectorLayer.SmoothMin(field[index], distance, (float)RoadVectorLayer.Blend);
-                _occupied[index] = field[index] < bed;
             }
         }
     }
@@ -74,6 +55,42 @@ public sealed class RoadGeometry
     public int AccessRank(int x, int y) => x >= 0 && y >= 0 && x < _width && y < _height ? _access[y * _width + x] : 0;
 
     public IEnumerable<(int Index, int Rank)> NearbyAccess => _accessCells.Select(index => (index, (int)_access[index]));
+
+    public RoadPath? RoadAtCellCenter(int x, int y)
+    {
+        if (x < 0 || y < 0 || x >= _width || y >= _height) return null;
+        int index = y * _width + x;
+        if (_centerRoads.TryGetValue(index, out var cached)) return cached;
+        var result = _mesh.RoadAt(new(x + 0.5f, y + 0.5f))?.Path;
+        _centerRoads[index] = result;
+        return result;
+    }
+
+    public RoadMeshLayout.Segment? RoadAt(System.Numerics.Vector2 point) =>
+        point.X >= 0 && point.Y >= 0 && point.X <= _width && point.Y <= _height ? _mesh.RoadAt(point) : null;
+
+    internal bool HasParallelRoad(System.Numerics.Vector2 point, System.Numerics.Vector2 direction, float width)
+    {
+        direction = System.Numerics.Vector2.Normalize(direction);
+        foreach (var segment in _mesh.AtCell((int)MathF.Floor(point.X), (int)MathF.Floor(point.Y)))
+        {
+            var delta = segment.B - segment.A;
+            float length = delta.Length();
+            if (length < 0.000001f) continue;
+            var tangent = delta / length;
+            if (Math.Abs(System.Numerics.Vector2.Dot(direction, tangent)) < 0.965926f) continue;
+            float along = System.Numerics.Vector2.Dot(point - segment.A, tangent);
+            if (along < 0 || along > length) continue;
+            float across = Math.Abs((point.X - segment.A.X) * tangent.Y - (point.Y - segment.A.Y) * tangent.X);
+            if (across < (width + segment.Type.WidthCells) / 2 + RoadMeshLayout.ShoulderWidth) return true;
+        }
+        return false;
+    }
+
+    public bool IsBridgeAtCellCenter(int x, int y)
+    {
+        return _mesh.RoadAt(new(x + 0.5f, y + 0.5f))?.Bridge == true;
+    }
 
     private static double DistanceToRectangle(
         double ax, double ay, double bx, double by, double left, double top, double right, double bottom)

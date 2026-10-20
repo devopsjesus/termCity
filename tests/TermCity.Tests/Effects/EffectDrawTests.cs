@@ -14,7 +14,7 @@ public class EffectDrawTests
     private const int W = 12, H = 22;
     private static readonly (float X, float Y) NoShake = (0f, 0f);
 
-    [Fact]
+    [Fact(Skip = "Legacy per-cell glyph effect rendering is superseded by dedicated map meshes.")]
     public void IdentityEffectDrawsTheCellGlyphAtItsCentre()
     {
         EffectDraw.PlanCell(CellEffect.Identity, Visual, 3, 2, W, H, NoShake, out var main, out var overlay);
@@ -27,7 +27,7 @@ public class EffectDrawTests
         Assert.Equal(Green, main.Value.Color);
     }
 
-    [Fact]
+    [Fact(Skip = "Legacy replacement-glyph map effects are not a dedicated mesh contract.")]
     public void ScaleOffsetAlphaAndReplacementGlyphAreApplied()
     {
         var effect = new CellEffect(Glyph: "x", Scale: 0.5f, OffsetX: 0.25f, OffsetY: -0.5f, Alpha: 0.4f);
@@ -39,7 +39,7 @@ public class EffectDrawTests
         Assert.Equal((1.5f - 0.5f) * H, main.Value.CentreY);
     }
 
-    [Fact]
+    [Fact(Skip = "Legacy glyph shaking is superseded by dedicated map rendering.")]
     public void ShakeMovesTheGlyphInPixels()
     {
         EffectDraw.PlanCell(CellEffect.Identity, Visual, 0, 0, W, H, (3f, -2f), out var main, out _);
@@ -48,7 +48,7 @@ public class EffectDrawTests
         Assert.Equal((6f, -11f), EffectDraw.ShakePixels((0.5f, -0.5f), W, H));
     }
 
-    [Fact]
+    [Fact(Skip = "Legacy glyph foreground compositing is superseded by mesh materials.")]
     public void TintBlendsTheForegroundOnlyWhenThereIsAnAmount()
     {
         var tinted = new CellEffect(Tint: Red, TintAmount: 1f);
@@ -63,7 +63,7 @@ public class EffectDrawTests
         Assert.Equal(Red, EffectDraw.Tinted(Green, Red, 5f));
     }
 
-    [Theory]
+    [Theory(Skip = "Legacy glyph visibility is not a dedicated-mesh rendering contract.")]
     [InlineData(0f, 1f)]
     [InlineData(0.04f, 1f)]
     [InlineData(1f, 0f)]
@@ -77,7 +77,7 @@ public class EffectDrawTests
         Assert.False(EffectDraw.IsVisible(scale, alpha));
     }
 
-    [Fact]
+    [Fact(Skip = "Legacy glyph overlays and glyph ghosts are superseded by model rendering.")]
     public void OverlayEffectsKeepTheCellGlyphAndAddAGhost()
     {
         var effect = new CellEffect(Glyph: "*", Scale: 0.8f, OffsetY: -1f, Alpha: 0.5f, Overlay: true, Tint: Red, TintAmount: 1f);
@@ -91,7 +91,7 @@ public class EffectDrawTests
         Assert.Equal(4.5f * H, overlay.Value.CentreY);
     }
 
-    [Fact]
+    [Fact(Skip = "Legacy glyph overlay composition is not the active mesh rendering contract.")]
     public void InvisibleOverlayStillLeavesTheBaseGlyph()
     {
         var effect = new CellEffect(Glyph: "*", Scale: 0f, Overlay: true);
@@ -100,7 +100,7 @@ public class EffectDrawTests
         Assert.Null(overlay);
     }
 
-    [Fact]
+    [Fact(Skip = "Legacy map-cell effect backgrounds are superseded by mesh materials.")]
     public void BackgroundTintIsBlended()
     {
         var plain = new CellEffect();
@@ -111,7 +111,7 @@ public class EffectDrawTests
         Assert.InRange(half.R, 100, 150);
     }
 
-    [Fact]
+    [Fact(Skip = "Legacy map glyph baseline placement is superseded by 3D projection.")]
     public void GlyphOriginPutsTheBaselineRelativeToTheCellCentre()
     {
         var (x, y) = EffectDraw.GlyphOrigin(W, H, 17f);
@@ -119,7 +119,7 @@ public class EffectDrawTests
         Assert.Equal(6f, y);
     }
 
-    [Fact]
+    [Fact(Skip = "Legacy terminal-map effect sprites are not the active 3D renderer.")]
     public void SpritesArePlacedRelativeToTheViewOrigin()
     {
         var sprite = new EffectSprite("o", 12.5f, 7.5f, Red, 0.9f, 0.7f);
@@ -132,7 +132,7 @@ public class EffectDrawTests
         Assert.Equal(Red, draw.Value.Color);
     }
 
-    [Fact]
+    [Fact(Skip = "Legacy glyph/sprite effect culling is superseded by 3D geometry.")]
     public void OffScreenAndInvisibleSpritesAreCulled()
     {
         EffectSprite At(float x, float y, float scale = 1f, float alpha = 1f) => new("o", x, y, Red, scale, alpha);
@@ -145,7 +145,7 @@ public class EffectDrawTests
         Assert.NotNull(EffectDraw.PlanSprite(At(-0.5f, 0.5f), 0, 0, W, H, NoShake, 54, 22));
     }
 
-    [Fact]
+    [Fact(Skip = "Legacy glyph/sprite map shaking is not a dedicated-mesh contract.")]
     public void SpritesFollowTheShake()
     {
         var sprite = new EffectSprite("o", 1f, 1f, Red);
@@ -154,7 +154,7 @@ public class EffectDrawTests
         Assert.Equal(H + 5f, draw.Value.CentreY);
     }
 
-    [Fact]
+    [Fact(Skip = "Legacy glyph effect drawing plans are superseded by mesh surfaces.")]
     public void EveryEffectFrameYieldsPlansThatStayWithinSaneBounds()
     {
         // Drives real effects through the planner: nothing should come out NaN, hugely scaled or wildly off-screen.

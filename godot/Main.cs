@@ -41,10 +41,12 @@ public partial class Main : Control
             var game = CityGame.New(_options.Config,
                 startingDate: !_options.SmokeTest && !_options.DumpMap ? DateTime.Now : null);
             game.Paused = true;
+            DebugStarterSetup? starter = _options.DebugStarter ? DebugStarterSetup.Apply(game) : null;
             string savePath = ProjectSettings.GlobalizePath(
                 _options.SmokeTest ? "user://smoke/quicksave.json" : "user://quicksave.json");
             Session = new GameSession(game, savePath,
-                showGuide: !_options.Load && !_options.SmokeTest && !_options.DumpMap)
+                showGuide: !_options.Load && !_options.SmokeTest && !_options.DumpMap && !_options.DebugStarter,
+                initialCameraTarget: starter?.CameraTarget)
             {
                 StartAtCurrentWeek = !_options.SmokeTest && !_options.DumpMap,
 #if DEBUG
@@ -55,6 +57,7 @@ public partial class Main : Control
             {
                 throw new IOException(Session.Message);
             }
+            if (!_options.Load && !_options.SmokeTest && !_options.DumpMap) Session.SetZoom(1);
             if (_options.DumpMap)
             {
                 var text = new StringBuilder($"Seed {Session.Game.Config.Seed}, {Session.Game.Map.Width}x{Session.Game.Map.Height}\n");
@@ -79,6 +82,11 @@ public partial class Main : Control
             Map.VerifyGlyphs(Session.Game.Map.Content);
             CreateEffects();
             CreateLayout(font);
+            if (!_options.SmokeTest)
+            {
+                Map.SetPerspective(true);
+                if (!_options.Load && starter is null) Session.CenterOn(Session.Cursor);
+            }
             CreateMusic();
             CreateClicks();
             Session.Placed += PlayPlacementClick;
@@ -91,6 +99,12 @@ public partial class Main : Control
             GetWindow().FocusExited += OnFocusExited;
             _started = true;
             UpdateUi();
+            if (starter is not null)
+                GD.Print($"TERMCITY_DEBUG_STARTER_OK spur={starter.Spur} well={starter.Well} " +
+                    $"woodlot={starter.Woodlot} residential={starter.Residential} " +
+                    $"camera-target={starter.CameraTarget} " +
+                    $"residential-cells={Session.Game.Map.ZoneCells(TermCity.Core.World.ZoneType.Residential).Count()} " +
+                    $"paused={Session.Game.Paused} clock-suspended={Session.ClockSuspended}");
             if (_options.SmokeTest)
             {
                 Callable.From(RunSmokeTest).CallDeferred();
@@ -138,6 +152,7 @@ public partial class Main : Control
 
     private void OnCameraChanged()
     {
+        Map.Perspective?.ResetCameraOffset();
         Map.Invalidate(true);
         UpdateUi();
     }
@@ -221,8 +236,23 @@ public partial class Main : Control
             }
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
-            GodotSmoke.Run(this);
-            await GodotSmoke.RunNativeInput(this);
+            if (!_options.BuildingSmokeTest)
+            {
+                GodotSmoke.Run(this);
+                await GodotSmoke.RunNativeInput(this);
+            }
+            if (_options.MilestoneSmokeTest)
+                await GodotSmoke.VerifyReachedMilestoneDialog(this, _options.CapturePath);
+            else await GodotSmoke.VerifyBuildingRendering(this);
+            if (_options.WoodlotSmokeTest)
+            {
+                await GodotSmoke.VerifyWoodlotArtwork(this, _options.CapturePath);
+                await GodotSmoke.VerifyActualSubmenuModels(this, _options.CapturePath);
+            }
+            if (_options.PlacementSmokeTest && !_options.PerspectiveSmokeTest)
+                await GodotSmoke.VerifyPlacementMapNavigation(this, _options.CapturePath);
+            if (_options.PerspectiveSmokeTest) await GodotSmoke.VerifyPerspectiveRendering(this, _options.CapturePath);
+            if (_options.PerspectivePerformanceTest) await PerspectivePerformanceSmoke.Run(this);
             if (headless)
             {
                 window.ContentScaleSize = initialSize;
@@ -234,7 +264,7 @@ public partial class Main : Control
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             var center = new Pos(Session.Game.Map.Width / 2, Session.Game.Map.Height / 2);
-            Session.PlaceCursor(center);
+            Session.PlaceCursor(_options.BuildingSmokeTest ? center.Offset(23, 14) : center);
             Session.CenterOn(center);
             Session.SetMessage("Godot integration checks passed.", MessageKind.Success);
             if (_options.CapturePath is { } path)
@@ -248,6 +278,41 @@ public partial class Main : Control
                 if (error != Error.Ok)
                 {
                     throw new IOException($"Screenshot failed: {error}.");
+                }
+                if (_options.PerspectiveSmokeTest)
+                {
+                    Map.ZoomBy(-1);
+                    for (int frame = 0; frame < 3; frame++) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                    await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                    var halfZoomError = GetViewport().GetTexture().GetImage().SavePng(Path.ChangeExtension(path, ".zoom05.png"));
+                    if (halfZoomError != Error.Ok) throw new IOException($"Half-zoom screenshot failed: {halfZoomError}.");
+                    Map.ZoomBy(1);
+                    Map.ZoomBy(1);
+                    await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                    await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                    await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                    var zoomError = GetViewport().GetTexture().GetImage().SavePng(Path.ChangeExtension(path, ".zoom2.png"));
+                    if (zoomError != Error.Ok) throw new IOException($"Zoom screenshot failed: {zoomError}.");
+                    Map.ZoomBy(-1);
+                    Session.CenterOn(new Pos(Session.Game.Map.Width / 2, Session.Game.Map.Height / 2 + 23));
+                    Map.Invalidate(true);
+                    await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                    await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                    await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                    var riverError = GetViewport().GetTexture().GetImage().SavePng(Path.ChangeExtension(path, ".river.png"));
+                    if (riverError != Error.Ok) throw new IOException($"River screenshot failed: {riverError}.");
+                    var green = Session.Game.Map.ServiceCells.Select(Session.Game.Map.PosOf)
+                        .First(p => Session.Game.Map.BuildingAt(p.X, p.Y)!.Name == "Village Green");
+                    Session.SetZoom(-1);
+                    Map.RefreshCells();
+                    Session.SelectCell(green);
+                    Session.CenterOn(green);
+                    Map.Invalidate(true);
+                    await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                    await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                    await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                    var rangeError = GetViewport().GetTexture().GetImage().SavePng(Path.ChangeExtension(path, ".ranges.png"));
+                    if (rangeError != Error.Ok) throw new IOException($"Range screenshot failed: {rangeError}.");
                 }
             }
             GD.Print("TERMCITY_GODOT_SMOKE_OK");

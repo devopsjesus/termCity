@@ -1,5 +1,7 @@
 using TermCity.Core.Simulation;
 using TermCity.Core.World;
+using TermCity.Core.Roads;
+using TermCity.Core.Util;
 
 namespace TermCity.Core.Rendering;
 
@@ -11,6 +13,25 @@ public sealed class RoadChunk(int width, int height, byte[] rgba)
     public int Height { get; } = height;
 
     public byte[] Rgba { get; } = rgba;
+
+    public void PaintOver(TerrainSprite terrain)
+    {
+        if (terrain.Width != Width || terrain.Height != Height)
+            throw new ArgumentException("Road and terrain chunks must have equal dimensions.", nameof(terrain));
+        for (int offset = 0; offset < Rgba.Length; offset += 4)
+        {
+            int alpha = Rgba[offset + 3];
+            if (alpha == 0) continue;
+            if (alpha == 255)
+            {
+                Rgba.AsSpan(offset, 3).CopyTo(terrain.Pixels.AsSpan(offset, 3));
+                continue;
+            }
+            for (int channel = 0; channel < 3; channel++)
+                terrain.Pixels[offset + channel] = (byte)((Rgba[offset + channel] * alpha +
+                    terrain.Pixels[offset + channel] * (255 - alpha) + 127) / 255);
+        }
+    }
 }
 
 /// <summary>
@@ -20,6 +41,16 @@ public sealed class RoadChunk(int width, int height, byte[] rgba)
 /// </summary>
 public sealed class RoadVectorLayer
 {
+    public static Rgb GroundSurfaceColor(RoadType type, int worldPixelX, int worldPixelY)
+    {
+        int blockY = worldPixelY / 4;
+        int offset = type.Rank >= 2 ? CellHash.Pick(blockY, type.Rank, 3) : 0;
+        int blockX = (worldPixelX + offset) / (type.Rank >= 2 ? 3 : 4);
+        int shade = CellHash.Pick(blockX + type.Rank * 13, blockY, 5);
+        double brightness = 0.95 + shade * 0.025;
+        return type.SurfaceColor.Scale(brightness);
+    }
+
     public const int ChunkCells = 16;
 
     /// <summary>Distance from the middle of the road to each of its two edge lines.</summary>
@@ -59,6 +90,8 @@ public sealed class RoadVectorLayer
     private GameMap? _map;
     private RoadNetwork? _network;
     private IReadOnlyList<RoadPath> _paths = [];
+    private IReadOnlyList<RoadPath> _groundPaths = [];
+    private readonly Dictionary<(int X, int Y), RoadChunk?> _groundChunks = [];
 
     /// <summary>Changes whenever the road curves do, so callers know when to discard what they rendered.</summary>
     public int Revision { get; private set; }
@@ -78,6 +111,16 @@ public sealed class RoadVectorLayer
         _map = map;
         _network = network;
         _paths = network.DrawnPaths;
+        _groundChunks.Clear();
+        _groundPaths = _paths.Select(path =>
+        {
+            var points = Enumerable.Range(0, path.Count).Select(i => (path.Xs[i], path.Ys[i])).ToList();
+            if (path.Closed) points.Add(points[0]);
+            var simplified = RoadCurves.Straighten(points, new bool[points.Count], 0.2);
+            if (path.Closed) simplified.RemoveAt(simplified.Count - 1);
+            return new RoadPath(path.Type, path.Connected, path.Closed,
+                simplified.Select(p => p.X).ToArray(), simplified.Select(p => p.Y).ToArray());
+        }).ToArray();
         Revision++;
         return true;
     }
@@ -88,6 +131,56 @@ public sealed class RoadVectorLayer
     /// cells: the block then spans <see cref="ChunkCells"/> screen cells and the road keeps its width on screen.
     /// </summary>
     public RoadChunk? Render(int chunkX, int chunkY, int scale, int stride = 1)
+        => RenderCore(chunkX, chunkY, scale, stride, false);
+
+    public RoadChunk? RenderGround(int chunkX, int chunkY)
+    {
+        var key = (chunkX, chunkY);
+        if (_groundChunks.TryGetValue(key, out var chunk)) return chunk;
+        if (_groundChunks.Count >= 384) _groundChunks.Clear();
+        chunk = RenderCore(chunkX, chunkY, 1, 1, true);
+        _groundChunks.Add(key, chunk);
+        return chunk;
+    }
+
+    public bool GroundRoadAt(double x, double y, int clearancePixels = 0)
+    {
+        int px = (int)Math.Floor(x * RoadCurves.CellWidth);
+        int py = (int)Math.Floor(y * RoadCurves.CellHeight);
+        int width = ChunkCells * RoadCurves.CellWidth, height = ChunkCells * RoadCurves.CellHeight;
+        if (px >= clearancePixels && py >= clearancePixels &&
+            px % width >= clearancePixels && px % width + clearancePixels < width &&
+            py % height >= clearancePixels && py % height + clearancePixels < height)
+        {
+            var local = RenderGround(px / width, py / height);
+            if (local is null) return false;
+            for (int dy = -clearancePixels; dy <= clearancePixels; dy++)
+                for (int dx = -clearancePixels; dx <= clearancePixels; dx++)
+                    if (local.Rgba[((py % height + dy) * width + px % width + dx) * 4 + 3] > 0)
+                        return true;
+            return false;
+        }
+        if (px >= 0 && py >= 0 && _map is { } map && px < map.Width * RoadCurves.CellWidth &&
+            py < map.Height * RoadCurves.CellHeight)
+        {
+            var center = RenderGround(px / width, py / height);
+            if (center is not null && center.Rgba[((py % height) * width + px % width) * 4 + 3] > 0)
+                return true;
+        }
+        for (int dy = -clearancePixels; dy <= clearancePixels; dy++)
+            for (int dx = -clearancePixels; dx <= clearancePixels; dx++)
+            {
+                int sx = px + dx, sy = py + dy;
+                if (sx < 0 || sy < 0 || _map is null || sx >= _map.Width * RoadCurves.CellWidth ||
+                    sy >= _map.Height * RoadCurves.CellHeight) continue;
+                var chunk = RenderGround(sx / width, sy / height);
+                if (chunk is not null && chunk.Rgba[((sy % height) * width + sx % width) * 4 + 3] > 0)
+                    return true;
+            }
+        return false;
+    }
+
+    private RoadChunk? RenderCore(int chunkX, int chunkY, int scale, int stride, bool surfaceOnly)
     {
         if (_map is not { } map || _paths.Count == 0)
         {
@@ -106,7 +199,7 @@ public sealed class RoadVectorLayer
         double unit = (double)stride / scale;
 
         var near = new List<RoadPath>();
-        foreach (var path in _paths)
+        foreach (var path in surfaceOnly ? _groundPaths : _paths)
         {
             if (!Shown(path.Type.Rank, topRank, stride))
             {
@@ -235,13 +328,14 @@ public sealed class RoadVectorLayer
                 }
 
                 double bed = Coverage(bedHalf - field, scale);
-                double line = lines ? Coverage(LineHalfThickness - Math.Abs(field - LineOffset), scale) : 0;
+                double line = lines && !surfaceOnly ? Coverage(LineHalfThickness - Math.Abs(field - LineOffset), scale) : 0;
                 double red = 0, green = 0, blue = 0, alpha = 0;
                 if (bed > 0 || line > 0)
                 {
                     var path = near[owner[at]];
-                    var bedColour = path.Type.Background;
-                    var lineColour = path.Connected ? path.Type.Foreground : CellRenderer.DisconnectedRoad;
+                    var bedColour = surfaceOnly ? GroundSurfaceColor(path.Type,
+                        (int)Math.Floor(x0 + (x + 0.5) * unit), (int)Math.Floor(qy)) : path.Type.Background;
+                    var lineColour = path.Type.Foreground;
 
                     // The bed is opaque: no terrain shows through between the lines, whatever lies under the road.
                     red = Blend8(bedColour.R, lineColour.R, line);
@@ -254,7 +348,7 @@ public sealed class RoadVectorLayer
                 {
                     // Zoomed out, a highway keeps a narrow dark bed and a thin double line down its middle.
                     var path = near[top[at]];
-                    var lineColour = path.Connected ? path.Type.Foreground : CellRenderer.DisconnectedRoad;
+                    var lineColour = path.Type.Foreground;
                     (red, green, blue, alpha) = Over(red, green, blue, alpha, path.Type.Background.R, path.Type.Background.G, path.Type.Background.B, Coverage(HighwayBedHalf - hw, scale) * 0.9);
                     double center = Coverage(HighwayLineHalf - Math.Abs(hw - HighwayLineOffset), scale);
                     (red, green, blue, alpha) = Over(red, green, blue, alpha, lineColour.R, lineColour.G, lineColour.B, center);

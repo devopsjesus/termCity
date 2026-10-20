@@ -12,7 +12,7 @@ public class PeasantNeedsTests
     [InlineData("Lawlessness", "Watch House")]
     [InlineData("Hunger", "grain imports")]
     [InlineData("Tithes", "taxes")]
-    [InlineData("Road access", "edge-connected")]
+    [InlineData("Slow journeys", "walking speed")]
     public void ComplaintHintsExplainTheRelevantRemedy(string reason, string remedy)
     {
         var message = PeasantNeeds.Describe(new CityIndicators { Complaints = [new(reason, 10)] }, 0)!;

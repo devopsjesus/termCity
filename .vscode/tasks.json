@@ -1,0 +1,21 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run TermCity",
+			"type": "shell",
+			"command": "/Applications/Godot_mono.app/Contents/MacOS/godot",
+			"args": [
+				"--path",
+				"godot",
+				"--",
+				"--seed",
+				"42",
+				"--size",
+				"medium"
+			],
+			"isBackground": true,
+			"problemMatcher": []
+		}
+	]
+}

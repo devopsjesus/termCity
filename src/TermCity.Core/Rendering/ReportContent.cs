@@ -26,7 +26,6 @@ public static class ReportContent
         {
             Row("City", game.CityName), Row("Population", $"{stats.Population:N0}"),
             Row("Current size", size.CurrentName),
-            Row("Next size", size.Target is { } target ? $"{size.NextName}: {target:N0} people" : "Largest city size reached."),
             Row("Date", MedievalCalendar.DateLabel(game.Year, game.WeekOfYear, game.Config.WeeksPerYear).Trim()),
             Row("Season", Seasons.Name(game.Season)), Row("Seed", game.Config.Seed.ToString()),
             Row("Map dimensions", $"{game.Map.Width} x {game.Map.Height}"),
@@ -80,7 +79,8 @@ public static class ReportContent
             economy.Add(Row($"{Zones.Get(zone).Name} tax", $"{game.Taxes.Get(zone):P0}"));
         if (game.Config.FullRules)
             economy.AddRange([
-                Row("Grain", $"{game.GrainWeeks:0.#} weeks"), Row("Harvest quality", $"{game.HarvestQuality:0.00}x"),
+                Row("Grain", game.GrainRequired ? $"{game.GrainWeeks:0.#} weeks" : "Unlocks at Village (500 souls)"),
+                Row("Harvest quality", game.GrainRequired ? $"{game.HarvestQuality:0.00}x" : "Not required yet"),
                 Row("Hunger", $"{game.Hunger:P0}", game.Hunger > 0 ? Bad : Good),
                 Row("Tribute arrears", Fmt.Money(game.TributeArrears), game.TributeArrears > 0 ? Bad : Good),
                 Row("Insolvent", game.Insolvent ? "Yes" : "No", game.Insolvent ? Bad : Good),
@@ -100,9 +100,14 @@ public static class ReportContent
                 services.Add(new(CityReport.ServiceName(kind).ToUpperInvariant(),
                 [
                     Row("Buildings", game.Services.BuildingCounts[(int)kind].ToString()),
+                    Row("Availability", CityProgression.IsServiceUnlocked(game, kind, stats.Population)
+                        ? "Unlocked" : $"Locked until {CityProgression.ServiceUnlockPopulation(game, kind):N0} souls; not expected"),
                     Row("Active", game.Services.ActiveCounts[(int)kind].ToString()),
                     Row("Coverage", $"{ind.CoverageOf(kind):0}%"),
                     Row("Funding", $"{game.Budget.Funding(kind):P0}"),
+                    Row("Workload", $"{game.Services.Workload(kind):P0}",
+                        game.Services.Workload(kind) >= 0.85 ? Bad : Good),
+                    Row("Response", kind.IsUtility() ? "Delivery time depends on route" : "Travel + workload; no radius cutoff"),
                 ]));
             services.Add(new("COMPLAINTS", ind.Complaints.Count == 0
                 ? [Row("Status", "No complaints.", Good)]
@@ -118,10 +123,10 @@ public static class ReportContent
             growth.Add(new($"{info.Letter} {info.Name.ToUpperInvariant()}",
             [
                 Row("Demand", $"{game.Demand.For(zone):P0}", info.Foreground),
-                Row("Built", $"{count.Filled:N0} cells", info.Foreground),
+                Row("Built", $"{count.Filled:N0} buildings", info.Foreground),
                 Row("Zoned", $"{count.Zoned:N0} lots", info.Foreground),
-                Row("Road-served", $"{count.Served:N0} lots", info.Foreground),
-                Row("Without road", $"{count.Zoned - count.Served:N0} lots", info.Foreground),
+                Row("Walkable", $"{count.Served:N0} lots", info.Foreground),
+                Row("Unreachable", $"{count.Zoned - count.Served:N0} lots", info.Foreground),
                 Row("Awaiting removal", $"{count.AwaitingRemoval:N0} buildings", info.Foreground),
                 Row("Eligible vacancies", $"{diagnostic.EligibleVacancies:N0}", info.Foreground),
                 Row("Growth status", diagnostic.Message, info.Foreground),
@@ -130,7 +135,7 @@ public static class ReportContent
         var events = game.Events.TakeLast(20).Reverse().Select(e =>
             Row($"Week {e.Week}: {e.Kind}", e.Message, e.Bad ? Bad : Good)).ToArray();
         var food = new List<ReportGroup>();
-        if (game.Config.FullRules)
+        if (game.GrainRequired)
         {
             food.Add(new("FOOD AND GRAIN",
             [
@@ -148,7 +153,9 @@ public static class ReportContent
                 Row("Current yield", $"{Seasons.FieldYield(game.Season) * game.HarvestQuality:0.00} weeks of food per week"),
             ]));
         }
-        else food.Add(new("FOOD AND GRAIN", [Row("Rules", "Classic rules do not simulate grain, hunger or famine.", None)]));
+        else food.Add(new("FOOD AND GRAIN", [Row("Rules", game.Config.FullRules ?
+            "Grain management unlocks at Village (500 souls). No imports, hunger or famine before then." :
+            "Classic rules do not simulate grain, hunger or famine.", None)]));
         food.Add(new("CURRENT SEASON",
         [
             Row("Season", Seasons.Name(game.Season)),
@@ -178,6 +185,7 @@ public static class ReportContent
             new("Services", services), new("Growth", growth),
             new("Food & Seasons", food),
             new("Events", [new("RECENT EVENTS", events.Length == 0 ? [Row("Status", "No events recorded.", None)] : events)]),
+            MilestoneReport.Browse(game),
         ];
     }
 

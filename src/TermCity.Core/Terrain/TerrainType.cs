@@ -114,6 +114,6 @@ public static class DefaultTerrains
         Buildable = false,
         AllowsFeatures = false,
         Generator = new WaterGenerator(),
-        Description = "Rivers, meres and the sea (cannot be built on; existing roads cross by ford and bridge)",
+        Description = "Rivers, meres and the sea (buildings cannot be placed here; roads cross as bridges)",
     };
 }

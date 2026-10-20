@@ -66,14 +66,14 @@ public class EconomyTests
     }
 
     [Fact]
-    public void WaterAndExistingRoadsAreSkipped()
+    public void WaterAcceptsBridgeRoadsButNotZonesAndExistingRoadsAreSkipped()
     {
         var game = TestCity.Flat();
         game.Map.SetTerrain(3, 3, game.Map.Content.Terrains.Get("Water"));
         game.Touch();
         var quote = game.QuoteRoad(new CellRect(3, 3, 1, 1));
-        Assert.Equal(0, quote.Cells);
-        Assert.False(game.BuildRoad(new CellRect(3, 3, 1, 1)).Success);
+        Assert.Equal(1, quote.Cells);
+        Assert.True(game.BuildRoad(new CellRect(3, 3, 1, 1)).Success);
         Assert.False(game.BuildRoad(new CellRect(3, 20, 1, 1)).Success);
         Assert.False(game.Designate(new CellRect(3, 3, 1, 1), ZoneType.Commercial).Success);
     }

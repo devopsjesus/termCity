@@ -4,6 +4,14 @@ namespace TermCity.Core.Simulation;
 
 public static class Fmt
 {
+    public static string SpeedLabel(GameSpeed speed) => speed switch
+    {
+        GameSpeed.Slow => "1x",
+        GameSpeed.Medium => "2x",
+        GameSpeed.Fast => "3x",
+        _ => throw new ArgumentOutOfRangeException(nameof(speed)),
+    };
+
     public static string WeekBar(int day, int daysPerWeek)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(daysPerWeek);

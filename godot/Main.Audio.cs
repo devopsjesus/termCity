@@ -23,7 +23,7 @@ public partial class Main
 
     private readonly Vector2[] _musicFrames = new Vector2[1024];
 
-    private GreensleevesSequence _musicSequence = null!;
+    private MusicSequence _musicSequence = null!;
 
     private MusicPhrase _musicPhrase = null!;
 
@@ -42,6 +42,7 @@ public partial class Main
     private int _musicPhraseCount;
 
     public int MusicPhraseCount => Volatile.Read(ref _musicPhraseCount);
+    public string CurrentMusicTitle => Volatile.Read(ref _musicPhrase).Title;
 
     internal int MusicSkips => _musicPlayback.GetSkips();
 
@@ -62,13 +63,13 @@ public partial class Main
 
     private void CreateMusic()
     {
-        _musicSequence = new GreensleevesSequence(_options.SmokeTest ? 42 : null);
+        _musicSequence = new MusicSequence(MusicRegistry.CreateDefault(), _options.SmokeTest ? 42 : null);
         _musicPhrase = _musicSequence.Next();
         _musicPhraseCount = 1;
         _nextMusicPhrase = Task.Run(() => _musicSequence.Next());
         _musicTrack = new AudioStreamGenerator
         {
-            MixRate = GreensleevesTrack.SampleRate,
+            MixRate = MedievalMusicSynth.SampleRate,
             BufferLength = 1f,
         };
         _music = new AudioStreamPlayer

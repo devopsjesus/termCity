@@ -10,12 +10,15 @@ public sealed class RoadGuide
     public const double Reach = RoadCurves.StraightenTolerance + 6;
 
     private const double BucketSize = 32;
+    private readonly double _reach;
 
     private readonly List<(double Ax, double Ay, double Bx, double By)> _segments = [];
     private readonly Dictionary<long, List<int>> _buckets = [];
 
     public RoadGuide(IReadOnlyList<RoadPath> paths)
     {
+        _reach = Math.Max(Reach, paths.Count == 0 ? 0 :
+            paths.Max(path => path.Type.BendRadiusCells) * RoadCurves.CellHeight / 2 + RoadCurves.StraightenTolerance);
         foreach (var path in paths)
         {
             int count = path.Closed ? path.Count : path.Count - 1;
@@ -36,17 +39,18 @@ public sealed class RoadGuide
 
     public bool IsEmpty => _segments.Count == 0;
 
-    /// <summary>The nearest point on any curve within <see cref="Reach"/> of (<paramref name="x"/>, <paramref name="y"/>).</summary>
+    /// <summary>The nearest point on a curve within its bend-aware reach of (<paramref name="x"/>, <paramref name="y"/>).</summary>
     public bool TrySnap(double x, double y, out double snappedX, out double snappedY)
     {
         snappedX = x;
         snappedY = y;
         int bx = (int)Math.Floor(x / BucketSize), by = (int)Math.Floor(y / BucketSize);
-        double best = Reach * Reach;
+        double best = _reach * _reach;
         bool found = false;
-        for (int j = by - 1; j <= by + 1; j++)
+        int radius = (int)Math.Ceiling(_reach / BucketSize);
+        for (int j = by - radius; j <= by + radius; j++)
         {
-            for (int i = bx - 1; i <= bx + 1; i++)
+            for (int i = bx - radius; i <= bx + radius; i++)
             {
                 if (!_buckets.TryGetValue(Key(i, j), out var list))
                 {

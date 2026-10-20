@@ -27,7 +27,7 @@ public class ServiceFootprintTests
     public void SingleClickOccupiesWholeFootprintButCountsAndChargesOneBuilding()
     {
         var game = TestCity.Flat(rules: CityRules.Full);
-        game.HighestMilestone = 100;
+        game.HighestMilestone = 250;
         var type = game.Map.Content.Buildings.Get("Sheriff's Hall");
         int money = game.Money;
         Assert.Equal(new Quote(2, type.Cost, 0), game.QuoteBuilding(type, new(10, 19, 1, 1)));
@@ -70,7 +70,7 @@ public class ServiceFootprintTests
     public void SelectedAreasTileNonOverlappingCompleteBuildings()
     {
         var game = TestCity.Flat();
-        game.HighestMilestone = 100;
+        game.HighestMilestone = 250;
         var type = game.Map.Content.Buildings.Get("Sheriff's Hall");
         Assert.Equal(new Quote(4, type.Cost * 2, 1), game.QuoteBuilding(type, new(10, 19, 5, 1)));
         Assert.True(game.PlaceBuilding(type, new(10, 19, 5, 1)).Success);
@@ -82,24 +82,26 @@ public class ServiceFootprintTests
     public void HillCostsApplyAcrossTheWholeFootprint()
     {
         var game = TestCity.Flat();
-        game.HighestMilestone = 100;
+        game.HighestMilestone = 250;
         var type = game.Map.Content.Buildings.Get("Sheriff's Hall");
         game.Map.SetTerrain(11, 19, game.Map.Content.Terrains.Get("Hill"));
         Assert.Equal((int)(type.Cost * 1.25), game.QuoteBuilding(type, new(10, 19, 1, 1)).Cost);
     }
 
     [Fact]
-    public void RoadAccessFromAnyPartActivatesWholeBuilding()
+    public void RoadAccessIsABonusRatherThanAnActivationRequirement()
     {
         var game = TestCity.Flat(rules: CityRules.Full);
         var type = game.Map.Content.Buildings.Get("Sheriff's Hall");
         game.Map.SetBuildingFootprint(type, new(10, 5, 2, 1));
         game.Touch();
-        Assert.Equal(0, game.Services.ActiveCounts[(int)ServiceKind.Police]);
+        Assert.Equal(1, game.Services.ActiveCounts[(int)ServiceKind.Police]);
         game.Map.SetRoad(13, 5, game.Map.Content.Roads.Default);
         for (int x = 13; x < game.Map.Width; x++) game.Map.SetRoad(x, 5, true);
         game.Touch();
-        Assert.False(game.Network.IsServed(game.Map.Index(10, 5)));
+        Assert.True(game.Network.IsServed(game.Map.Index(10, 5)));
+        Assert.Equal(0, game.Network.AccessRank(game.Map.Index(10, 5)));
+        Assert.Equal(1, game.Network.AccessRank(game.Map.Index(11, 5)));
         Assert.True(game.Network.IsServed(game.Map.Index(11, 5)));
         Assert.Equal(1, game.Services.ActiveCounts[(int)ServiceKind.Police]);
     }
@@ -108,7 +110,7 @@ public class ServiceFootprintTests
     public void PreviewDemolitionPersistenceAndUndoKeepOneWholeBuilding()
     {
         var session = new GameSession(TestCity.Flat());
-        session.Game.HighestMilestone = 100;
+        session.Game.HighestMilestone = 250;
         session.Game.Paused = true;
         session.PlaceCursor(new(10, 19));
         var type = session.Game.Map.Content.Buildings.Get("Sheriff's Hall");
@@ -135,7 +137,7 @@ public class ServiceFootprintTests
     public void MissingAndMalformedFootprintsAreRejected()
     {
         var game = TestCity.Flat();
-        game.HighestMilestone = 100;
+        game.HighestMilestone = 250;
         var type = game.Map.Content.Buildings.Get("Sheriff's Hall");
         Assert.True(game.PlaceBuilding(type, new CellRect(10, 19, 1, 1)).Success);
         var json = JsonNode.Parse(SaveGameStore.Serialize(game))!;

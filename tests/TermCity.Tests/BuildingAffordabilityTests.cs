@@ -9,7 +9,7 @@ public class BuildingAffordabilityTests
     public void OpenApothecaryMenuRespondsToGainingAndLosingFundsWithoutReplacement()
     {
         var game = TestCity.Flat(rules: CityRules.Full);
-        game.HighestMilestone = 100;
+        game.HighestMilestone = 250;
         game.Money = 7_999;
         var session = new GameSession(game);
         var apothecary = game.Map.Content.Buildings.Get("Apothecary");

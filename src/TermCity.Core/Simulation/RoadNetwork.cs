@@ -5,8 +5,7 @@ namespace TermCity.Core.Simulation;
 
 /// <summary>
 /// Which road cells are connected to the outside world (via a road that reaches the map edge),
-/// and which cells are close enough to such a road to be served by it.
-/// Computation only visits roads and their surroundings, so it does not scale with the size of the map.
+/// optional road-proximity bonuses, and which terrain cells Sims can walk across.
 /// </summary>
 public sealed class RoadNetwork
 {
@@ -46,6 +45,11 @@ public sealed class RoadNetwork
     public bool IsServed(int index) => _served[index];
 
     public bool RoadOverlapsCell(int index) => _geometry.OverlapsCell(index % _width, index / _width);
+    public RoadPath? RoadAtCellCenter(int x, int y) => _geometry.RoadAtCellCenter(x, y);
+    public RoadMeshLayout.Segment? RoadAt(System.Numerics.Vector2 point) => _geometry.RoadAt(point);
+    internal bool HasParallelRoad(System.Numerics.Vector2 point, System.Numerics.Vector2 direction, float width) =>
+        _geometry.HasParallelRoad(point, direction, width);
+    public bool IsBridgeAtCellCenter(int x, int y) => _geometry.IsBridgeAtCellCenter(x, y);
 
     public static RoadNetwork Compute(GameMap map, int serviceReach)
     {
@@ -121,7 +125,7 @@ public sealed class RoadNetwork
 
         int trafficCapacity = 0;
         int maxRank = 0;
-        foreach (int i in connectedCells)
+        foreach (int i in map.RoadCells)
         {
             int id = map.RoadTypeLayer[i];
             trafficCapacity += capacities[id];
@@ -132,7 +136,7 @@ public sealed class RoadNetwork
         for (int rank = maxRank; rank >= 1; rank--)
         {
             var ring = new List<int>();
-            foreach (int i in connectedCells)
+            foreach (int i in map.RoadCells)
             {
                 if (ranks[map.RoadTypeLayer[i]] == rank && access[i] == 0)
                 {
@@ -204,6 +208,10 @@ public sealed class RoadNetwork
             served[index] = true;
             access[index] = (byte)Math.Max(access[index], rank);
         }
+
+        // Access rank is a road bonus, not permission to inhabit or cross land.
+        for (int i = 0; i < served.Length; i++)
+            served[i] = TravelRoutes.Walkable(map, i);
 
         return new RoadNetwork(connected, served, access, connectedCount, trafficCapacity, geometry, width, paths);
     }

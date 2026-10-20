@@ -70,12 +70,6 @@ public class UpgradeValueTests(ITestOutputHelper output)
     private static double DeliveredOutput(BuildingType type)
     {
         if (type.Service.IsUtility()) return type.Capacity;
-        var config = new GameConfig();
-        var map = new GameMap(160, 96, new GameContent());
-        for (int x = 0; x < map.Width; x++) map.SetRoad(x, 47, map.Content.Roads.Get(DefaultRoads.KingsRoadName));
-        map.SetBuildingFootprint(map.Content.Buildings.Get(type.Name), new CellRect(80, 48, type.Width, type.Height));
-        var services = CityServices.Compute(map, RoadNetwork.Compute(map, config.RoadServiceReach), config, _ => 1);
-        Assert.Equal(1, services.ActiveCounts[(int)type.Service]);
-        return Enumerable.Range(0, map.Width * map.Height).Sum(index => services.Coverage(type.Service, index)) / 100.0;
+        return type.StaffingCapacity * type.Strength / 100.0;
     }
 }

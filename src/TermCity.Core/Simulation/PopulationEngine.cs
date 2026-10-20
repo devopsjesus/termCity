@@ -68,7 +68,7 @@ internal static class PopulationEngine
         var cells = new List<int>();
         foreach (int i in map.ZoneCells(zone))
         {
-            if (map.BuildingLayer[i] != 0)
+            if (map.BuildingLayer[i] != 0 && map.IsBuildingAnchor(i))
             {
                 cells.Add(i);
             }
@@ -204,7 +204,7 @@ internal static class PopulationEngine
         if (closed.Count > 0)
         {
             game.Report(new CityEvent(game.Week, EventKind.Closure,
-                $"{closed.Count} businesses closed: no fuel or water, cut off from the roads, or too costly to run.", closed));
+                $"{closed.Count} businesses closed: delayed supplies, shortages, or too costly to run.", closed));
         }
     }
 
@@ -236,14 +236,23 @@ internal static class PopulationEngine
                 int level = type.Level;
 
                 if (next is not null && utilities && population >= UpgradePopulation[level] && services.SeatRank >= level &&
-                    land >= UpgradeLandValue[level] * scale && game.Network.AccessRank(i) >= level &&
+                    land >= UpgradeLandValue[level] * scale &&
                     DemandsUpgrade(game, ind, zone, i, type))
                 {
                     var p = map.PosOf(i);
-                    map.SetBuilding(p.X, p.Y, next);
+                    var oldHome = map.HouseholdLayer[i];
+                    var oldArea = map.BuildingFootprintAt(p.X, p.Y);
+                    var area = new TermCity.Core.Util.CellRect(p.X, p.Y,
+                        Math.Max(oldArea.Width, next.Width), Math.Max(oldArea.Height, next.Height));
+                    if (!area.Cells().All(cell => map.InBounds(cell) && map.TerrainAt(cell.X, cell.Y).Buildable &&
+                        !map.HasRoad(cell.X, cell.Y) && !game.Network.RoadOverlapsCell(map.Index(cell.X, cell.Y)) &&
+                        map.ZoneAt(cell.X, cell.Y) == zone &&
+                        (map.BuildingAt(cell.X, cell.Y) is null || map.BuildingAnchor(map.Index(cell.X, cell.Y)) == i)))
+                        continue;
+                    map.SetBuildingFootprint(next, area);
                     if (zone == ZoneType.Residential)
                     {
-                        map.HouseholdLayer[i] = map.HouseholdLayer[i].Scaled(0.6 * next.Capacity / type.Capacity);
+                        map.HouseholdLayer[i] = oldHome.Scaled(0.6 * next.Capacity / type.Capacity);
                     }
 
                     grown.Add(i);
@@ -252,10 +261,11 @@ internal static class PopulationEngine
                 {
                     var lower = buildings.ForZone(zone, level - 1)!;
                     var p = map.PosOf(i);
-                    map.SetBuilding(p.X, p.Y, lower);
+                    var h = map.HouseholdLayer[i];
+                    var area = map.BuildingFootprintAt(p.X, p.Y);
+                    map.SetBuildingFootprint(lower, area);
                     if (zone == ZoneType.Residential)
                     {
-                        var h = map.HouseholdLayer[i];
                         var shrunk = h.Total <= lower.Capacity ? h : h.Scaled((double)lower.Capacity / h.Total);
                         game.Tally.MovedOut += h.Total - shrunk.Total;
                         map.HouseholdLayer[i] = shrunk;

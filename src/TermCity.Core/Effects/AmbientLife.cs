@@ -13,6 +13,8 @@ public enum AmbientKind
 
     /// <summary>Open sea, as opposed to a river or a lake: water wide enough, and open enough to the map's edge, for whales.</summary>
     Sea = 16,
+    Walkable = 32,
+    Path = 64,
 }
 
 /// <summary>What ambient life may ask about the map. Out-of-bounds cells must return <see cref="AmbientKind.None"/>.</summary>
@@ -25,6 +27,7 @@ public interface IAmbientWorld
     /// follows the curve of the road. A world with straight roads leaves the point alone.
     /// </summary>
     (double X, double Y) Snap(double x, double y) => (x, y);
+    double WalkingSpeed(int x, int y) => 1;
 }
 
 /// <summary>
@@ -151,7 +154,7 @@ public sealed class AmbientLife : Effect
         {
             _birdClock += dt;
             Step(_cars, dt, view, carTarget, _roads, rng, CarSpeed.Min, CarSpeed.Max);
-            Step(_people, dt, view, peopleTarget, _homeRoads, rng, PersonSpeed.Min, PersonSpeed.Max);
+            Step(_people, dt, view, peopleTarget, _homeRoads, rng, PersonSpeed.Min, PersonSpeed.Max, onFoot: true);
             StepBirds(dt, view, birdTarget, rng);
         }
         StepWater(dt, view, budget >= 10 ? Math.Max(1, budget / 12) : 0, rng);
@@ -198,6 +201,9 @@ public sealed class AmbientLife : Effect
                 {
                     _factories.Add(new Pos(x, y));
                 }
+                if ((kind & AmbientKind.Walkable) != 0 && (kind & AmbientKind.Road) == 0 &&
+                    _homeRoads.Count < MaxCandidates && NextToHome(x, y))
+                    _homeRoads.Add(new Pos(x, y));
             }
         }
     }
@@ -222,18 +228,19 @@ public sealed class AmbientLife : Effect
         (_world.Classify(x + 1, y) & AmbientKind.Home) != 0 || (_world.Classify(x - 1, y) & AmbientKind.Home) != 0 ||
         (_world.Classify(x, y + 1) & AmbientKind.Home) != 0 || (_world.Classify(x, y - 1) & AmbientKind.Home) != 0;
 
-    private void Step(List<Walker> actors, double dt, CellRect view, int target, List<Pos> spawn, GameRandom rng, double minSpeed, double maxSpeed)
+    private void Step(List<Walker> actors, double dt, CellRect view, int target, List<Pos> spawn, GameRandom rng,
+        double minSpeed, double maxSpeed, bool onFoot = false)
     {
         for (int i = actors.Count - 1; i >= 0; i--)
         {
             var a = actors[i];
-            a.T += a.Speed * dt;
+            a.T += a.Speed * dt * (onFoot ? _world.WalkingSpeed(a.Cell.X, a.Cell.Y) : 1);
             bool remove = !Near(view, a.Cell);
             while (!remove && a.T >= 1)
             {
                 a.T -= 1;
                 a.Prev = a.Cell;
-                if (!TryNext(a, rng, out var next))
+                if (!TryNext(a, rng, out var next, onFoot))
                 {
                     remove = true;
                     break;
@@ -257,7 +264,7 @@ public sealed class AmbientLife : Effect
         if (actors.Count < target && spawn.Count > 0)
         {
             var at = spawn[rng.Next(spawn.Count)];
-            if ((_world.Classify(at.X, at.Y) & AmbientKind.Road) != 0 && view.Contains(at))
+            if (CanTravel(at, onFoot) && view.Contains(at))
             {
                 actors.Add(new Walker { Prev = at, Cell = at, T = 0, Speed = minSpeed + rng.NextDouble() * (maxSpeed - minSpeed) });
             }
@@ -265,15 +272,16 @@ public sealed class AmbientLife : Effect
 
         foreach (var a in actors)
         {
-            Place(a, dt);
+            Place(a, dt, onFoot);
         }
     }
 
     /// <summary>Moves the drawn position towards the road curve beside the actor, which keeps it on the line of an angled road.</summary>
-    private void Place(Walker a, double dt)
+    private void Place(Walker a, double dt, bool onFoot)
     {
         var (x, y) = Lerp(a);
-        var (tx, ty) = _world.Snap(x, y);
+        var (tx, ty) = onFoot && (_world.Classify(a.Cell.X, a.Cell.Y) & AmbientKind.Road) == 0
+            ? (x, y) : _world.Snap(x, y);
         if (!a.Placed)
         {
             a.X = tx;
@@ -287,7 +295,10 @@ public sealed class AmbientLife : Effect
         a.Y += (ty - a.Y) * k;
     }
 
-    private bool TryNext(Walker a, GameRandom rng, out Pos next)
+    private bool CanTravel(Pos p, bool onFoot) =>
+        (_world.Classify(p.X, p.Y) & (onFoot ? AmbientKind.Road | AmbientKind.Walkable : AmbientKind.Road)) != 0;
+
+    private bool TryNext(Walker a, GameRandom rng, out Pos next, bool onFoot)
     {
         Span<Pos> options = stackalloc Pos[4];
         int n = 0;
@@ -295,7 +306,7 @@ public sealed class AmbientLife : Effect
         bool canStraight = false;
         foreach (var p in new[] { a.Cell.Offset(1, 0), a.Cell.Offset(0, 1), a.Cell.Offset(-1, 0), a.Cell.Offset(0, -1) })
         {
-            if (p == a.Prev || (_world.Classify(p.X, p.Y) & AmbientKind.Road) == 0)
+            if (p == a.Prev || !CanTravel(p, onFoot))
             {
                 continue;
             }
@@ -308,7 +319,7 @@ public sealed class AmbientLife : Effect
         {
             // Dead end: turn around if the way back is still a road, otherwise the actor is gone.
             next = a.Prev;
-            return a.Prev != a.Cell && (_world.Classify(a.Prev.X, a.Prev.Y) & AmbientKind.Road) != 0;
+            return a.Prev != a.Cell && CanTravel(a.Prev, onFoot);
         }
 
         next = canStraight && rng.Chance(0.75) ? straight : options[rng.Next(n)];

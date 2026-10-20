@@ -13,6 +13,7 @@ public enum PlacementKind
     Road,
     Building,
     Demolish,
+    RoadTemplate,
 }
 
 /// <summary>
@@ -21,7 +22,8 @@ public enum PlacementKind
 /// </summary>
 public sealed record PlacementPreview(
     PlacementKind Kind, CellRect Area, Quote Quote, string Name, RoadType? Road = null, BuildingType? Building = null,
-    IReadOnlySet<Pos>? Cells = null, IReadOnlySet<Pos>? ValidCells = null)
+    IReadOnlySet<Pos>? Cells = null, IReadOnlySet<Pos>? ValidCells = null, RoadTemplate? Template = null,
+    IReadOnlyList<Pos>? RoadStroke = null, int Rotation = 0)
 {
     /// <summary>Whether the placement covers any cell of <paramref name="block"/>.</summary>
     public bool Touches(CellRect block) => Cells is null
@@ -30,10 +32,12 @@ public sealed record PlacementPreview(
 
     public bool IsValid(CityGame game, int x, int y) => Kind switch
     {
-        PlacementKind.Road => game.CanPlaceRoad(x, y, Road),
+        PlacementKind.Road => ValidCells?.Contains(new(x, y)) ?? game.CanPlaceRoad(x, y, Road),
         PlacementKind.Building => ValidCells?.Contains(new(x, y)) == true,
+        PlacementKind.RoadTemplate => ValidCells?.Contains(new(x, y)) == true,
         _ => game.Map.HasRoad(x, y) || game.Map.ZoneAt(x, y) != ZoneType.None ||
-             game.Map.BuildingAt(x, y) is not null || game.Map.FeatureAt(x, y) is not null,
+             game.Map.BuildingAt(x, y) is not null || game.Map.FeatureAt(x, y) is not null ||
+             game.Map.PathWearAt(x, y) > 0,
     };
 
     public string Summary => $"{Name}: {Quote.Cells} valid, {Quote.Skipped} blocked, {Fmt.Money(Quote.Cost)}";
@@ -95,8 +99,24 @@ public sealed partial class GameSession
     public PlacementPreview? Preview { get; private set; }
     public bool RoadToolActive { get; private set; }
     public bool BuildingToolActive => Preview?.Kind == PlacementKind.Building;
+    public bool FixedPlacementToolActive => BuildingToolActive || Preview?.Kind == PlacementKind.RoadTemplate;
+    public bool MapNavigationAllowed => Prompt is null &&
+        (Preview is null || RoadToolActive || FixedPlacementToolActive);
+    public string? FixedPlacementError
+    {
+        get
+        {
+            if (Preview?.Template is not { } template) return BuildingPlacementError;
+            if (Game.RoadTemplatePlacementError(template, new(Preview.Area.X, Preview.Area.Y)) is { } error) return error;
+            return Preview.Quote.Cost > Game.Money
+                ? $"Not enough gold: {template.Name} costs {Fmt.Money(Preview.Quote.Cost)}; you have {Fmt.Money(Game.Money)}."
+                : null;
+        }
+    }
+    public string? FixedPlacementWarning => Preview?.Template is not null ? Preview.Summary + "; click or Enter to place."
+        : BuildingPlacementWarning;
     public string? BuildingPlacementError => Preview?.Building is { } building
-        ? Game.BuildingPlacementError(building, Preview.Area.X, Preview.Area.Y)
+        ? Game.BuildingPlacementError(building, Preview.Area.X, Preview.Area.Y, Preview.Rotation)
         : null;
     public string? BuildingPlacementWarning => Preview?.Building is { } building
         ? Game.BuildingPlacementWarning(building, Preview.Area)
@@ -163,7 +183,8 @@ public sealed partial class GameSession
         string pending = AutosavePath(1) + ".pending";
         try
         {
-            SaveGameStore.Save(Game, pending, new SavedView(CameraX, CameraY, ZoomLevel));
+            SaveGameStore.Save(Game, pending, new SavedView(CameraX, CameraY, ZoomLevel)
+            { CameraEdgePadding = CameraEdgePadding });
             for (int slot = AutosaveSlots; slot > 1; slot--)
             {
                 if (File.Exists(AutosavePath(slot - 1)))
@@ -189,7 +210,48 @@ public sealed partial class GameSession
         HasCursor = true;
         _previewMenu = CaptureMenu() ?? _selectedMenu;
         road ??= Game.DefaultRoad;
-        Preview = new(PlacementKind.Road, ActiveArea, Game.QuoteRoad(ActiveArea, road), road.Name, Road: road);
+        var stroke = SelectedWaterCrossing();
+        Preview = stroke is null
+            ? new(PlacementKind.Road, ActiveArea, Game.QuoteRoad(ActiveArea, road), road.Name, Road: road)
+            : new(PlacementKind.Road, ActiveArea, Game.QuoteRoad(stroke, road), road.Name + " crossing", Road: road,
+                Cells: stroke.ToHashSet(), ValidCells: Game.PlanRoad(stroke, road).ToHashSet(), RoadStroke: stroke);
+        Changed?.Invoke();
+    }
+
+    private IReadOnlyList<Pos>? SelectedWaterCrossing()
+    {
+        if (ActiveArea.Area <= 1 || !ActiveArea.Cells().Any(p => !Game.Map.TerrainAt(p.X, p.Y).Buildable)) return null;
+        return CellLines.Between(Anchor ?? _selectionOrigin ?? new(ActiveArea.X, ActiveArea.Y), Cursor);
+    }
+
+    public void PreviewRoadTemplate(RoadTemplate template)
+    {
+        _previewMenu = CaptureMenu() ?? _selectedMenu;
+        HasCursor = true;
+        Anchor = null;
+        Selection = null;
+        RefreshRoadTemplate(template);
+    }
+
+    public void MoveFixedPlacement(Pos position)
+    {
+        if (Preview?.Template is { } template)
+        {
+            Cursor = Clamp(position);
+            RefreshRoadTemplate(template);
+            FollowCursor();
+        }
+        else MoveBuildingPlacement(position);
+    }
+
+    private void RefreshRoadTemplate(RoadTemplate template)
+    {
+        var cells = template.Cells(Cursor).ToHashSet();
+        var area = new CellRect(Cursor.X, Cursor.Y, template.Width, template.Height);
+        var quote = Game.QuoteRoadTemplate(template, Cursor);
+        Preview = new(PlacementKind.RoadTemplate, area, quote, $"{template.Name} ({template.Width}x{template.Height})",
+            Road: Game.Map.Content.Roads.Get(template.RoadName), Cells: cells,
+            ValidCells: Game.RoadTemplatePlacementError(template, Cursor) is null ? cells : [], Template: template);
         Changed?.Invoke();
     }
 
@@ -214,7 +276,7 @@ public sealed partial class GameSession
         HasCursor = true;
         Anchor = null;
         Selection = null;
-        RefreshBuildingPlacement(building);
+        RefreshBuildingPlacement(building, 0);
     }
 
     public void MoveBuildingPlacement(Pos position)
@@ -225,18 +287,25 @@ public sealed partial class GameSession
         }
 
         Cursor = Clamp(position);
-        RefreshBuildingPlacement(building);
+        RefreshBuildingPlacement(building, Preview.Rotation);
         FollowCursor();
     }
 
-    private void RefreshBuildingPlacement(BuildingType building)
+    public void RotateBuildingPlacement(int quarterTurns)
     {
-        var area = new CellRect(Cursor.X, Cursor.Y, building.Width, building.Height);
-        var validCells = Game.BuildingPlacementError(building, Cursor.X, Cursor.Y) is null
+        if (Preview?.Building is not { } building) return;
+        int rotation = ((Preview.Rotation + quarterTurns) % 4 + 4) % 4;
+        RefreshBuildingPlacement(building, rotation);
+    }
+
+    private void RefreshBuildingPlacement(BuildingType building, int rotation)
+    {
+        var area = building.FootprintAt(Cursor.X, Cursor.Y, rotation);
+        var validCells = Game.BuildingPlacementError(building, Cursor.X, Cursor.Y, rotation) is null
             ? area.Cells().ToHashSet()
             : [];
-        Preview = new(PlacementKind.Building, area, Game.QuoteBuilding(building, area),
-            $"{building.Name} ({building.Width}x{building.Height})", Building: building, ValidCells: validCells);
+        Preview = new(PlacementKind.Building, area, Game.QuoteBuilding(building, area, rotation),
+            $"{building.Name} ({area.Width}x{area.Height})", Building: building, ValidCells: validCells, Rotation: rotation);
         Changed?.Invoke();
     }
 
@@ -258,10 +327,30 @@ public sealed partial class GameSession
         _previewMenu = CaptureMenu() ?? _selectedMenu;
         RoadToolActive = true;
         _lineRoad = road ?? Game.DefaultRoad;
+        Cursor = RoadToolCell(Cursor);
         _roadAnchor = Cursor;
         Anchor = null;
         Selection = null;
         RefreshRoadLine();
+    }
+
+    private Pos RoadToolCell(Pos cell)
+    {
+        cell = Clamp(cell);
+        var path = Game.Network.RoadAtCellCenter(cell.X, cell.Y);
+        if (path is null || Game.Map.HasRoad(cell.X, cell.Y)) return cell;
+        Pos owner = cell;
+        double nearest = double.PositiveInfinity;
+        foreach (var candidate in path.SourceCells)
+        {
+            if (Game.Map.RoadTypeAt(candidate.X, candidate.Y) != path.Type) continue;
+            double distance = (candidate.X - cell.X) * (double)(candidate.X - cell.X) +
+                (candidate.Y - cell.Y) * (double)(candidate.Y - cell.Y);
+            if (distance >= nearest) continue;
+            nearest = distance;
+            owner = candidate;
+        }
+        return owner;
     }
 
     private void RefreshRoadLine()
@@ -269,11 +358,14 @@ public sealed partial class GameSession
         var line = CellLines.Between(_roadAnchor, Cursor);
         var area = CellRect.FromCorners(_roadAnchor, Cursor);
         var road = _lineRoad ?? Game.DefaultRoad;
-        var quote = Game.QuoteRoad(line, road);
-        var laid = Game.PlanRoad(line, road).ToHashSet();
+        var plan = Game.PlanRoad(line, road, out var error);
+        var quote = Game.QuotePlannedRoad(line, plan, road);
+        var laid = plan.ToHashSet();
         bool hasGap = line.Any(p => !laid.Contains(p) && !Game.Map.HasRoad(p.X, p.Y));
         Preview = new(PlacementKind.Road, area, quote,
-            hasGap ? road.Name + " line (gaps)" : road.Name + " line", Road: road, Cells: line.ToHashSet());
+            error is not null ? road.Name + ": " + error : hasGap ? road.Name + " line (gaps)" : road.Name + " line",
+            Road: road, Cells: line.ToHashSet(),
+            ValidCells: laid, RoadStroke: line);
         Changed?.Invoke();
     }
 
@@ -286,15 +378,29 @@ public sealed partial class GameSession
 
         var result = Execute(() => preview.Kind switch
         {
+            PlacementKind.Road when preview.RoadStroke is { } stroke => Game.BuildRoad(stroke, preview.Road),
             PlacementKind.Road => preview.Cells is { } line
                 ? Game.BuildRoad(line, preview.Road) : Game.BuildRoad(preview.Area, preview.Road),
-            PlacementKind.Building when preview.Building is { } building => Game.PlaceBuilding(building, preview.Area),
+            PlacementKind.Building when preview.Building is { } building => Game.PlaceBuilding(building, preview.Area, preview.Rotation),
+            PlacementKind.RoadTemplate when preview.Template is { } template =>
+                Game.BuildRoadTemplate(template, new(preview.Area.X, preview.Area.Y)),
             PlacementKind.Demolish => Game.Demolish(preview.Cells ?? preview.Area.Cells()),
             _ => ActionResult.Fail("No building type selected."),
         }, preview.Building is { } type ? Game.BuildingPlacementWarning(type, preview.Area) : null);
         if (result.Success)
         {
-            ClearPreview();
+            if (preview.Kind == PlacementKind.Road)
+            {
+                RoadToolActive = true;
+                _lineRoad = preview.Road ?? Game.DefaultRoad;
+                _roadAnchor = Cursor;
+                Anchor = null;
+                Selection = null;
+                RefreshRoadLine();
+            }
+            else if (preview.Template is { } template)
+                RefreshRoadTemplate(template);
+            else ClearPreview();
         }
 
         return result;
@@ -328,11 +434,24 @@ public sealed partial class GameSession
             return;
         }
 
+        var road = RoadToolActive ? _lineRoad : null;
+        var template = Preview?.Template;
+        var cursor = Cursor;
+        var roadMenu = _previewMenu;
+        void ResumeRoadPlacement()
+        {
+            if (road is null && template is null) return;
+            PlaceCursor(cursor);
+            if (road is not null) BeginRoadLine(road);
+            else if (template is not null) PreviewRoadTemplate(template);
+            _previewMenu = roadMenu;
+        }
         Game.Paused = true;
         ClearPreview();
         ShowPrompt("Undo last action",
             $"Undo restores the entire city to immediately before the last successful action, including gold, residents and time. The game will remain paused. {UndoCount} action(s) available.",
-            [new("Undo", Undo), new("Cancel", CancelPrompt)]);
+            [new("Undo", () => { Undo(); ResumeRoadPlacement(); }),
+                new("Cancel", () => { CancelPrompt(); ResumeRoadPlacement(); })]);
     }
 
     private void Undo()
@@ -502,7 +621,8 @@ public sealed partial class GameSession
             }),
             new(quitting ? "Quit without saving" : "Continue without saving", () => { CancelPrompt(); action(); }),
             new("Cancel", CancelPrompt),
-        ]) { IsSaveDialog = true });
+        ])
+        { IsSaveDialog = true });
     }
 
     private static string DisplayPath(string path)
@@ -621,7 +741,7 @@ public sealed partial class GameSession
         {
             var diagnostic = GrowthDiagnostics.ForZone(Game, zone);
             lines.Add(CityReport.ZoneDetails(Game, zone));
-            lines.Add($"{Zones.Get(zone).Name}: {diagnostic.EligibleVacancies} road-served vacancies");
+            lines.Add($"{Zones.Get(zone).Name}: {Game.VacantPlots(zone).Count} complete vacant plots");
             lines.Add(diagnostic.Message);
             lines.Add("");
         }
@@ -642,17 +762,12 @@ public sealed partial class GameSession
 
     public void ShowMilestone(int index)
     {
-        index = Math.Clamp(index, 0, CityProgression.Milestones.Count - 1);
+        int reachedCount = Math.Max(1, CityProgression.Milestones.Count(m => m.Population <= Game.HighestMilestone));
+        index = Math.Clamp(index, 0, reachedCount - 1);
         Game.Paused = true;
-        var tabs = Enumerable.Range(0, CityProgression.Milestones.Count)
-            .Select(i => MilestoneReport.Build(Game, i))
-            .Select(page => new PromptTab(page.Title, page.Text)).ToArray();
-        ShowTabbedPrompt(MilestoneReport.Title, tabs, index,
-        [
-            new("Previous", () => ShowMilestone(index - 1)),
-            new("Next", () => ShowMilestone(index + 1)),
-            new("Continue", CancelPrompt),
-        ]);
+        var page = MilestoneReport.Build(Game, index);
+        ShowPrompt(new SessionPrompt(MilestoneReport.Title, page.Text,
+            [new("Continue", CancelPrompt)], activeTab: index));
     }
 
     private void UpdateFeedback()

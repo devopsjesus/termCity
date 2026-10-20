@@ -21,7 +21,8 @@ public class ReportTablesTests
         var summary = sections[0].Rows;
         Assert.Equal($"{game.Stats.Population:N0}", summary.Single(row => row[0].Text == "Population")[1].Text);
         var pages = ReportContent.Build(game);
-        Assert.Equal(["Overview", "Population", "Economy", "Services", "Growth", "Food & Seasons", "Events"], pages.Select(page => page.Title));
+        Assert.Equal(["Overview", "Population", "Economy", "Services", "Growth", "Food & Seasons", "Events", "Milestones"],
+            pages.Select(page => page.Title));
         var last = pages.Single(page => page.Title == "Population").Groups.Single(group => group.Title == "LAST COMPLETED WEEK");
         if (completedWeek)
             Assert.Equal(Fmt.Money(game.LastReport!.Income), last.Rows.Single(row => row[0].Text == "Income")[1].Text);
@@ -45,8 +46,8 @@ public class ReportTablesTests
         var game = TestCity.Flat(rules: rules);
         var session = new GameSession(game);
         session.ShowReport();
-        Assert.Equal(7, session.Prompt!.Tabs!.Count);
-        for (int index = 0; index < 7; index++)
+        Assert.Equal(8, session.Prompt!.Tabs!.Count);
+        for (int index = 0; index < session.Prompt.Tabs.Count; index++)
         {
             session.SelectTab(index);
             var rendered = ReportTables.Build(session);
@@ -61,7 +62,8 @@ public class ReportTablesTests
         Assert.Equal(Fmt.Money(game.Finance.Expenses), economy.Single(row => row[0].Text == "Expenses")[1].Text);
         Assert.Equal(Fmt.Money(game.Finance.ServiceUpkeep), economy.Single(row => row[0].Text == "Services")[1].Text);
         Assert.Equal(Fmt.Money(game.Finance.Interest), economy.Single(row => row[0].Text == "Loan interest")[1].Text);
-        Assert.DoesNotContain(pages.SelectMany(page => page.Groups).SelectMany(group => group.Rows), row => row[0].Text == "Unlocks");
+        Assert.DoesNotContain(pages.Where(page => page.Title != MilestoneReport.ReportTabTitle)
+            .SelectMany(page => page.Groups).SelectMany(group => group.Rows), row => row[0].Text == "Unlocks");
         if (rules == CityRules.Classic)
             Assert.Contains("do not simulate services", pages.Single(page => page.Title == "Services").Text);
     }
@@ -81,10 +83,54 @@ public class ReportTablesTests
     public void LargestCitySizeHasCompletedProgress() =>
         Assert.Equal(1, new CitySizeProgress("Great City", null, 10_000, 10_000, null).Fraction);
 
+    [Theory]
+    [InlineData(0, "SETTLEMENT", "Hamlet: 100 people")]
+    [InlineData(250, "GROWING HAMLET", "Village: 500 people")]
+    [InlineData(500, "VILLAGE", "Market Town: 1,000 people")]
+    [InlineData(10_000, "GREAT CITY", "Largest city size reached.")]
+    public void MilestonesTabOpensWithCurrentSizeAndKeepsAllMilestoneUnlocksAvailable(
+        int reached, string current, string next)
+    {
+        var game = TestCity.Flat();
+        game.HighestMilestone = reached;
+        var pages = ReportContent.Build(game);
+        var page = pages.Single(page => page.Title == MilestoneReport.ReportTabTitle);
+        Assert.Equal(current, page.Groups[0].Title);
+        Assert.Equal("Current", page.Groups[0].Rows.Single(row => row[0].Text == "Status")[1].Text);
+        Assert.Equal(next, page.Groups[0].Rows.Single(row => row[0].Text == "Next milestone")[1].Text);
+        foreach (var milestone in CityProgression.Milestones)
+            Assert.Single(page.Groups, group => group.Title == milestone.Name.ToUpperInvariant());
+        foreach (var building in game.Map.Content.Buildings.Where(building => building.PlayerPlaceable &&
+            building.MinPopulation > 0 && CityProgression.RequiredPopulation(building) <= 10_000))
+            Assert.Single(page.Groups, group => group.Title == building.Name.ToUpperInvariant());
+        Assert.DoesNotContain(pages.Where(candidate => candidate != page).SelectMany(candidate => candidate.Groups)
+            .SelectMany(group => group.Rows), row => row[0].Text is "Next size" or "Next milestone");
+    }
+
+    [Fact]
+    public void MilestonesReportDistinguishesCurrentReachedAndUpcomingWithoutChangingTheCity()
+    {
+        var game = TestCity.Flat();
+        game.HighestMilestone = 250;
+        var before = TermCity.Core.Persistence.SaveGameStore.Serialize(game);
+        var session = new GameSession(game);
+        int tab = ReportContent.Build(game).ToList().FindIndex(page => page.Title == MilestoneReport.ReportTabTitle);
+        session.ShowReport(tab);
+        Assert.Equal(MilestoneReport.ReportTabTitle, session.Prompt!.Tabs![session.Prompt.ActiveTab].Title);
+        var groups = ReportTables.Build(session);
+        Assert.Equal("Current", groups.Single(group => group.Title == "GROWING HAMLET").Rows.Single(row => row[0].Text == "Status")[1].Text);
+        Assert.Equal("Reached", groups.Single(group => group.Title == "HAMLET").Rows.Single(row => row[0].Text == "Status")[1].Text);
+        Assert.Equal("Upcoming", groups.Single(group => group.Title == "VILLAGE").Rows.Single(row => row[0].Text == "Status")[1].Text);
+        Assert.Contains("GRANARY", session.Prompt.Text);
+        Assert.Contains("INFIRMARY", session.Prompt.Text);
+        Assert.Equal(before, TermCity.Core.Persistence.SaveGameStore.Serialize(game));
+    }
+
     [Fact]
     public void FoodTabReportsFamineReservesAndSeasonalEffects()
     {
         var game = TestCity.Flat(rules: CityRules.Full);
+        game.HighestMilestone = 500;
         game.Hunger = 0.4;
         game.GrainWeeks = 0;
         var food = ReportContent.Build(game).Single(page => page.Title == "Food & Seasons");

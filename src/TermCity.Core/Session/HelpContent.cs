@@ -33,6 +33,7 @@ public static class HelpContent
             ["R  C  I  U", "Zone homesteads, marketplace, craftworks; dezone"],
             ["T  B", "Straight road tool, track preview"],
             ["D, Delete", "Demolish, free of charge"],
+            ["[ / ]", "Rotate placing building left/right; otherwise the map"],
             ["Enter or Y, Esc or N", "Confirm or cancel a placement"],
             ["Ctrl+Z", "Undo up to 10 recent actions while paused"],
         ]),

@@ -16,6 +16,7 @@ public sealed class BlockSampler
 
     /// <summary>Whether the caller draws roads as curves, so a block that shows a road is left as bare ground.</summary>
     public bool VectorRoads { get; set; }
+    public bool BuildingSprites { get; set; }
 
     private readonly int[] _terrainPriority = new int[256];
 
@@ -75,6 +76,7 @@ public sealed class BlockSampler
         }
 
         road = VectorRoads && _map.HasRoad(bestX, bestY);
-        return CellRenderer.Render(_game, bestX, bestY, Overlay, VectorRoads, buildingArt: false);
+        return CellRenderer.Render(_game, bestX, bestY, Overlay, VectorRoads,
+            buildingArt: false, buildingSprites: BuildingSprites);
     }
 }

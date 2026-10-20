@@ -82,6 +82,9 @@ public static class CityAnalysis
     public static double Need(ServiceKind kind, int population) =>
         NeedPopulation[(int)kind] == 0 ? 0 : Math.Clamp(population / (double)NeedPopulation[(int)kind], 0, 1);
 
+    public static double Need(CityGame game, ServiceKind kind, int population) =>
+        CityProgression.IsServiceUnlocked(game, kind, population) ? Need(kind, population) : 0;
+
     public static CityIndicators Assess(CityGame game)
     {
         var config = game.Config;
@@ -101,7 +104,7 @@ public static class CityAnalysis
         {
             foreach (int i in map.ZoneCells(zone))
             {
-                if (map.BuildingLayer[i] != 0 && Operating(game, i))
+                if (map.BuildingLayer[i] != 0 && map.IsBuildingAnchor(i) && Operating(game, i))
                 {
                     jobs += map.Content.Buildings[map.BuildingLayer[i]].Capacity;
                 }
@@ -206,7 +209,7 @@ public static class CityAnalysis
             ind.ResidentialTaxPenalty, null, 0).Happiness;
     }
 
-    /// <summary>A building works only if a road reaches it and (in the full rules) it has power and water.</summary>
+    /// <summary>A building works on walkable land with fuel and water deliveries under full rules.</summary>
     internal static bool Operating(CityGame game, int index)
     {
         if (!game.Network.IsServed(index))
@@ -223,7 +226,7 @@ public static class CityAnalysis
         double capacity = game.Network.TrafficCapacity * Math.Max(0.15, game.Budget.Effective(ServiceKind.None, insolvent: false));
         if (capacity <= 0)
         {
-            return population > 0 ? 1 : 0;
+            return 0;
         }
 
         double trips = population * game.Config.TripsPerResident * game.Profile.CarDependence;
@@ -234,7 +237,7 @@ public static class CityAnalysis
     {
         double density = stats.Residential.Filled == 0 ? 0 : Math.Min(1.5, stats.Population / (stats.Residential.Filled * 5.0));
         double raw = 8 + 55 * unemployment + 12 * density;
-        return Math.Clamp(raw * game.Profile.CrimeLevel * Need(ServiceKind.Police, stats.Population) + 4, 0, 100);
+        return Math.Clamp(raw * game.Profile.CrimeLevel * Need(game, ServiceKind.Police, stats.Population) + 4, 0, 100);
     }
 
     private static double TaxPenalty(CityGame game, double rate) => (rate - game.Profile.FairTaxRate) * 250;
@@ -280,18 +283,18 @@ public static class CityAnalysis
         Charge("No fuel", services.IsPowered(map, i) ? 0 : 30);
         Charge("No water", services.IsWatered(map, i) ? 0 : 25);
         Charge("Smoke", 0.32 * smog * profile.SmogSensitivity);
-        Charge("Lawlessness", 0.28 * crime);
-        Charge("Fire Watch", 12 * Need(ServiceKind.Fire, population) * (1 - fire / 100));
-        Charge("Physic", 14 * Need(ServiceKind.Health, population) * (1 - health / 100));
-        Charge("Learning", 9 * Need(ServiceKind.Education, population) * (1 - education / 100));
-        Charge("Commons", 8 * Need(ServiceKind.Recreation, population) * (1 - recreation / 100));
-        Charge("Unguarded", 7 * Need(ServiceKind.Defence, population) * (1 - defence / 100));
-        Charge("Solace", 4 * Need(ServiceKind.Faith, population) * (1 - faith / 100));
+        Charge("Lawlessness", CityProgression.IsServiceUnlocked(game, ServiceKind.Police, population) ? 0.28 * crime : 0);
+        Charge("Fire Watch", 12 * Need(game, ServiceKind.Fire, population) * (1 - fire / 100));
+        Charge("Physic", 14 * Need(game, ServiceKind.Health, population) * (1 - health / 100));
+        Charge("Learning", 9 * Need(game, ServiceKind.Education, population) * (1 - education / 100));
+        Charge("Commons", 8 * Need(game, ServiceKind.Recreation, population) * (1 - recreation / 100));
+        Charge("Unguarded", 7 * Need(game, ServiceKind.Defence, population) * (1 - defence / 100));
+        Charge("Solace", 4 * Need(game, ServiceKind.Faith, population) * (1 - faith / 100));
         Charge("Hunger", 45 * game.Hunger);
         Charge("Cart traffic", 18 * congestion);
         Charge("Idleness", 45 * Math.Max(0, unemployment - 0.06));
         Charge("Tithes", Math.Clamp(taxPenalty, -4, 20));
-        Charge("Road access", map.Content.Roads.Count > 0 && game.Network.AccessRank(i) == 0 ? 10 : 0);
+        Charge("Slow journeys", map.Content.Roads.Count > 0 && game.Network.AccessRank(i) == 0 ? 5 : 0);
         h += 0.05 * recreation + 0.04 * faith;
 
         return new Feeling(Math.Clamp(h, 0, 100), crime, LandValue(game, i, crime));

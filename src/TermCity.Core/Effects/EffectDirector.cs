@@ -643,6 +643,9 @@ public sealed class EffectDirector : IDisposable
             }
 
             var kind = AmbientKind.None;
+            if (map.TerrainAt(x, y).Buildable && map.BuildingAt(x, y) is null)
+                kind |= AmbientKind.Walkable;
+            if (map.PathWearAt(x, y) >= 3) kind |= AmbientKind.Path;
             if (map.HasRoad(x, y))
             {
                 kind |= AmbientKind.Road;
@@ -672,6 +675,9 @@ public sealed class EffectDirector : IDisposable
 
             return kind;
         }
+
+        public double WalkingSpeed(int x, int y) => game.Map.InBounds(x, y)
+            ? 1 / TravelRoutes.StepCost(game.Map, game.Map.Index(x, y)) : 0;
 
         private bool IsSea(GameMap map, int x, int y)
         {

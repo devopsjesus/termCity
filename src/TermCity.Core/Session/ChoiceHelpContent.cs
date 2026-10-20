@@ -32,14 +32,15 @@ public static class ChoiceHelpContent
     {
         var details = new List<string>
         {
-            $"Does: {CityReport.ServiceName(building.Service)}",
+            $"Does: {(building.IsMonument ? "Monument" : CityReport.ServiceName(building.Service))}",
             $"Footprint: {building.Width} x {building.Height} cells",
             $"Cost: {Fmt.Money(building.Cost)} per building (terrain may increase it)",
             $"Upkeep: {Fmt.Money(game.Config.FullRules ? (int)Math.Round(building.WeeklyUpkeep * game.Budget.Funding(building.Service)) : 0)}/week",
         };
         if (building.Capacity > 0) details.Add($"Capacity: {CapacityText(building)}");
+        if (building.StaffingCapacity > 0) details.Add($"Staffing: {building.StaffingCapacity:N0} residents at full funding");
         if (building.Radius > 0)
-            details.Add($"Radius: {building.Radius} cells; strength: {building.Strength}/100 through radius, fading to zero at {building.Radius * AreaFalloff.Extent:0.##} cells");
+            details.Add($"Response target: {building.ResponseTargetDays:0.00} game days; strength: {building.Strength}/100. Longer journeys and excess workload delay service; no distance cutoff.");
         if (building.SeatRank > 0) details.Add($"Seat of power: rank {building.SeatRank}");
         if (building.Pilgrims > 0) details.Add($"Pilgrims: {building.Pilgrims} per feast");
         details.Add("Placement: buildable, unzoned ground with a clear whole-cell footprint and enough gold");
@@ -50,10 +51,14 @@ public static class ChoiceHelpContent
             int remaining = CityProgression.IsUnlocked(game, building) ? 0 : Math.Max(0, required - game.Stats.Population);
             details.Add($"Unlock: {milestone} ({remaining:N0} souls to go)");
         }
+        if (building.DebugOnly)
+            details.Add(building.IsMonument && CityGame.DebugToolsAvailable
+                ? "Debug monument: available immediately; population gate and cost bypassed. Hidden in Release builds."
+                : "Debug-only construction: unavailable in Release builds.");
         if (game.Config.FullRules && (building.PowerUse > 0 || building.WaterUse > 0))
             details.Add($"Supply use: {building.PowerUse} fuel, {building.WaterUse} water per week");
         if (building.RequiresWaterNearby) details.Add("Requires nearby open water");
-        if (building.Service.IsUtility()) details.Add("Supplies connected buildings; an isolated utility is inactive.");
+        if (building.Service.IsUtility()) details.Add("Supplies buildings over land; roads speed deliveries. Granaries store city grain.");
         foreach (var area in AreaOfEffect.ForBuilding(building, new Pos(0, 0)))
             details.Add($"Area icons: {Icons(area.Glyphs)} — radius {area.Radius} cells");
         if (building.Pollution != 0)
@@ -61,13 +66,30 @@ public static class ChoiceHelpContent
         return new(Icons(building.Glyphs), building.Description, string.Join("\n\n", details));
     }
 
+    public static ChoiceHelp RoadTemplate(CityGame game, TermCity.Core.Roads.RoadTemplate template)
+    {
+        var road = game.Map.Content.Roads.Get(template.RoadName);
+        var help = Road(game, road, false);
+        return help with
+        {
+            Description = "Prebuilt cobbled traffic circle with a grassy center and four connection points.",
+            Details = help.Details.Replace("fill valid selected cells", "place one complete traffic-circle ring", StringComparison.Ordinal) +
+                $"\n\nSize: {template.Width}x{template.Height}\n\n" +
+                "Placement: Clear, unzoned dry land; center must be free of roads. Saved and demolished as ordinary roads.",
+        };
+    }
+
     public static ChoiceHelp Road(CityGame game, RoadType road, bool line) => new(
         Icons(road.Glyphs), road.Description,
         $"Does: {(line ? "draw a straight line between two endpoints" : "fill valid selected cells")}.\n\n" +
+        $"Width: {road.WidthCells} cells\n\n" +
         $"Traffic capacity: {road.TrafficCapacity} trips/cell/week\n\n" +
         $"Cost: {Fmt.Money((int)Math.Round(game.Config.RoadCostPerCell * road.CostMultiplier))}/cell before terrain; upgrades pay the difference\n\n" +
         $"Upkeep: {Fmt.Money(game.Config.FullRules ? road.WeeklyUpkeep : 0)}/cell/week at full funding\n\n" +
-        $"Road access reach: {game.Config.RoadServiceReach} cells\n\n" +
-        "Needs: buildable land and road clearance. Connect to the map edge for town access.\n\n" +
-        "Roads appear as smooth curves; these glyphs show connections on overlays and the minimap.");
+        $"Travel speed: {6 * road.Rank}x open-ground walking speed\n\n" +
+        "Needs: open land or a bridge crossing, with whole-cell clearance for the visible road width and bends. Roads are optional travel boosts, including local roads.\n\n" +
+        "Roads appear as smooth curves; these glyphs show connections on overlays and the minimap.\n\n" +
+        "Placement previews use this road's surface and width. Click to place the shown stroke immediately, or use arrows and Enter. " +
+        "Holding and dragging previews an extension built on release. Parallel overlaps are rejected. " +
+        "The selected road tool stays active until Esc; middle-drag pans.");
 }

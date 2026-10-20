@@ -186,6 +186,13 @@ public sealed class WaterGenerator : ITerrainGenerator
             }
         }
 
+        var seaIds = bodies.Where(b => b.Kind == WaterKind.Sea).Select(b => b.Id).ToHashSet();
+        for (int y = 0; y < map.Height; y++)
+            for (int x = 0; x < map.Width; x++)
+            {
+                map.SetSeaWater(x, y, seaIds.Contains(ids[map.Index(x, y)]));
+                map.SetRiverWater(x, y, ids[map.Index(x, y)] >= WaterPlan.FirstRiverId);
+            }
         return new WaterPlan(type, ids, map.Width, bodies, rivers);
     }
 
@@ -344,6 +351,8 @@ public sealed class WaterGenerator : ITerrainGenerator
         {
             cx = rng.Chance(0.5) ? 0 : map.Width - 1;
             cy = rng.Chance(0.5) ? 0 : map.Height - 1;
+            side = cy == 0 ? MapSide.North : MapSide.South;
+            alongX = true;
         }
         else
         {
@@ -521,7 +530,7 @@ public sealed class WaterGenerator : ITerrainGenerator
                     continue;
                 }
 
-                segments.Add(MakeSegment(map, rng, source, target));
+                segments.Add(MakeSegment(map, rng, source, target, mouth: true));
             }
             else
             {
@@ -544,14 +553,15 @@ public sealed class WaterGenerator : ITerrainGenerator
 
                 segments.Add(MakeSegment(map, rng, a, join));
                 segments.Add(MakeSegment(map, rng, b, join));
-                segments.Add(MakeSegment(map, rng, join, target));
+                segments.Add(MakeSegment(map, rng, join, target, mouth: true));
             }
 
             if (segments.All(s => IsRiverClear(map, ids, s, riverId, body.Id)))
             {
                 foreach (var segment in segments)
                 {
-                    Commit(map, terrain, ids, riverId, segment.Cells);
+                    Commit(map, terrain, ids, riverId,
+                        segment.Cells.Where(cell => ids[cell.Y * map.Width + cell.X] != body.Id));
                 }
 
                 return true;
@@ -574,6 +584,10 @@ public sealed class WaterGenerator : ITerrainGenerator
         for (int tries = 0; tries < 20; tries++)
         {
             var side = (MapSide)rng.Next(4);
+            if (rng.Chance(0.8))
+                side = body.Side is { } shore ? (MapSide)(((int)shore + 2) % 4) :
+                    body.Span >= body.Depth ? (rng.Chance(0.5) ? MapSide.North : MapSide.South) :
+                    (rng.Chance(0.5) ? MapSide.East : MapSide.West);
             if (body.Side == side && body.Kind != WaterKind.InlandLake)
             {
                 continue;
@@ -592,7 +606,7 @@ public sealed class WaterGenerator : ITerrainGenerator
         return (0, 0);
     }
 
-    private static Segment MakeSegment(GameMap map, GameRandom rng, (int X, int Y) from, (int X, int Y) to)
+    private static Segment MakeSegment(GameMap map, GameRandom rng, (int X, int Y) from, (int X, int Y) to, bool mouth = false)
     {
         double length = Distance(from, to);
         double dx = to.X - from.X, dy = 2.0 * (to.Y - from.Y);
@@ -612,22 +626,29 @@ public sealed class WaterGenerator : ITerrainGenerator
 
             // The course wanders in the middle and runs straight at both ends, so it starts on the edge and meets the
             // water head on.
-            double taper = Math.Min(1.0, Math.Min(s * 8, (1 - s) * 5));
-            double sway = amplitude * taper * (noise.Fractal(s * length * 0.018, offset, 2) * 2 - 1) * 2;
+            double taper = RiverMeanderEnvelope(s);
+            double sway = amplitude * taper * (noise.Fractal(s * length * 0.012, offset, 2) * 2 - 1) * 2;
             double vx = from.X + dx * s + px * sway;
             double vy = 2.0 * from.Y + dy * s + py * sway;
             int x = (int)Math.Round(vx), y = (int)Math.Round(vy / 2.0);
             centers.Add((x, y, s));
 
             // A stamp about five columns by three rows, widening and narrowing a little along the way.
-            double ry = 1.0 + 0.5 * (noise.Noise(s * length * 0.05, offset + 50) > 0.2 ? 1 : 0);
-            double rx = 2 * ry;
-            for (int yy = (int)Math.Floor(y - ry); yy <= (int)Math.Ceiling(y + ry); yy++)
+            double ry = 1.15 + 0.35 * noise.Noise(s * length * 0.025, offset + 50);
+            double alongRadius = 2 * ry;
+            double spread = mouth ? Math.Clamp((s - 0.82) / 0.18, 0, 1) : 0;
+            spread = spread * spread * (3 - 2 * spread);
+            double acrossRadius = alongRadius * (1 + 0.65 * spread);
+            double centerY = vy / 2;
+            for (int yy = (int)Math.Floor(centerY - acrossRadius / 2); yy <= (int)Math.Ceiling(centerY + acrossRadius / 2); yy++)
             {
-                for (int xx = (int)Math.Floor(x - rx); xx <= (int)Math.Ceiling(x + rx); xx++)
+                for (int xx = (int)Math.Floor(vx - acrossRadius); xx <= (int)Math.Ceiling(vx + acrossRadius); xx++)
                 {
-                    double ex = (xx - x) / rx, ey = (yy - y) / ry;
-                    if (ex * ex + ey * ey <= 1.05 && map.InBounds(xx, yy))
+                    double ex = xx - vx, ey = 2 * (yy - centerY);
+                    double along = length > 0 ? (ex * dx + ey * dy) / length : ex;
+                    double across = ex * px + ey * py;
+                    if (along * along / (alongRadius * alongRadius) + across * across / (acrossRadius * acrossRadius) <= 1.05 &&
+                        map.InBounds(xx, yy))
                     {
                         cells.Add((xx, yy));
                     }
@@ -636,6 +657,16 @@ public sealed class WaterGenerator : ITerrainGenerator
         }
 
         return new Segment(cells, centers);
+    }
+
+    internal static double RiverMeanderEnvelope(double progress)
+    {
+        static double Smooth(double value)
+        {
+            value = Math.Clamp(value, 0, 1);
+            return value * value * value * (value * (value * 6 - 15) + 10);
+        }
+        return Smooth(progress * 8) * Smooth((1 - progress) * 5);
     }
 
     private static bool IsRiverClear(GameMap map, short[] ids, Segment segment, int riverId, int targetId)

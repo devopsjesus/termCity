@@ -25,10 +25,13 @@ public partial class Main
     private string _lastInput = "";
 
     private bool _selecting;
+    private bool _roadPointerPlacement, _roadPointerMoved;
+    private Vector2 _roadPressPosition;
 
     private bool _panning;
 
     private Pos _panAnchor;
+    private Vector3 _perspectivePanAnchor;
 
     public override void _Input(InputEvent input)
     {
@@ -92,20 +95,28 @@ public partial class Main
                 return;
             }
         }
-        if (input is InputEventMouseButton { Pressed: false, ButtonIndex: MouseButton.Left or MouseButton.Middle })
+        if (input is InputEventMouseButton { Pressed: false, ButtonIndex: MouseButton.Left or MouseButton.Middle } released)
         {
-            StopPointerGesture();
+            StopPointerGesture(confirmRoad: released.ButtonIndex == MouseButton.Left &&
+                Map.GetGlobalRect().HasPoint(released.Position));
         }
         if (input is InputEventKey { Pressed: true } && Session.Prompt is null)
         {
             if (Session.Preview is not null && input is InputEventKey previewKey)
             {
                 var focus = GetViewport().GuiGetFocusOwner();
-                bool confirmationFocused = focus is Button &&
-                    (_modal.IsAncestorOf(focus) || _linePreview.IsAncestorOf(focus));
-                if (confirmationFocused && previewKey.Keycode is Key.Enter or Key.KpEnter ||
-                    !Session.RoadToolActive && !Session.BuildingToolActive &&
-                    previewKey.Keycode is Key.Tab or Key.Left or Key.Right or Key.Up or Key.Down)
+                bool viewFocused = _viewsBar.Visible && focus is not null && _viewsBar.IsAncestorOf(focus);
+                bool previewControlFocused = focus is Button &&
+                    (_modal.IsAncestorOf(focus) || _linePreview.IsAncestorOf(focus) || viewFocused);
+                if (previewControlFocused && previewKey.Keycode is Key.Enter or Key.KpEnter)
+                {
+                    focus!.EmitSignal(Button.SignalName.Pressed);
+                    GetViewport().SetInputAsHandled();
+                    return;
+                }
+                if (previewKey.Keycode == Key.Tab ||
+                    ((!Session.RoadToolActive && !Session.FixedPlacementToolActive) || viewFocused) &&
+                    previewKey.Keycode is Key.Left or Key.Right or Key.Up or Key.Down)
                 {
                     return;
                 }
@@ -127,6 +138,11 @@ public partial class Main
         {
             return;
         }
+        var focus = GetViewport().GuiGetFocusOwner();
+        var code = key.Keycode == Key.None ? key.PhysicalKeycode : key.Keycode;
+        if (Session.Preview is not null && _viewsBar.Visible && focus is not null &&
+            _viewsBar.IsAncestorOf(focus) && code is Key.Tab or Key.Left or Key.Right or Key.Up or Key.Down)
+            return;
 
         if (HandleKey(key))
         {
@@ -154,6 +170,8 @@ public partial class Main
     private bool HandleKey(InputEventKey key)
     {
         var code = key.Keycode == Key.None ? key.PhysicalKeycode : key.Keycode;
+        if (key.ShiftPressed && key.Unicode is '{' or '}')
+            code = key.Unicode == '{' ? Key.Bracketleft : Key.Bracketright;
         _hover = false;
         ResetTrackpadScroll();
         _lastInput = $"Key {code}";
@@ -162,14 +180,32 @@ public partial class Main
             HandleDialogKey(key);
             return true;
         }
+        bool undo = (OS.HasFeature("macos") ? key.MetaPressed : key.CtrlPressed) &&
+            !key.ShiftPressed && !key.AltPressed && code == Key.Z;
+        if (undo && (Session.Preview is null || Session.RoadToolActive || Session.Preview.Template is not null))
+        {
+            Session.RequestUndo();
+            return true;
+        }
+        if (Session.MapNavigationAllowed && HandleMapNavigationKey(key, code)) return true;
         if (Session.Preview is not null)
         {
-            if (Session.BuildingToolActive && code is Key.Left or Key.Right or Key.Up or Key.Down)
+            if (Session.BuildingToolActive && !key.ShiftPressed && code is Key.Bracketleft or Key.Bracketright)
+            {
+                Session.RotateBuildingPlacement(code == Key.Bracketleft ? -1 : 1);
+            }
+            else if (Session.FixedPlacementToolActive && code is Key.Left or Key.Right or Key.Up or Key.Down)
             {
                 int buildingDx = code == Key.Left ? -1 : code == Key.Right ? 1 : 0;
                 int buildingDy = code == Key.Up ? -1 : code == Key.Down ? 1 : 0;
                 if (key.CtrlPressed) Session.JumpCursor(buildingDx, buildingDy);
                 else Session.MoveCursor(buildingDx, buildingDy);
+            }
+            else if ((Session.FixedPlacementToolActive || Session.RoadToolActive) &&
+                code is Key.Pageup or Key.Pagedown or Key.Home or Key.End)
+            {
+                Session.JumpCursor(code == Key.Home ? -1 : code == Key.End ? 1 : 0,
+                    code == Key.Pageup ? -1 : code == Key.Pagedown ? 1 : 0);
             }
             else if (!key.CtrlPressed && !key.MetaPressed && !key.AltPressed && code is Key.Enter or Key.Y or Key.C)
             {
@@ -186,12 +222,6 @@ public partial class Main
                 if (key.CtrlPressed) Session.JumpCursor(lineDx, lineDy);
                 else Session.MoveCursor(lineDx, lineDy);
             }
-            return true;
-        }
-        if ((OS.HasFeature("macos") ? key.MetaPressed : key.CtrlPressed) &&
-            !key.ShiftPressed && !key.AltPressed && code == Key.Z)
-        {
-            Session.RequestUndo();
             return true;
         }
         int dx = code == Key.Left ? -1 : code == Key.Right ? 1 : 0;
@@ -218,21 +248,6 @@ public partial class Main
         {
             return true;
         }
-        if (key.Unicode is '+' or '=' || code is Key.Plus or Key.Equal or Key.KpAdd)
-        {
-            Map.ZoomBy(1);
-            return true;
-        }
-        if (key.Unicode is '-' or '_' || code is Key.Minus or Key.KpSubtract)
-        {
-            Map.ZoomBy(-1);
-            return true;
-        }
-        if (code == Key.Key0 || key.Unicode == '0')
-        {
-            Map.ZoomBy(-Session.ZoomLevel);
-            return true;
-        }
         if (key.CtrlPressed || key.MetaPressed || key.AltPressed)
         {
             if (code == Key.Q && (key.CtrlPressed || key.MetaPressed)) Session.RequestQuit();
@@ -257,13 +272,7 @@ public partial class Main
             case Key.T: Session.BeginRoadLine(); break;
             case Key.U: Session.Dezone(); break;
             case Key.D or Key.Delete: Session.PreviewDemolish(); break;
-            case Key.O:
-                if (key.ShiftPressed) Session.ToggleOverlay();
-                else Session.CycleOverlay();
-                break;
-            case Key.V: CycleEffects(); break;
             case Key.S: Session.ToggleSelectionMode(); break;
-            case Key.E: Session.ToggleEdgeScroll(); break;
             case Key.Enter or Key.M: Session.ShowAreaMenu(); break;
             case Key.F1 or Key.Question: ShowHelp(); break;
             case Key.F3: ShowFontDialog(); break;
@@ -273,7 +282,6 @@ public partial class Main
             case Key.F8: Session.ShowGrowthReport(); break;
             case Key.F9: Session.RequestLoad(Session.SavePath); break;
             case Key.F10: if (!key.Echo) ToggleMusic(); break;
-            case Key.F12: Session.ToggleInputDebug(); break;
             case Key.Escape: ShowGameMenu(); break;
             case Key.Q: Session.RequestQuit(); break;
             default: return false;
@@ -281,9 +289,45 @@ public partial class Main
         return true;
     }
 
+    private bool HandleMapNavigationKey(InputEventKey key, Key code)
+    {
+        if (key.Echo) return false;
+        if (key.Unicode is '+' or '=' || code is Key.Plus or Key.Equal or Key.KpAdd)
+        {
+            Map.ZoomBy(1);
+            return true;
+        }
+        if (key.Unicode is '-' or '_' || code is Key.Minus or Key.KpSubtract)
+        {
+            Map.ZoomBy(-1);
+            return true;
+        }
+        if (code == Key.Key0 || key.Unicode == '0')
+        {
+            Map.ZoomBy(-Session.ZoomLevel);
+            return true;
+        }
+        if (key.CtrlPressed || key.MetaPressed || key.AltPressed) return false;
+        switch (code)
+        {
+            case Key.Bracketleft or Key.Bracketright when !Session.BuildingToolActive || key.ShiftPressed:
+                Map.RotateMap(code == Key.Bracketleft ? -90 : 90);
+                break;
+            case Key.O:
+                if (key.ShiftPressed) Session.ToggleOverlay();
+                else Session.CycleOverlay();
+                break;
+            case Key.E: Session.ToggleEdgeScroll(); break;
+            case Key.V: CycleEffects(); break;
+            case Key.F12: Session.ToggleInputDebug(); break;
+            default: return false;
+        }
+        return true;
+    }
+
     private void ApplyPinchZoom(float factor, Vector2 pointer)
     {
-        if (_editingName || Session.Prompt is not null || Session.Preview is not null) return;
+        if (_editingName || !Session.MapNavigationAllowed) return;
         if (!float.IsFinite(factor) || factor <= 0)
         {
             GD.PushWarning("Ignored invalid pinch magnification factor.");
@@ -304,8 +348,7 @@ public partial class Main
     private void OnMapInput(InputEvent input)
     {
         Map.RefreshCells();
-        if (_editingName || Session.Prompt is not null ||
-            (Session.Preview is not null && !Session.RoadToolActive && !Session.BuildingToolActive))
+        if (_editingName || !Session.MapNavigationAllowed)
         {
             StopPointerGesture();
             return;
@@ -341,13 +384,22 @@ public partial class Main
             {
                 _trackpadZoom = 0;
                 bool horizontal = pan.ShiftPressed || pan.AltPressed;
-                _trackpadX += (pan.Delta.X + (horizontal ? pan.Delta.Y : 0)) * ScrollStep;
-                _trackpadY += (horizontal ? 0 : pan.Delta.Y) * ScrollStep;
-                int columns = (int)Math.Truncate(_trackpadX);
-                int rows = (int)Math.Truncate(_trackpadY);
-                _trackpadX -= columns;
-                _trackpadY -= rows;
-                Session.ScrollCamera(columns * Session.Stride, rows * Session.Stride);
+                if (Map.PerspectiveEnabled)
+                {
+                    Map.ScrollPerspective(new Vector2(
+                        pan.Delta.X + (horizontal ? pan.Delta.Y : 0), horizontal ? 0 : pan.Delta.Y) *
+                        new Vector2(Map.Grid.PixelWidth, Map.Grid.PixelHeight) * ScrollStep);
+                }
+                else
+                {
+                    _trackpadX += (pan.Delta.X + (horizontal ? pan.Delta.Y : 0)) * ScrollStep;
+                    _trackpadY += (horizontal ? 0 : pan.Delta.Y) * ScrollStep;
+                    int columns = (int)Math.Truncate(_trackpadX);
+                    int rows = (int)Math.Truncate(_trackpadY);
+                    _trackpadX -= columns;
+                    _trackpadY -= rows;
+                    Session.ScrollCamera(columns * Session.Stride, rows * Session.Stride);
+                }
             }
             _lastInput = $"Trackpad {pan.Delta} {cell}";
             Map.AcceptEvent();
@@ -358,7 +410,7 @@ public partial class Main
             {
                 if (button.ButtonIndex is MouseButton.Left or MouseButton.Middle)
                 {
-                    StopPointerGesture();
+                    StopPointerGesture(confirmRoad: button.ButtonIndex == MouseButton.Left);
                 }
                 return;
             }
@@ -366,7 +418,13 @@ public partial class Main
             {
                 return;
             }
-            var position = Session.ScreenToMap(cell.X, cell.Y);
+            Map.TryMapPosition(button.Position, out var gridPosition);
+            var position = gridPosition;
+            if (!Session.FixedPlacementToolActive && !Session.RoadToolActive &&
+                button.ButtonIndex is MouseButton.Left or MouseButton.Right &&
+                !button.ShiftPressed && !button.CtrlPressed && !button.AltPressed && !button.MetaPressed &&
+                Map.TryPickBuilding(button.Position, out var buildingAnchor))
+                position = buildingAnchor;
             if (!Session.Game.Map.InBounds(position) &&
                 button.ButtonIndex is MouseButton.Left or MouseButton.Middle or MouseButton.Right)
             {
@@ -375,9 +433,28 @@ public partial class Main
             switch (button.ButtonIndex)
             {
                 case MouseButton.Left:
-                    if (Session.BuildingToolActive)
+                    if (Session.RoadToolActive)
                     {
-                        Session.MoveBuildingPlacement(position);
+                        Session.UpdateDrag(position);
+                        var preview = Session.Preview!;
+                        if (preview.Quote.Cells == 0 && preview.RoadStroke?.Count == 1 &&
+                            Session.Game.Map.RoadTypeAt(Session.Cursor.X, Session.Cursor.Y)?.Rank >= preview.Road?.Rank)
+                        {
+                            Session.BeginDrag(position);
+                            Session.SetMessage("Road start set. Click an endpoint to build; Esc finishes.");
+                        }
+                        else Session.ConfirmPreview();
+                        _pointer = button.Position;
+                        _selecting = true;
+                        _panning = false;
+                        _roadPointerPlacement = true;
+                        _roadPointerMoved = false;
+                        _roadPressPosition = button.Position;
+                        break;
+                    }
+                    if (Session.FixedPlacementToolActive)
+                    {
+                        Session.MoveFixedPlacement(position);
                         Session.ConfirmPreview();
                         break;
                     }
@@ -385,13 +462,28 @@ public partial class Main
                     _selecting = Session.RoadToolActive || button.ShiftPressed || button.CtrlPressed || button.AltPressed || button.MetaPressed;
                     _panning = !_selecting;
                     if (_selecting) Session.BeginDrag(position, extend: button.ShiftPressed && !button.CtrlPressed && !button.AltPressed && !button.MetaPressed);
-                    else { Session.SelectCell(position); _panAnchor = position; }
+                    else
+                    {
+                        if (Map.PerspectiveEnabled && Map.Perspective is { } perspective)
+                        {
+                            perspective.RememberSelectionSurface(position);
+                        }
+                        Session.SelectCell(position);
+                        _panAnchor = gridPosition;
+                        if (Map.PerspectiveEnabled) _perspectivePanAnchor = Map.BeginPerspectivePan(button.Position);
+                    }
                     break;
                 case MouseButton.Middle:
                     _panning = true;
                     _panAnchor = position;
+                    if (Map.PerspectiveEnabled) _perspectivePanAnchor = Map.BeginPerspectivePan(button.Position);
                     break;
                 case MouseButton.Right:
+                    if (Session.RoadToolActive)
+                    {
+                        Session.BeginDrag(position);
+                        break;
+                    }
                     Session.PrepareContextMenuAt(position);
                     if (Session.Game.Map.BuildingAt(position.X, position.Y) is not null)
                         Session.ShowBuildingStatus(position);
@@ -421,32 +513,42 @@ public partial class Main
             _pointer = motion.Position;
             _hover = new Rect2(Vector2.Zero, Map.Size).HasPoint(motion.Position);
             var cell = PointerCell(motion.Position);
-            if (Session.BuildingToolActive)
+            if (_panning)
             {
-                Session.MoveBuildingPlacement(Session.ScreenToMap(cell.X, cell.Y));
+                if (Map.PerspectiveEnabled) Map.PanPerspective(_perspectivePanAnchor, motion.Position);
+                else Session.PanCamera(_panAnchor, cell.X, cell.Y);
+            }
+            else if (Session.FixedPlacementToolActive)
+            {
+                if (Map.TryMapPosition(motion.Position, out var world)) Session.MoveFixedPlacement(world);
             }
             else if (_selecting)
             {
-                Session.UpdateDrag(Session.ScreenToMap(cell.X, cell.Y));
+                if (_roadPointerPlacement)
+                    _roadPointerMoved |= motion.Position.DistanceSquaredTo(_roadPressPosition) >= 16;
+                if (Map.TryMapPosition(motion.Position, out var world)) Session.UpdateDrag(world);
             }
-            else if (_panning)
-            {
-                Session.PanCamera(_panAnchor, cell.X, cell.Y);
-            }
+            else if (Session.RoadToolActive && Map.TryMapPosition(motion.Position, out var roadEndpoint))
+                Session.UpdateDrag(roadEndpoint);
             Map.AcceptEvent();
         }
     }
 
-    private void StopPointerGesture()
+    private void StopPointerGesture(bool confirmRoad = false)
     {
         bool selecting = _selecting;
+        bool commitRoad = confirmRoad && selecting && Session.RoadToolActive &&
+            (!_roadPointerPlacement || _roadPointerMoved);
         _selecting = false;
+        _roadPointerPlacement = false;
+        _roadPointerMoved = false;
         _panning = false;
         _scroller.Reset();
         ResetTrackpadScroll();
         if (selecting)
         {
             Session.EndSelection();
+            if (commitRoad) Session.ConfirmPreview();
         }
     }
 
@@ -461,10 +563,10 @@ public partial class Main
         Math.Clamp((int)(pointer.X / Map.Grid.PixelWidth), 0, Map.Grid.Columns - 1),
         Math.Clamp((int)(pointer.Y / Map.Grid.PixelHeight), 0, Map.Grid.Rows - 1));
 
-    private void EdgeScroll(double delta)
+    internal void EdgeScroll(double delta)
     {
         Session.RecordLoopGap((long)(delta * 1000));
-        if (Session.Prompt is not null || Session.Preview is not null && !Session.RoadToolActive ||
+        if (!Session.MapNavigationAllowed ||
             _panning || !_selecting && (!Session.EdgeScrollEnabled || !_hover))
         {
             _scroller.Reset();
@@ -474,6 +576,10 @@ public partial class Main
         var (dx, dy) = _scroller.Step(cell.X, cell.Y, Map.Grid.Columns, Map.Grid.Rows, Math.Min(delta, 0.25));
         if (dx == 0 && dy == 0) return;
         Session.ScrollChars(dx, dy);
-        if (_selecting) Session.UpdateDrag(Session.ScreenToMap(cell.X, cell.Y));
+        if (Map.TryMapPosition(_pointer, out var world))
+        {
+            if (Session.FixedPlacementToolActive) Session.MoveFixedPlacement(world);
+            else if (_selecting) Session.UpdateDrag(world);
+        }
     }
 }

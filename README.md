@@ -63,10 +63,13 @@ leave a visible error in the dialog. When loading, the saved map/configuration o
 
 Random cities start paused; **F6 > Start** contains next-step first-city advice. Connect a short track to an existing highway or a map
 edge and zone 20-30 nearby homes with **R**, leaving open service plots. **Before resuming with P**,
-build a road-connected **Woodlot (8,000g)** and **Town Well (4,000g)** through Enter > Services.
+build a nearby **Woodlot (8,000g)** and **Town Well (4,000g)** through Enter > Services.
 Together they cost 12,000g and 60g/week, leaving 38,000g of the starting 50,000g before road costs.
-A connected road serves land within
-two cells; water blocks service from spreading across it. Disconnected roads are red.
+Sims can walk over land without roads. Tracks speed travel sixfold; higher road tiers are faster.
+Buildings gradually wear the shortest reachable path from their perimeter to the actual road surface.
+Homes do not create house-to-house paths. Road-accessible buildings use their road connection
+instead of wearing parallel trails between one another; roadless service/workplace links can still form.
+Water crossings require bridges.
 
 At 10 occupied homes, zone shops and workshops with **C/I**. Put smoky workshops in a separate
 district, not among homes. Save for the largest happiness complaint rather than buying every service
@@ -82,21 +85,24 @@ and gives advice. **F7** lists reached and upcoming gates. Falling population do
 
 | Population | Milestone | Newly available |
 |---|---|---|
-| 100 | Hamlet | Tavern |
-| 500 | Village | Stone Keep, Hospice, Parish Church; level-2 redevelopment |
+| 100 | Hamlet | Settlement milestone; keep fuel, water and jobs balanced |
+| 250 | Growing Hamlet | Fire Watch, Watch House, Sheriff's Hall, Apothecary, Chantry School |
+| 500 | Village | Stone Keep, Hospice, Parish Church, Market Cross, Granary; grain management and level-2 redevelopment |
 | 1,000 | Market Town | Gaol, Infirmary, Monastery, Guildhall |
 | 2,500 | Borough | Castle |
 | 5,000 | City | Cathedral; level-3 redevelopment |
 | 10,000 | Great City | Final achievement; all city-size gates open |
 
-Density still requires suitable land value, supplies, road class and a lord's seat (a motte for
-level 2; a keep and cobbles for level 3). Smaller essential services remain available from the start.
+Density still requires suitable land value, clear expansion space, supplies and a lord's seat
+(a motte for level 2; a keep for level 3), but no road class is mandatory.
+Smaller essential services remain available from the start.
 Service menus show locked buildings and their thresholds; previews and placement enforce the same gates.
 **F6 > Dismiss tip** switches off coaching, **not milestones or unlock gates**.
 **F6 > Enable guide** turns coaching back on. Achievements and the guide preference survive save/load.
 For repeated small/medium/large playthrough results and balance refinements, see
 [the playtest report](docs/PLAYTEST.md).
 
+The time section ends with **1x / 2x / 3x** for Slow / Medium / Fast, including while paused.
 Press **F6** (or Esc > Guide) for the GUIDE, a tabbed dialog (Start, Zones, Roads, Services, Population, Happiness,
 Economy; Left/Right or a click switches tab) that explains how each thing you place drives the town's population.
 **F1** is only the short table of controls. Placing a zone, road or building makes a soft click-clack keyboard sound
@@ -112,7 +118,9 @@ They are off by default. Effects and Celebrations are not shown in the game menu
 
 New games run the full rules: homes and businesses need **power and water** (build plants, pumps and towers), residents
 want a **Fire Watch, a sheriff, an apothecary, a chantry school and a village green** as the town grows, and a lord's
-**castle** to keep the peace. People must be fed: the harvest sets the grain in store, a bad year brings famine, and
+**castle** to keep the peace. At **Village (500 residents)** grain management unlocks with Market Cross
+and Granary; before then, there are no grain costs, hunger penalties, or famine.
+Afterward, the harvest sets the grain in store, a bad year brings famine, and
 plague, raiders and fires are real dangers. Jobs matter and the treasury (in gold) has to balance, with the crown's
 tribute due each Michaelmas. Open **City menu > Budget, taxes and loans** to set service funding, tithes and loans, and
 **City health report** for every indicator. Details and tuning are in [docs/POPULATION.md](docs/POPULATION.md); the setting,
@@ -124,28 +132,87 @@ the service mapping and ideas for the future are in [docs/MEDIEVAL.md](docs/MEDI
 - **Commercial (C):** shops and offices become available after 10 occupied residential cells;
   roughly one commercial cell is supported per 20 homes.
 - **Industrial (I):** factories and workshops; roughly one industrial cell per 10 homes.
-- Zoning is free. Growth needs vacant, road-served lots. Weekly growth caps increase with city size.
+- Zoning is free. Growth needs clear multi-cell plots on walkable land, not road connectivity.
+  Vacant plots use a small translucent checkerboard in green residential, blue commercial, or gold industrial;
+  it disappears when buildings grow or the land is dezoned.
+  Zone overlays are clipped to the actual road geometry, including highway curbs and bridge decks;
+  they never paint over road surfaces.
+  Checkerboards stop at hill/terrace edges and paint only the top surface of each
+  zoned terrace, never stretching up cliff faces.
+  Homes, market stalls and workshops normally use **1x1 plots**. Occasional 1x2, 2x1 and
+  2x2 variants add variety; newly grown buildings never need more than **2x2**.
+  A single zoning click reserves one complete 1x1 starter plot. Larger dense homes,
+  merchant premises, mills and forges stay within the same 2x2 limit.
+  Weekly growth caps increase with city size. Remote walking arrivals are slower.
+  A single R/C/I click reserves the minimum complete plot. Press P to resume after
+  zoning; F8 and the cell inspector explain cramped plots or stalled settlement.
 - **U** dezones land without immediately removing occupied buildings. Those buildings keep residents
   and tax income for 2-3 game weeks. Restore their original zone before the deadline to keep them.
 - **D/Delete** previews demolition. It is free, with no refunds.
 
 Roads cost money: a street starts at **500g per cell**, an avenue at **900g**, and a highway at
 **1,500g**. Upgrades charge the difference; hills multiply construction costs by 1.5.
-Roads generated with the map have no weekly upkeep. Roads the player builds cost 1g, 2g, or 3g
+Dirt tracks and cobbled roads have a **one-cell-wide** surface; King's Roads are
+**two cells wide**, with broad curves instead of sharp right-angle bends for long-distance
+travel. These widths are measured across the road, not along its centerline.
+Straight road edges line up with whole-cell boundaries.
+Straight side roads retain their cell-aligned centerline when joining angled highways;
+the junction must not tilt the entire side road between neighboring cells.
+Normal-zoom selection stays 1x1 even on a two-cell highway, and both cells across its width
+are independently selectable.
+At 0.5x and 0.25x, a single zoomed-out road selection covers
+the whole road width rather than selecting just one half.
+Paved roads have raised stone edging, while dirt tracks have low earthy verges.
+Local right-angle bends are compact, leaving both sides of their straight legs available
+for buildings instead of extending a broad curve into neighboring plots.
+Generated highways reject right-angle bends and use broad, tangent curves.
+Random maps start with a few long intercity highways spread across the map, with broad,
+well-separated intersections instead of a central hub or a lattice of short interchanges.
+Small, medium and large maps normally have two, three and five major highway corridors respectively.
+Routes use uneven bend locations, substantial meanders and staggered joins; intercity
+connectors can end on an existing highway instead of crossing every route into a grid.
+Corner regions and the center are covered: every buildable cell is within 96 logical cells
+of a highway, using a fixed two-screen reference rather than the current window size.
+Local streets and additional road links are left for you to build.
+Random maps also add several dirt-road spurs off King's Roads near water,
+with adjacent level 4x4 areas for initial settlement. The spurs stay on dry
+land and do not add more highways.
+Small, medium and large maps aim for three, four and six usable spurs respectively,
+with fewer only where terrain leaves no suitable routes. New maps begin centered on
+the most central water-adjacent spur; a good site takes priority over forcing a central location.
+Loading a city retains its saved camera view.
+These trunks span the map rather than clustering on one side. Some random maps also feature
+steep-sided river canyons. Rivers favor broad lateral lake/shore mouths and gentle downstream
+flow; lakes and coastal water remain level.
+The visible surface reserves every cell it crosses; widening cannot consume an occupied
+or zoned plot. Cobblestone's firmer, more usable surface carries **20 trips per centerline
+cell per week**, versus **6** for dirt and **60** for King's Roads.
+ Roads the player builds cost 1g, 2g, or 3g
 per cell each week at full funding for dirt tracks, cobbled roads, and King's Roads respectively.
 Road/building menus include registered player-placeable types. Service menus show each building's
 footprint: a Sheriff's Hall occupies 2x1 cells, a Parish Church 2x2, and a Castle 4x3.
 The left icon sidebar opens Roads or an individual service category. Choose a road or building
-to see its icon and name, its full description, and a full-width statistics/effects
+to see a rendered preview of the actual model and its name, its full description, and a full-width statistics/effects
 details table below it. Cost and Upkeep appear first; Does and Placement rows are
 omitted. Cost shows only the gold amount and Footprint only the dimensions.
 Click another sidebar icon to switch the open catalog directly.
-Submenus open at the map's top-left. Building choices have enlarged names and icons;
+Submenus open at the map's top-left. Building choices have enlarged names and cached model thumbnails;
 statistics/effects and descriptions use tightly padded bordered tables.
 The game menu, quit confirmation, guide, and other regular dialogs remain centered
 on the map, adjusted to stay on screen when space is limited.
+Road previews show their real surfaces and widths; building thumbnails reuse the
+same compact, detailed medieval models as the map instead of Unicode illustrations.
+Homes vary their timber framing, roof form, shutters, masonry and chimneys. Commerce
+uses merchant stalls/shopfronts; industry uses smithies, workshops, mills and forges.
 The **Add** button, with green text on a gray background, starts building placement or road-line drawing on the map.
 Building placement hides the yellow cursor highlight, leaving only green/red placement indicators.
+During building placement, **[ / ]** rotates the building 90° left/right, including its footprint.
+The placed building keeps its facing through save/load. Outside placement, these keys rotate the map.
+Map controls remain available while placing: use **+ / - / 0**, the minimap zoom buttons,
+Ctrl/Command-wheel, or pinch to zoom; **ROTATE** or **Shift+[ / Shift+]** to turn the camera;
+and **TILT** to change its angle. Middle-drag, trackpad/wheel scrolling, minimap clicks/drags,
+overlays, and enabled edge scrolling also work without cancelling the placement tool.
+Camera controls preserve the preview's plot and building facing until the placement cursor moves.
 The icon rail has one shared double-line outer border and a single white outline around each icon.
 Buildings are listed vertically in single-bordered choices sized to fit their names,
 with one enclosing single-white border around the complete list,
@@ -156,25 +223,97 @@ The description text has one enclosing box without a header; the details table
 also has no separate heading and uses uniform thin white lines.
 Locked buildings show their unlock requirements and cannot be added. **Cancel**, **Esc**, or
 clicking outside the catalog closes it without building or spending gold.
-Larger buildings fill their footprint with type-specific ASCII art at normal and close zoom,
-including roofs, walls, church crosses, aqueduct arches and castle battlements.
-Coarse zoom uses the representative building glyph.
+Buildings use original pixel art inspired by classic city-builder maps at every zoom:
+an elevated oblique view, broad shaded roofs, short walls, planted plots and paved courtyards.
+Medieval cottages, markets, mills, forges, churches and castles have distinct compact layouts,
+not tall front-facing icon silhouettes. Roofs still rise above the logical grid.
+The default map uses a tilted orthographic camera with actual building walls and roofs.
+Its initial viewing angle faces buildings toward screen-right.
+**ROTATE** above the minimap advances 90 degrees; `[` and `]` rotate left and right.
+**TILT** cycles through 20, 35 and 50 degrees. Rotation changes the viewing angle, not the buildings'
+architecture or simulation footprint. Larger plots expand buildings/courtyards horizontally,
+not their tower height. Selection, placement, panning and building clicks use the camera projection.
+The minimap stays flat and square. Its entire contents rotate 90 degrees with the map;
+the white indicator traces the camera's actual ground footprint and changes angle/shape with
+the view. Tilting changes that indicator, not the minimap's shape. Clicks and drags still
+navigate to the corresponding world location.
+The tilted view's normal **1x** framing is 80% closer than the initial 3D view; **2x** doubles that baseline.
+This changes map magnification, not the size of the sidebar or dialogs.
+Perspective panning includes half a viewport of space beyond map boundaries, so any edge
+can be brought into the middle of the map panel. Off-map placement remains blocked.
+Generated hill regions rise through four blocky terraces from their edges toward
+their interiors. Dedicated road meshes follow graded centerlines, with narrow
+shoulders and cut/fill walls derived from their actual edges. Junctions share
+nonoverlapping surfaces rather than stacked road pieces.
+Road types meet at ordinary intersections, not invented highway on-ramps.
+Shallow-angle minor-road junctions slow travel. The Roads menu also offers a
+prebuilt **Traffic Circle**: a 5x5 cobbled ring with a grassy center.
+Water crossings and short, deep gaps between hills have bridge decks and supports.
+Rivers have consistent downstream flow with gentle gradients; water never inherits
+hill terrace levels. Coarse downstream motion remains visible with low effects at normal
+and close zoom, including while paused. Effects-off and reduced-motion settings still stop it.
+Rocks vary between boulders, slabs, standing stones, split pairs, scattered stones
+and layered outcrops. Trees and rocks stay clear of the visible curved road bed.
+The 3D map renders at native panel resolution with edge antialiasing; pixel textures remain nearest-filtered.
+3D service range guides are circular screen-space overlays, unaffected by camera tilt or terminal-cell aspect.
+Grass and water use visible coarse, restrained-color blocks rather than smooth gradients,
+bright pixel flecks or thin wave lines. Tree canopies have clustered pixel-leaf textures and
+layered cubic foliage matching the buildings. Woodland mixes spreading oaks, rounded
+and tall broad-leaf crowns, and two stepped pine silhouettes, with stable variations
+in height, width and leaf palette. Tree positions and gameplay remain unchanged.
+Riverbanks use a smoothed
+visual water contour instead of cell-shaped teeth; logical terrain and bridge rules are unchanged.
+The visual direction takes cues from late-1990s medieval strategy games: original
+pixel-textured stone, warm timber framing, thatch/slate roofs, and subdued countryside colors.
+Subtle voxel-style details extend to varied cubic tree canopies, clustered angular boulders,
+stepped hill/bank faces, stone pier bases and well rims, raised grain-store supports,
+roof ridge blocks, and castle battlements. These are decorative; footprints and gameplay are unchanged.
+Facade glazing uses centered bays aligned with the timber posts and floor bands, with a clear
+central doorway. Battlements use spaced square blocks around open tower tops.
+Watch House, Apothecary, Chapel and Tavern now use roomier **2x1** plots; costs and service
+outputs are unchanged. Existing saved 1x1 versions retain their original footprints.
+The minimap and text map retain representative glyphs.
+Grass, water, shorelines, raised hills, trees and rocks use the same shaded pixel-art treatment.
+Water edges use whole-cell blocky steps matching the hill terraces; roads retain
+their existing curves and widths. Dry bank road endings stay ordinary roads,
+not partial bridges, and their endcaps stop inside the last dry cell before water.
+Coarse blue river patches travel downstream even while
+gameplay is paused; effects-off and reduced-motion modes still freeze them.
+Highway loops straighten grid staircases just like open roads, without repeated ripples.
+Click any opaque part of a building, including raised roofs and overhangs, to select it;
+right-click opens Building Status. Overlapping buildings pick front-to-back.
 A click previews a whole building; larger selections tile complete, non-overlapping buildings.
 Blocked footprints are skipped as a whole. Cost, upkeep and service supply are per building,
 not per occupied cell; demolition of any part removes the entire building.
 
 Selected area services and smoke/clean-air sources show faint white pixelated range circles,
 including during valid placement previews. Selecting any cell of a building's footprint shows
-its ranges; moving the selection away hides them. Their radii match the simulation's reach and scale with zoom.
+its ranges; moving the selection away hides them. Service rings indicate approximate timely-response
+targets, not limits; pollution/cleanup rings still represent actual spatial falloff.
 The rings are translucent white; fully opaque glyphs beneath each source's outermost circle
 identify its effects, side by side for multiple effects.
 Range rings are drawn as screen-space circles using the horizontal cell scale.
-Gameplay coverage still uses circular distance in map cells; rectangular cells mean
-the visual circle is not an exact outline of every affected cell.
+Service crews and fuel/water deliveries follow least-time land routes. Long distances delay
+first arrival and lower timely service quality, but never impose a distance cutoff.
+Insufficient staffing adds queues. Bottom-right petitions and Building Status report waiting,
+slow responses and near/at-capacity workloads; roads, nearer providers and funding help.
+Area-service ranges are 50% larger: Fire Watch and Market Cross now have 27-cell timely
+ranges, Apothecary and Chantry School 18, Sheriff's Hall 24, and Castle 57.
+Costs/upkeep and pollution/cleanup ranges are unchanged.
 
 Placement previews show valid/skipped cells and the price. **Enter/Y** confirms and **Esc/N**
-cancels; insufficient funds leave the city unchanged. **T** starts a straight street line:
-arrows or dragging move its endpoint while the preview remains active.
+cancels; insufficient funds leave the city unchanged. **T** or a selected road's **Add**
+starts road drawing: move the pointer to an endpoint and **click to place the shown stroke immediately**,
+or use arrows and **Enter**. Holding a click and dragging previews a further extension,
+which is built on release. Each placement retains the selected road type and starts the next
+stroke at its endpoint. **Esc** finishes road placement; middle-drag pans while the tool is active.
+Traffic-circle placement also stays active until cancelled.
+Perspective previews show the selected dirt, cobbled or King's Road surface, width, edging,
+curves and bridges using the same mesh rules as completed roads, with red feedback for blocked cells.
+Completed roads render normally while the tool remains active; only uncommitted changes stay ghosted.
+Overlapping or adjacent nearly parallel roadbeds are rejected as a whole, without end fragments
+or charges. Road extensions, upgrades and ordinary perpendicular/oblique junctions remain available.
+While paused, Command/Ctrl+Z can undo the last stroke and resume the selected road tool.
 
 Undo keeps the last **10 successful placement, zoning, dezone and demolition actions**.
 Each confirmed undo restores a **whole-city snapshot**, not just selected cells, and
@@ -228,14 +367,16 @@ including a clear overlay button. Close it by clicking **VIEWS** again or pressi
 the chosen overlay remains active when closed. REPORTS also hides on narrow windows;
 **F7** still opens reports.
 Click the gold text itself to open economy; empty header space does not activate it.
-Weekly Report shows the current settlement size and progress toward the next one.
+Weekly Report's **Milestones** tab opens with the current settlement size and progress
+toward the next one. Scroll down to review the other reached and upcoming milestones,
+including their newly unlocked buildings/services and model illustrations.
 Its **Overview, Population, Economy, Services, Growth, Food & Seasons, and Events** tabs cover city/map
 details, demographics, jobs, income/expense breakdowns, supplies, growth blockers,
 and recent events. Projected budgets are distinguished from completed-week results.
-The full list of sizes, thresholds and unlocks is in **F6 > Milestones**.
+**F6 > Milestones** also retains a summary of sizes, thresholds and unlocks.
 Reaching a new size pauses the game and opens **Your City Grew!**, with tables of
-newly unlocked buildings and their key features. **Previous/Next** browse sizes;
-**Continue** closes the dialog while keeping the game paused.
+newly unlocked buildings and their key features. **Continue** is its only action and
+closes the dialog while keeping the game paused; milestone browsing lives in Reports.
 New milestones award a one-time gold grant scaled to newly unlocked building
 costs—enough for the two cheapest new buildings, with larger sizes never receiving
 a smaller grant. The amount is shown in the growth dialog and Milestones guide.
@@ -265,17 +406,33 @@ warnings use gold or red. Population and treasury remain in the top header.
 Mood shows its descriptive label without a numeric score. Services reads gray **None** until
 at least one service building is placed; existing services show full or half strength.
 Hover over any R/C/I Demand letter, bar or row for its demand, built/zoned/road-served cells,
-plots without road access and pending removals. Those same details are always available in
+expected arrival rate, growth blockers and pending removals. Demand reflects settlers
+and supported businesses, not empty zoned land: zoning alone does not erase it.
+Business demand needs enough residents and a viable trade climate; cramped plots or
+missing deliveries can prevent growth. Fractional arrivals can leave some weeks empty.
+Those same details are always available in
 **F7 Report**, **F8 Growth**, and the full-rules City health report for keyboard users.
 There is no separate Zones section and the sidebar never scrolls. Its minimap and table layout
 adapt to smaller windows so all remaining details stay visible.
 The sidebar has no Guide section; next-step advice remains in the **F6 > Start** dialog.
+New games start in the **2x close view** to make compact building details readable.
+The 1x view is eased back slightly; the close view is about 1.68 times its visual
+magnification. The existing 1x/2x controls select these tuned view presets; overview zooms
+retain their previous scale, and loading a save restores its saved zoom.
 The map fills its frame with the same 12-logical-pixel inset on every side; partial cells are
 clipped at the right/bottom edges. The map/sidebar gap is also 12 logical pixels.
 Cell details appear in the bottom status line, alongside dimensions/counts for selections larger
 than one cell and any current message.
 
-About 10% of visible hills, trees, and water animate at 80 BPM (one step every 0.75 seconds).
+In the perspective map, water keeps its stationary coarse blue texture. Sparse chunky ripples
+travel downstream along rounded cell-to-cell tracks at 0.75 cells per second, with irregular
+spacing, varied cluster sizes and subdued brightness. Occasional small splashes and fish jumping
+in short arcs add life to rivers. Motion updates eight times per second without rebuilding terrain.
+Most water pixels stay still; rivers continue flowing while gameplay is paused.
+Effects-off and reduced motion freeze the decorative flow and hide splashes/fish; lakes/sea
+do not receive river effects. River-adjacent hilltops retain their ordinary grass colors.
+
+In the legacy cell view, about 10% of visible hills, trees, and water animate at 80 BPM (one step every 0.75 seconds).
 Hills move vertically; trees and water move horizontally. The chosen tiles remain stable while
 scrolling, adjacent tiles move oppositely, and only glyphs move: backgrounds and hit targets stay fixed.
 Bridges do not animate. Terrain decoration continues while gameplay is paused; cars, pedestrians,
@@ -307,7 +464,7 @@ Names are stored in city saves.
 - Increasing font size grows the preferred 1440x900 window when desktop space permits, without
   exceeding the usable screen. Both sidebars fit without scrolling, including every construction
   icon at minimum window size; dialogs may scroll.
-  The minimum logical window height is 780 so the larger minimap and remaining details have room;
+  The minimum logical window height is 780 (800 in Debug, to fit the Monuments entry) so the larger minimap and remaining details have room;
   actual minimum bounds remain capped to the usable desktop.
 - Drag the map/sidebar divider to resize it, or use **Esc > Resize sidebar**.
   Sidebar widths are bounded to 280-480 logical pixels; the maximum reduces to preserve map space.
@@ -338,13 +495,24 @@ Names are stored in city saves.
 
 ### Music
 
-Quiet **54 BPM Greensleeves** uses an original FM/chiptune arrangement of the traditional
-public-domain melody. The opening theme is always the same. Later complete verse/refrain
-phrases modulate to related keys and vary their voicing and arpeggios, rather than replaying a fixed loop.
+The quiet medieval soundtrack shuffles **Greensleeves** and five original themes:
+**Willow Court**, **Cloister Light**, **The Evening Reeve**, **River Lanterns**, and **Orchard Vigil**.
+Gentle 48-56 BPM PCM16/chiptune arrangements alternate wind, strings and soft-brass melodies
+with sustained harmonies, soft plucks and a restrained moving bass. Songs have silent transition
+edges and do not repeat back-to-back. Greensleeves uses the traditional public-domain melody;
+the other scores and all synthesis/arrangements are original.
 
 Use **F10** or **Esc > GAME MENU** to mute or resume it. Music continues during game pauses/dialogs but
 pauses when unfocused. Font and music preferences are remembered in `display.cfg`, separately from
 city saves. No external recording, audio asset, or audio package is required.
+
+### Debug monuments
+
+Debug builds include a **Monuments** construction entry with an original colossal **Bewildered Duck
+Monument**, clasping its helmet in its hands. Its normal unlock is 100,000 residents, but Debug
+launches bypass that gate and construction cost for immediate inspection. The 8x6 footprint,
+full-sculpture clicking, placement, demolition and saving use the normal building system.
+This prototype is hidden and cannot be placed in Release builds.
 
 ## Controls
 
@@ -365,6 +533,7 @@ city saves. No external recording, audio asset, or audio package is required.
 | Undo | Ctrl+Z or Command+Z |
 | Pause/resume / speed | Space/P / `1`, `2`, `3` |
 | Zoom / reset zoom | `+` or `=`, `-`, / `0` |
+| Rotate map left / right | `[` / `]` (90-degree steps) |
 | Mouse/trackpad zoom | Ctrl/Command+wheel or scroll; pinch |
 | Horizontal wheel/trackpad pan | Shift/Alt modifier; tilt wheels |
 | Minimap navigation | Click/drag |

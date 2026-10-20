@@ -1,4 +1,5 @@
 using TermCity.Core.Registry;
+using TermCity.Core.Rendering;
 using TermCity.Core.Terrain;
 using TermCity.Core.Util;
 
@@ -74,7 +75,7 @@ public sealed class ScatterFeatureGenerator : IFeatureGenerator
                 }
 
                 double density = cluster is not null && cluster[y * map.Width + x] >= threshold ? ClusterDensity : BaseDensity;
-                if (rng.Chance(density * terrain.DensityFor(feature.Name)))
+                if (rng.Chance(density * terrain.DensityFor(feature.Name)) && ShorelineLayout.NaturalFeatureFits(map, x, y))
                 {
                     map.SetFeature(x, y, feature);
                 }

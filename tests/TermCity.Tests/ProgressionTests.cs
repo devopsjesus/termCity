@@ -24,6 +24,26 @@ public class ProgressionTests
     }
 
     [Fact]
+    public void GrowingHamletUnlocksCareAtExactly250AndKeepsItAfterSaveAndDecline()
+    {
+        var game = TestCity.Flat(rules: CityRules.Full);
+        SetPopulation(game, 249);
+        Assert.Equal(100, game.HighestMilestone);
+        string[] names = ["Fire Watch", "Watch House", "Sheriff's Hall", "Apothecary", "Chantry School"];
+        Assert.All(names, name => Assert.False(CityProgression.IsUnlocked(game, game.Map.Content.Buildings.Get(name))));
+        int money = game.Money;
+        SetPopulation(game, 250);
+        Assert.Equal(250, game.HighestMilestone);
+        Assert.Equal(money + CityProgression.GoldBonus(game, CityProgression.Milestones.Single(m => m.Population == 250)), game.Money);
+        Assert.Contains(game.Events, e => e.Message.Contains("Growing Hamlet") && e.Message.Contains("Fire Watch"));
+        SetPopulation(game, 20);
+        var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
+        Assert.All(names, name => Assert.True(CityProgression.IsUnlocked(loaded, loaded.Map.Content.Buildings.Get(name))));
+        Assert.False(loaded.GrainRequired);
+        Assert.False(CityProgression.IsUnlocked(loaded, loaded.Map.Content.Buildings.Get("Granary")));
+    }
+
+    [Fact]
     public void GatesAreAtomicInQuotesPreviewsAndActionsAndRemainOpenAfterDeclineAndLoad()
     {
         var game = TestCity.Flat(config: new GameConfig { StartingMoney = 200_000 }, rules: CityRules.Full);
@@ -57,7 +77,9 @@ public class ProgressionTests
         Assert.False(session.GuideVisible);
         Assert.True(game.GuideDismissed);
         Assert.Equal("Your City Grew!", session.Prompt!.Title);
-        Assert.Equal("Village", session.Prompt.Tabs![session.Prompt.ActiveTab].Title);
+        Assert.Equal(2, session.Prompt.ActiveTab);
+        Assert.Null(session.Prompt.Tabs);
+        Assert.Equal("Continue", Assert.Single(session.Prompt.Choices).Label);
         Assert.Contains("VILLAGE GREEN", session.Prompt.Text);
         Assert.DoesNotContain("Tavern", session.Prompt.Text);
         Assert.Contains("STONE KEEP", session.Prompt.Text);
@@ -82,7 +104,7 @@ public class ProgressionTests
     {
         var game = TestCity.Flat(rules: CityRules.Full);
         game.Paused = true;
-        game.Designate(new CellRect(10, 18, 30, 1), ZoneType.Residential);
+        game.Designate(new CellRect(10, 18, 30, 2), ZoneType.Residential);
         Assert.Contains("Woodlot", CityProgression.NextStep(game));
         Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Woodlot"), new CellRect(45, 18, 1, 1)).Success);
         Assert.Contains("Town Well", CityProgression.NextStep(game));
@@ -101,7 +123,7 @@ public class ProgressionTests
     public void EveryDefaultGateMatchesAnAnnouncedMilestone()
     {
         var game = TestCity.Flat();
-        foreach (var building in game.Map.Content.Buildings.Where(b => b.PlayerPlaceable && b.MinPopulation > 0))
+        foreach (var building in game.Map.Content.Buildings.Where(b => b.PlayerPlaceable && !b.DebugOnly && b.MinPopulation > 0))
         {
             var milestone = Assert.Single(CityProgression.Milestones, m =>
                 m.Population == CityProgression.RequiredPopulation(building));
@@ -156,7 +178,7 @@ public class ProgressionTests
     }
 
     public static IEnumerable<object[]> GatedBuildings() => new GameContent().Buildings
-        .Where(b => b.PlayerPlaceable && b.MinPopulation > 0).Select(b => new object[] { b.Name });
+        .Where(b => b.PlayerPlaceable && !b.DebugOnly && b.MinPopulation > 0).Select(b => new object[] { b.Name });
 
     [Theory]
     [MemberData(nameof(GatedBuildings))]

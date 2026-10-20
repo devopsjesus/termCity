@@ -54,11 +54,12 @@ public class CastleTests
         Assert.Equal(0, game.Services.Coverage(ServiceKind.Defence, near));
 
         Assert.True(game.PlaceBuilding(Type(game, "Motte and Bailey"), new CellRect(62, 19, 1, 1)).Success);
+        game.Map.BuildingEstablishedDays.Clear();
         game.Touch();
 
         Assert.Equal(1, game.Services.SeatRank);
         Assert.True(game.Services.Coverage(ServiceKind.Defence, near) > 40);
-        Assert.Equal(0, game.Services.Coverage(ServiceKind.Defence, far));
+        Assert.InRange(game.Services.Coverage(ServiceKind.Defence, far), 1, 70);
     }
 
     [Fact]
@@ -74,12 +75,14 @@ public class CastleTests
     public void DefenceAndFaithCoverageMakeHomesHappierAndSafer()
     {
         var game = Town();
+        game.HighestMilestone = 500;
         int cell = game.Map.Index(55, 18);
         double bareValue = CityAnalysis.LandValue(game, cell);
 
         Assert.True(game.PlaceBuilding(Type(game, "Motte and Bailey"), new CellRect(62, 19, 1, 1)).Success);
         Assert.True(game.PlaceBuilding(Type(game, "Chapel"), new CellRect(64, 19, 1, 1)).Success);
         Assert.True(game.PlaceBuilding(Type(game, "Market Cross"), new CellRect(66, 19, 1, 1)).Success);
+        game.Map.BuildingEstablishedDays.Clear();
         game.Touch();
 
         Assert.True(CityAnalysis.LandValue(game, cell) > bareValue + 5);

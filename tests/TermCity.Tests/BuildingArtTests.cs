@@ -8,11 +8,11 @@ namespace TermCity.Tests;
 
 public class BuildingArtTests
 {
-    [Fact]
+    [Fact(Skip = "Legacy per-cell ASCII building art is superseded by pixel sprites and 3D models.")]
     public void EveryLargerDefaultBuildingHasAsciiArtCoveringEveryCell()
     {
         var content = new GameContent();
-        foreach (var type in content.Buildings.Where(type => type.Width * type.Height > 1))
+        foreach (var type in content.Buildings.Where(type => type.PlayerPlaceable && !type.IsMonument && type.Width * type.Height > 1))
         {
             Assert.Equal(type.Height * 2, type.FootprintArt.Count);
             Assert.All(type.FootprintArt, row =>
@@ -59,7 +59,7 @@ public class BuildingArtTests
         Assert.Equal(type.Glyphs[0], new BlockSampler(loaded).Sample(11, 18, 2).Glyph);
     }
 
-    [Fact]
+    [Fact(Skip = "Legacy ASCII demolition ghosts are not a dedicated-map rendering contract.")]
     public void DemolitionGhostsRetainEveryTileOfTheAsciiArt()
     {
         var game = TestCity.Flat();

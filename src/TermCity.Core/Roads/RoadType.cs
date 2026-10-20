@@ -19,12 +19,17 @@ public sealed class RoadType : RegisteredType
     public required Rgb Foreground { get; init; }
 
     public required Rgb Background { get; init; }
+    public Rgb SurfaceColor { get; init; } = Rgb.Hex(0x897c5e);
 
     /// <summary>Multiplier on <see cref="Simulation.GameConfig.RoadCostPerCell"/>.</summary>
     public double CostMultiplier { get; init; } = 1.0;
 
     /// <summary>Bigger roads can replace smaller ones (an upgrade, paying only the difference).</summary>
     public int Rank { get; init; }
+
+    public float WidthCells { get; init; } = 1;
+
+    public double BendRadiusCells { get; init; }
 
     /// <summary>How many trips a cell of this road carries each week before the city starts to jam.</summary>
     public int TrafficCapacity { get; init; } = 6;
@@ -83,34 +88,40 @@ public static class DefaultRoads
         Background = Rgb.Hex(0x2b2b30),
         CostMultiplier = 1.0,
         Rank = 1,
+        BendRadiusCells = 1,
         TrafficCapacity = 6,
         WeeklyUpkeep = 1,
-        Description = "Rutted dirt track between homes and fields",
+        Description = "One-cell dirt track between homes and fields; a narrow, rutted surface for light traffic",
     };
 
     public static RoadType CobbledRoad() => new()
     {
         Name = CobbledName,
+        SurfaceColor = Rgb.Hex(0x707477),
         Glyphs = Heavy,
         Foreground = Rgb.Hex(0xa9d4ff),
         Background = Rgb.Hex(0x2b2f3a),
         CostMultiplier = 1.8,
         Rank = 2,
+        BendRadiusCells = 1,
         TrafficCapacity = 20,
         WeeklyUpkeep = 2,
-        Description = "Cobbled market road: carts and drovers pass freely",
+        Description = "One-cell cobbled market road; firm stone surfacing gives carts more usable room and carries more traffic than dirt",
     };
 
     public static RoadType KingsRoad() => new()
     {
         Name = KingsRoadName,
+        SurfaceColor = Rgb.Hex(0x565757),
         Glyphs = Double,
         Foreground = Rgb.Hex(0xffd166),
         Background = Rgb.Hex(0x33302a),
         CostMultiplier = 3.0,
         Rank = 3,
+        WidthCells = 2,
+        BendRadiusCells = 6,
         TrafficCapacity = 60,
         WeeklyUpkeep = 3,
-        Description = "The King's Road: a paved, patrolled highway",
+        Description = "Two-cell King's Road: a paved, patrolled highway for long-distance travel, with broad bends rather than sharp right-angle corners",
     };
 }

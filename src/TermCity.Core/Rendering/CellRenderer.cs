@@ -17,7 +17,7 @@ public static class CellRenderer
     /// so the glyph does not show through.
     /// </param>
     public static CellVisual Render(CityGame game, int x, int y, MapOverlay overlay = MapOverlay.Off,
-        bool vectorRoads = false, bool buildingArt = true)
+        bool vectorRoads = false, bool buildingArt = true, bool buildingSprites = false)
     {
         var map = game.Map;
         var terrain = map.TerrainAt(x, y);
@@ -30,12 +30,12 @@ public static class CellRenderer
 
         if (zone != ZoneType.None)
         {
-            var info = Zones.Get(zone);
-            bg = info.Background;
-            fg = game.Network.IsServed(map, x, y) ? info.Foreground : info.Foreground.Scale(0.5);
-            glyph = info.EmptyGlyph;
+            var visual = RenderZone(game, x, y);
+            bg = visual.Background;
+            fg = visual.Foreground;
+            glyph = visual.Glyph;
         }
-        else if (map.FeatureAt(x, y) is { } feature)
+        else if (map.FeatureAt(x, y) is { } feature && TerrainSprite.NaturalFeatureVisible(game, x, y))
         {
             glyph = feature.GlyphAt(x, y);
             fg = feature.Foreground;
@@ -44,12 +44,22 @@ public static class CellRenderer
         if (building is not null)
         {
             var footprint = map.BuildingFootprintAt(x, y);
-            glyph = buildingArt ? building.FootprintGlyphAt(footprint, x, y) : building.GlyphAt(x, y);
+            glyph = buildingSprites ? " " :
+                buildingArt ? building.FootprintGlyphAt(footprint, x, y) : building.GlyphAt(x, y);
             fg = building.Foreground;
-            if (zone == ZoneType.None)
+            if (zone == ZoneType.None && !buildingSprites)
             {
                 bg = BuildingBackground;
             }
+
+        }
+
+        if (building is null && map.PathWearAt(x, y) > 0 && !map.HasRoad(x, y) &&
+            !map.IsHouseYardCell(map.Index(x, y)) && !TravelRoutes.IsFootpathBridgeCell(map, map.Index(x, y)) &&
+            !TravelRoutes.IsFootpathHillCell(map, map.Index(x, y)))
+        {
+            glyph = FootpathLayout.Glyph(FootpathLayout.Connections(map, x, y));
+            fg = Rgb.Hex(FootpathArtwork.ColorForWear(map.PathWearAt(x, y)));
         }
 
         if (vectorRoads && map.HasRoad(x, y))
@@ -61,7 +71,7 @@ public static class CellRenderer
         {
             // A road over water is a bridge: same glyphs, but drawn on the water.
             glyph = road.GlyphFor(RoadMask(map, x, y));
-            fg = game.Network.IsConnected(map, x, y) ? road.Foreground : DisconnectedRoad;
+            fg = road.Foreground;
             bg = terrain.Buildable ? road.Background : terrain.Background;
         }
 
@@ -71,6 +81,15 @@ public static class CellRenderer
         }
 
         return new CellVisual(glyph, fg, bg);
+    }
+
+    public static CellVisual RenderZone(CityGame game, int x, int y, MapOverlay overlay = MapOverlay.Off)
+    {
+        var info = Zones.Get(game.Map.ZoneAt(x, y));
+        var foreground = game.Network.IsServed(game.Map, x, y) ? info.Foreground : info.Foreground.Scale(0.5);
+        var background = overlay == MapOverlay.Off ? info.Background :
+            MapOverlays.Tint(game, overlay, x, y, info.Background) ?? info.Background;
+        return new(info.EmptyGlyph, foreground, background);
     }
 
     /// <summary>Which of the four neighbours are roads: north = 1, east = 2, south = 4, west = 8.</summary>
