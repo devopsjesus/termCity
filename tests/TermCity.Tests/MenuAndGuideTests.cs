@@ -140,11 +140,12 @@ public class MenuAndGuideTests
         session.ShowAreaMenu();
         session.SelectPrompt(2);
         var prompt = session.Prompt!;
-        foreach (var building in session.Game.Map.Content.Buildings.Where(b => b.PlayerPlaceable))
+        foreach (var building in session.Game.Map.Content.Buildings.Where(b => b.PlayerPlaceable && (!b.DebugOnly || CityGame.DebugToolsAvailable)))
         {
             int index = prompt.Choices.ToList().FindIndex(c => c.Label == building.Name);
+            Assert.InRange(index, 0, prompt.Choices.Count - 1);
             prompt.HelpIndex = index;
-            var help = prompt.ActiveHelp!;
+            var help = Assert.IsType<ChoiceHelp>(prompt.ActiveHelp);
             Assert.Equal(ChoiceHelpContent.Icons(building.Glyphs), help.Icons);
             Assert.Equal(building.Description, help.Description);
             Assert.Contains(Fmt.Money(building.Cost), help.Details);
