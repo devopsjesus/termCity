@@ -24,6 +24,154 @@ dotnet build TermCity.slnx -c Release
 dotnet test TermCity.slnx -c Release --no-build
 ```
 
+### Settlement and siege validation
+
+The new settlement route is **G > Motte and Bailey enclosure**. Its first click anchors
+one corner; pointer movement or cursor keys resize the opposite corner, and a second
+click/Enter purchases the complete enclosure atomically. Garrison uses the shared
+construction catalog, canonical model thumbnails, statistics and Add/Cancel actions,
+with the same terminal framing, tooltips and narrow-window scrolling. Manual zoning
+and the existing city scenarios retain their legacy behavior.
+
+```bash
+godot --path godot -- --seed 42 --size small --debug-settlement
+godot --path godot -- --seed 42 --size small --debug-siege
+godot --headless --path godot -- --seed 42 --settlement-smoke-test
+godot --path godot -- --seed 42 --settlement-smoke-test --capture /tmp/termcity-settlement.png
+dotnet test tests/TermCity.Tests/TermCity.Tests.csproj --filter 'FullyQualifiedName~Settlement'
+```
+
+Settlement state and siege rules live in the UI-independent core. Save version 2 has
+an optional settlement section; old city saves remain valid. Combat advances on the
+simulation clock and respects pause, focus suspension and game speed. Drawing and
+picking never advance combat RNG. Wall/goblin meshes have their own batched scene
+roots; combat and health updates must not invalidate terrain or rebuild the city.
+`PerspectiveCity.Siege.cs` renders palisades, stonework, gate openings, towers, mounted
+weapons, goblins and projectiles; `TerminalMap.Siege.cs` handles health bars, weapon-range
+circles and the overhead representation. Minimap combat markers do not rebuild its
+terrain texture.
+
+`CityGame.Development.cs` replaces bailey zoning with demand-driven site scoring.
+All trades compete for shared interior land; only constructed footprints receive
+internal R/C/I classifications for the existing simulation indexes. Site selection
+preserves worn paths, an inner repair alley, gate clearance and flood-reachable access
+to every interior building. Land value and crowding choose broad courtyard homes,
+compact houses, stacked shanties or inner-wall housing. Weekly redevelopment preserves
+households instead of manufacturing population. New building registry entries are
+appended, preserving existing save IDs; load migration clears only vacant bailey zones.
+`SettlementDevelopmentTests` covers sites, trade mix, wealth, crowding, wall preservation,
+artwork and deterministic persistence.
+
+`CityGame.Settlement` derives the map's footpath bounds on founding and load. Bailey
+journeys connect building perimeter/yard cells, ignore road destinations, and use a
+shortest-edge spanning forest within the reachable interior. Footpaths still wear
+gradually and persist; loading older baileys trims outward trails at the wall.
+Legacy city and bridge-path behavior remains unchanged when no settlement is present.
+Fuel pollution uses the building-aware `CityServices.PollutionRadius` helper in both
+simulation and range guides; fuel sources are capped at six cells without changing
+smoke intensity, industrial emission ranges or commons cleanup.
+
+`Main.DebugSiege.cs` owns the Debug Siege map-edge toolbar. It is gated by the explicit
+session mode, uses `TerminalFrame` and the shared terminal button theme, and wraps at
+narrow map widths. Its text input consumes gameplay shortcuts while focused.
+Core debug wave/clear/repair actions remain Debug-build-gated, use ordinary session
+snapshots for paused undo, and only invalidate siege rendering. Forced waves replace
+the current swarm atomically, honor the 120-attacker save limit and use the normal
+dry-land routing and milestone scaling. Restart uses the existing progress guard and
+restores the same-seed preset, including its initial camera focus and population.
+The settlement integration smoke covers button actions, keyboard isolation and
+960/640-pixel layouts; `DebugSiegeControlsTests` covers gating, validation, persistence
+and restart semantics.
+
+Debug wall width/height inputs are applied through the guarded same-seed restart.
+Explicit dimensions use exact rectangular placement, not the default 32/24/20/16/12
+fallback search. Validation happens before replacement, so rejected dimensions or a
+failed dry-land/cost search preserve the live city. Ordinary restarts retain the
+current debug enclosure dimensions.
+
+`CityGame.SiegeWaveStarted` switches the simulation to Slow (1x) for every new natural
+or forced wave. Remaining fixed-step time is rescaled when that speed changes.
+`GameSession` forwards/rebinds the cue across game replacement without replaying it
+on load or undo; startup and debug restart announce their newly created first wave.
+`BattleHorn.cs` synthesizes the original mono horn PCM. Playback shares SOUND mute,
+volume and focus behavior with placement sounds, and smoke-test audio remains silent.
+
+Siege simulation remains fixed-step (0.1 siege seconds); at Slow/1x that is five
+combat updates per real second. `SiegeMotion` interpolates transient previous/current
+goblin positions and gait per rendered frame. Projectile traces extrapolate their
+known flight between ticks and orient to the trajectory. Rendering neither advances
+simulation RNG nor changes travel speed/damage. Actor transform lists and MultiMesh
+instance buffers are reused; motion does not rebuild city or wall geometry.
+Reduced-motion settings retain location/facing but suppress bob, sway and hammer
+animation.
+
+`SettlementRepairs.cs` owns deterministic between-wave civilian repairs. The rate in
+health per siege second is `1 + 0.02 * population + 0.75 * occupied industrial buildings
++ 0.25 * active service buildings`, or zero without residents. Breaches precede
+lowest-health-percentage sections, and each target is completed before moving on.
+Combat-ending ticks do not immediately heal a fresh breach. Optional saved repair
+target/phase fields preserve old version-2 compatibility; fractional wall health
+stores work already done. Paid/debug repairs clear stale crew targets.
+`SettlementUpgrades.cs` purchases the whole next material atomically, then upgrades
+one shared wall section every three siege seconds. Stone unlocks permanently at 250
+souls and reinforcement at 1,000; another purchase is rejected until the current pass
+finishes. Existing material and health remain until each section completes, at which
+point its shared health pool is rescaled once, preserving damage percentage and
+breaches (200/450/800 health per constituent cell). Construction runs without residents, before the first wave and during
+combat, but pauses with the simulation. Optional save fields retain target material,
+completed sections and fractional work; undo restores both payment and construction.
+`MaterialFor`/`ProgressFor` and cell-query equivalents expose mixed-material walls.
+`WallUpgradeArtwork` adds broad courses of stone over the existing wood, followed by
+iron reinforcement over stone, using the existing box batches and damage fragments.
+Graphical smoke captures walking and repair poses and measures active
+120-goblin frames against 12ms actor-update and 60ms frame-p90 budgets.
+
+`SettlementCrowd.cs` shares the exterior route flood between spawn planning and
+legacy-save separation. Spawn positions honor tier-scaled body radii; requested
+debug counts fail atomically if the reachable ground cannot fit the swarm.
+Front-to-back, ID-stable movement uses swept relative-motion checks, including
+already moved neighbors, so interpolated poses cannot cross or overlap at merges.
+Blocked units wait behind the front rank instead of attacking through it. The
+saved route format remains unchanged; load-time migration preserves attacker IDs,
+health and simulation RNG while relocating old overlaps onto valid exterior routes.
+The melee pose has strike/recoil/rest/wind-up phases, with a pivoted weapon and body
+lunge rather than a barely visible arm oscillation. Existing damage cadence is unchanged.
+
+`WallDamageLayout` provides deterministic, health-banded wall/gate/tower fragments,
+ragged crests and rubble. Perspective picking uses those fragments rather than an
+intact wall box. Mounted weapons follow the surviving crest. Flames begin strictly
+below 0.33 health fraction (including zero), are batched separately from static walls,
+freeze when paused and retain a static pose with reduced motion. Repairing extinguishes
+them immediately at the threshold; fire has no simulation damage or spread.
+Repair civilians use doorway-scale bodies with separate hammer handles/heads and
+carried boards. The settlement smoke checks damage stages, all three materials,
+fire thresholds, pause/reduced motion, restoration and city-geometry cache reuse.
+
+`GameSession.AreaOverlaysVisible` defaults false; VIEWS / AREAS enables vacant zoning
+and service/weapon guides consistently in perspective, overhead and the minimap.
+Simulation zoning and independently selected map tints are unchanged. Smoke fixtures
+that inspect area geometry explicitly opt in.
+
+Debug Siege now starts with an exact 24x24 enclosure unless dimensions are explicitly
+requested; it fails explicitly rather than silently choosing a smaller preset.
+`WallSections` enumerates shared-health anchors; `Walls` retains per-cell geometry,
+picking, reservations and weapon slots. Ordinary runs split at three cells and at every
+tower/gate. Shared pools preserve the combined per-cell strength. New saves validate
+matching member health; legacy saves preserve the lowest member health fraction so an
+existing breach never disappears. Repair/upgrading work converts shared pools once.
+The map draws one health bar per section and raises selection/defense placement outlines
+above tower crenellations. These indicator changes do not rebuild city geometry.
+Selected structures reuse their exact box transforms and roof triangles in a separate,
+depth-tested warm highlight pass. This covers the full selected wall span and mounted
+weapons without tinting neighboring structures or rebuilding city/fortification batches.
+The pass is cached until the selection or relevant geometry changes. Overhead sprites
+and wall sections use the corresponding subtle tint; placement previews remain separate.
+
+Blocked goblins periodically search collision-clear cardinal exterior routes to a free
+wall frontage. Actual melee reach, rather than only the original route destination,
+determines their attack target. Swept body separation remains authoritative during
+movement; reroute cooldown and longer exterior routes persist in siege saves.
+
 Replace `godot` with the executable path when needed; on macOS it is often
 `/Applications/Godot_mono.app/Contents/MacOS/godot`.
 Game arguments follow `--`; [GodotOptions.cs](../godot/GodotOptions.cs) handles seed, size,
@@ -734,6 +882,16 @@ and option/action labels, with existing keyboard mnemonics and no description te
 The modal's local Button theme gives every clickable action a single square white
 outline in all states, including tabs and save controls. The green construction
 Add button uses green text on a gray fill and the same one-pixel outline.
+Construction type rows use `MnemonicButton` with the prompt's shared `MenuShortcuts`
+assignment, including locked choices. Underlines respect asymmetric content insets
+so capacity subtitles do not displace them. Enter/keypad Enter on a type row activates
+Add; a focused Cancel retains its normal keyboard action. Row focus updates the model,
+statistics and actual selected purchase together.
+Right-click construction context records both the map cell and game identity, survives
+submenu navigation, and is consumed on placement. A valid building/defense uses the
+ordinary preview and confirmation transaction immediately at that cell. Invalid
+footprints remain unpaid movable previews with an explicit error. Closing the menu,
+opening a fresh sidebar catalog or replacing the game prevents stale automatic placement.
 Cancel button text is centered; construction Cancel buttons match Add in width.
 Save-confirmation action text is centered. Save and quit is green; Quit without
 saving is red. Descriptive text is omitted, while the title and errors remain.
@@ -1574,3 +1732,21 @@ Profile .NET allocations and Godot native resources when investigating leaks or 
 Sparse indexes, lazy network/statistics caches, reusable map/minimap buffers and independent music
 prefetching avoid repeated whole-map work. Keep invalid input and save/audio errors visible rather
 than substituting silent success-shaped fallbacks.
+
+### Wall fire and firefighting visuals
+
+Wall fire anchors are derived from exposed fragment tops, including surviving
+gateposts, crenellations and breach rubble, rather than a section-wide maximum height.
+Cached anchors share the wall geometry's rotation and elevation. The fire's base
+remains fixed to that surface; overlapping colored blocks change width, height,
+tip shape and brightness at deterministic irregular intervals instead of bobbing.
+Overhead fire shares the same geometry and flicker samples. Pausing and reduced
+motion retain their existing frozen/static behavior.
+Civilian crews first lift and tip alternating buckets, throwing connected, widening
+sheets of water from the bucket lip along short arcs, rather than dotted particle trails.
+The leading edge travels toward the fire before the trailing edge leaves the bucket;
+an impact splash appears only once the water reaches the target. Shared arc segments
+keep perspective and overhead representations continuous. Crews use buckets
+while their repair target is burning. At the existing 33% extinguishing threshold
+they switch to hammer-and-board repairs. This is a visual phase of the existing
+health-restoration work, not an extra delay, resource cost or combat mechanic.

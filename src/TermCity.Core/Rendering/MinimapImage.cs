@@ -24,6 +24,7 @@ public sealed class MinimapImage
     private int _width;
     private int _height;
     private int _overlayVersion = -1;
+    private bool _showAreas;
     private Rgb[] _terrain = [];
     private Rgb[] _pixels = [];
     private int[] _roadCounts = [];
@@ -34,7 +35,7 @@ public sealed class MinimapImage
     public int Height => _height;
 
     /// <summary>Brings the image up to date for the given game and pixel dimensions.</summary>
-    public void Update(CityGame game, int width, int height)
+    public void Update(CityGame game, int width, int height, bool showAreas = true)
     {
         if (width <= 0 || height <= 0)
         {
@@ -50,10 +51,11 @@ public sealed class MinimapImage
             _overlayVersion = -1;
         }
 
-        if (_overlayVersion != game.MapVersion)
+        if (_overlayVersion != game.MapVersion || _showAreas != showAreas)
         {
-            BuildOverlay(game.Map);
+            BuildOverlay(game.Map, showAreas);
             _overlayVersion = game.MapVersion;
+            _showAreas = showAreas;
         }
     }
 
@@ -108,7 +110,7 @@ public sealed class MinimapImage
         _filled = new bool[count];
     }
 
-    private void BuildOverlay(GameMap map)
+    private void BuildOverlay(GameMap map, bool showAreas)
     {
         Array.Copy(_terrain, _pixels, _terrain.Length);
         Array.Clear(_roadCounts);
@@ -139,6 +141,7 @@ public sealed class MinimapImage
                 int p = PixelOf(map, index);
                 var cell = map.PosOf(index);
                 bool built = map.IsFilled(cell.X, cell.Y);
+                if (!showAreas && !built) continue;
                 if (built || !_filled[p])
                 {
                     _pixels[p] = built ? info.Foreground : info.Foreground.Scale(0.55);

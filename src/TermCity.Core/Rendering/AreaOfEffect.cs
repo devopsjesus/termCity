@@ -35,7 +35,7 @@ public static class AreaOfEffect
         }
         if (type.Radius > 0 && ServiceKinds.Area.Contains(type.Service)) Add(type.Radius, type.Glyphs[0]);
         if (type.Pollution != 0)
-            Add(CityServices.PollutionRadius(type.Pollution), type.Pollution < 0 ? "♧" : "Ψ");
+            Add(CityServices.PollutionRadius(type), type.Pollution < 0 ? "♧" : "Ψ");
         return areas.OrderBy(pair => pair.Key)
             .Select(pair => new EffectArea(center, pair.Key, pair.Value)).ToArray();
     }
@@ -51,7 +51,7 @@ public static class AreaOfEffect
             var footprint = map.BuildingFootprintAt(p.X, p.Y);
             if (footprint.Right < selection.X || footprint.X > selection.Right ||
                 footprint.Bottom < selection.Y || footprint.Y > selection.Bottom) continue;
-            int radius = Math.Max(type.Radius, CityServices.PollutionRadius(type.Pollution));
+            int radius = Math.Max(type.Radius, CityServices.PollutionRadius(type));
             if (radius <= 0 || p.X + radius < view.X || p.X - radius > view.Right ||
                 p.Y + radius < view.Y || p.Y - radius > view.Bottom) continue;
             foreach (var area in ForBuilding(type, p))

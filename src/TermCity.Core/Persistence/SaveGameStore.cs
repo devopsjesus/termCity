@@ -76,6 +76,8 @@ public static class SaveGameStore
             HighestMilestone = game.HighestMilestone,
             HighestPopulation = game.HighestPopulation,
             GuideDismissed = game.GuideDismissed,
+            SimulationStarted = game.SimulationStarted,
+            Settlement = SavedSettlement.Capture(game.Settlement),
             ZoneRemovals = new(map.ZoneRemovals),
             BuildingFootprints = map.BuildingFootprints.Values.ToList(),
             BuildingRotations = new(map.BuildingRotations),
@@ -109,6 +111,14 @@ public static class SaveGameStore
 
     public static CityGame Deserialize(string json, GameContent? content = null) =>
         Deserialize(json, out _, content);
+
+    /// <summary>Restores an in-session undo snapshot without treating it as a user-loaded saved game.</summary>
+    public static CityGame DeserializeSnapshot(string json, GameContent? content = null)
+    {
+        var game = Deserialize(json, content);
+        game.LoadedFromSave = false;
+        return game;
+    }
 
     public static CityGame Deserialize(string json, out SavedView? view, GameContent? content = null)
     {
@@ -270,6 +280,8 @@ public static class SaveGameStore
             HighestMilestone = data.HighestMilestone,
             HighestPopulation = Math.Max(data.HighestPopulation, data.HighestMilestone),
             GuideDismissed = data.GuideDismissed,
+            LoadedFromSave = true,
+            SimulationStarted = data.SimulationStarted,
         };
 
         game.GrowthState = data.Growth;
@@ -286,6 +298,11 @@ public static class SaveGameStore
         game.Hunger = data.Hunger;
         game.HighestRank = data.HighestRank;
         game.TributeArrears = data.TributeArrears;
+        if (data.Settlement is not null)
+        {
+            game.Settlement = data.Settlement.Restore(game);
+            game.ClearSettlementReservations();
+        }
         game.Touch();
         if (data.View is { } savedView && (savedView.ZoomLevel is < -2 or > 1 ||
             (!savedView.CameraEdgePadding && (savedView.CameraX < 0 || savedView.CameraY < 0)) ||
@@ -313,6 +330,10 @@ public static class SaveGameStore
             data.BuildingFootprints is null || data.ZoneRemovals is null || data.Funding is null ||
             data.BuildingEstablishedDays is null || data.BuildingRotations is null || data.HouseYardCells is null)
             throw new InvalidDataException("Save file has missing city state.");
+        if (!data.SimulationStarted && (data.Day != 0 || data.DayProgressSeconds != 0 || data.Growth.Planned ||
+            data.Growth.Homes != 0 || data.Growth.Shops != 0 || data.Growth.Factories != 0 ||
+            data.Growth.WeekHomes != 0 || data.Growth.WeekShops != 0 || data.Growth.WeekFactories != 0))
+            throw new InvalidDataException("An unstarted city cannot have elapsed time or planned growth.");
         if (!InRange(data.Taxes.Residential, 0, 0.3) || !InRange(data.Taxes.Commercial, 0, 0.3) ||
             !InRange(data.Taxes.Industrial, 0, 0.3) || data.Funding.Length != ServiceKinds.Count ||
             data.Funding.Any(level => !InRange(level, 0, 1)) || data.Loan < 0 || data.TributeArrears < 0 ||
@@ -510,6 +531,8 @@ public static class SaveGameStore
         public int HighestPopulation { get; set; }
 
         public required bool GuideDismissed { get; set; }
+        public bool SimulationStarted { get; set; } = true;
+        public SavedSettlement? Settlement { get; set; }
 
         public required Dictionary<int, ZoneRemoval> ZoneRemovals { get; set; }
         public required List<CellRect> BuildingFootprints { get; set; }

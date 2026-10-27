@@ -13,6 +13,7 @@ public partial class CityMinimap : Control
     private readonly MinimapImage _image = new();
     private ImageTexture? _texture;
     private int _version = -1;
+    private bool _areaOverlaysVisible;
     private TermCity.Core.Simulation.CityGame? _game;
     internal int TextureBuilds { get; private set; }
     private bool _dragging;
@@ -79,10 +80,11 @@ public partial class CityMinimap : Control
         var game = Session.Game;
         int width = ImageWidth;
         int height = ImageHeight;
-        if (_version != game.MapVersion || !ReferenceEquals(game, _game))
+        if (_version != game.MapVersion || !ReferenceEquals(game, _game) ||
+            _areaOverlaysVisible != Session.AreaOverlaysVisible)
         {
             UpdateSize();
-            _image.Update(game, width, height);
+            _image.Update(game, width, height, Session.AreaOverlaysVisible);
             using var image = Image.CreateEmpty(width, height, false, Image.Format.Rgb8);
             for (int y = 0; y < height; y++)
             {
@@ -97,12 +99,24 @@ public partial class CityMinimap : Control
             TextureBuilds++;
             _version = game.MapVersion;
             _game = game;
+            _areaOverlaysVisible = Session.AreaOverlaysVisible;
         }
         var picture = Picture;
         if (picture.Size.X <= 0) return;
         DrawPolygon([MapPointToScreen(new(0, 0)), MapPointToScreen(new(game.Map.Width, 0)),
             MapPointToScreen(new(game.Map.Width, game.Map.Height)), MapPointToScreen(new(0, game.Map.Height))],
             [Colors.White], [Vector2.Zero, Vector2.Right, Vector2.One, Vector2.Down], _texture);
+        if (game.Settlement is { } settlement)
+        {
+            var bounds = settlement.Bounds;
+            var walls = new Vector2[] { MapPointToScreen(new(bounds.X, bounds.Y)),
+                MapPointToScreen(new(bounds.Right + 1, bounds.Y)), MapPointToScreen(new(bounds.Right + 1, bounds.Bottom + 1)),
+                MapPointToScreen(new(bounds.X, bounds.Bottom + 1)), MapPointToScreen(new(bounds.X, bounds.Y)) };
+            DrawPolyline(walls, new Color("#d2bea0"), 1.5f);
+            foreach (var goblin in settlement.Goblins)
+                DrawRect(new(MapPointToScreen(new((float)goblin.X, (float)goblin.Y)) - Vector2.One, Vector2.One * 2),
+                    new Color("#ef7777"));
+        }
         var outline = ViewOutline;
         for (int corner = 0; corner < outline.Length; corner++)
         {

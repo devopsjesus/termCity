@@ -68,6 +68,23 @@ public sealed class GameMap
     public IReadOnlyDictionary<int, CellRect> BuildingFootprints => _buildingFootprints;
     public IReadOnlyDictionary<int, int> HouseYardCells => _houseYardCells;
     public Dictionary<int, int> BuildingRotations { get; } = [];
+    public CellRect? SettlementBounds { get; private set; }
+
+    public bool FootpathsAllowedAt(int x, int y) => InBounds(x, y) &&
+        (SettlementBounds is not { } bounds ||
+            x > bounds.X && x < bounds.Right && y > bounds.Y && y < bounds.Bottom);
+
+    internal void SetSettlementBounds(CellRect? bounds)
+    {
+        if (SettlementBounds == bounds) return;
+        SettlementBounds = bounds;
+        if (bounds is not null)
+            for (int index = 0; index < PathLayer.Length; index++)
+                if (!FootpathsAllowedAt(index % Width, index / Width) &&
+                    (PathLayer[index] != 0 || PathLinkLayer[index] != 0))
+                    SetPathWear(index % Width, index / Width, 0);
+        InvalidateTravel();
+    }
 
     public int BuildingAnchor(int index) => _buildingOwners.GetValueOrDefault(index, index);
     public bool IsBuildingAnchor(int index) => BuildingAnchor(index) == index;
@@ -158,6 +175,8 @@ public sealed class GameMap
             SetBuilding(p.X, p.Y, building);
         }
         RegisterBuildingFootprint(area);
+        if (SettlementBounds is { } bounds && area.Cells().All(bounds.Contains))
+            foreach (var p in area.Cells()) SetZone(p.X, p.Y, building.Zone);
         if (yard is { } yardCell) RegisterHouseYard(owner, yardCell);
     }
 

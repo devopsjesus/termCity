@@ -36,7 +36,7 @@ public partial class Main
     public override void _Input(InputEvent input)
     {
         if (!_started) return;
-        if (!_editingName && Session.Prompt is null && _viewsBar.Visible &&
+        if (!_editingName && !DebugSiegeControlHasFocus && Session.Prompt is null && _viewsBar.Visible &&
             input is InputEventKey { Pressed: true, Keycode: Key.Escape })
         {
             _viewsBar.Visible = false;
@@ -46,6 +46,15 @@ public partial class Main
         if (input is InputEventKey pauseKey && HandlePauseKey(pauseKey))
         {
             GetViewport().SetInputAsHandled();
+            return;
+        }
+        if (DebugSiegeControlHasFocus && Session.Prompt is null && input is InputEventKey debugKey)
+        {
+            if (debugKey.Pressed && debugKey.Keycode == Key.Escape)
+            {
+                ClearDebugSiegeFocus();
+                GetViewport().SetInputAsHandled();
+            }
             return;
         }
         if (input is InputEventKey dialogKey && Session.Prompt is not null && HandleDialogKey(dialogKey))
@@ -134,7 +143,7 @@ public partial class Main
     public override void _UnhandledInput(InputEvent input)
     {
         if (_started && input is InputEventKey pauseKey && HandlePauseKey(pauseKey)) return;
-        if (!_started || _editingName || input is not InputEventKey { Pressed: true } key)
+        if (!_started || _editingName || DebugSiegeControlHasFocus || input is not InputEventKey { Pressed: true } key)
         {
             return;
         }
@@ -209,6 +218,7 @@ public partial class Main
             }
             else if (!key.CtrlPressed && !key.MetaPressed && !key.AltPressed && code is Key.Enter or Key.Y or Key.C)
             {
+                UpdateSettlementGateFacing();
                 Session.ConfirmPreview();
             }
             else if (code is Key.Escape or Key.N or Key.A)
@@ -270,6 +280,7 @@ public partial class Main
             case Key.I: Session.Zone(ZoneType.Industrial); break;
             case Key.B: Session.PreviewRoad(); break;
             case Key.T: Session.BeginRoadLine(); break;
+            case Key.G: Session.ShowGarrisonMenu(); break;
             case Key.U: Session.Dezone(); break;
             case Key.D or Key.Delete: Session.PreviewDemolish(); break;
             case Key.S: Session.ToggleSelectionMode(); break;
@@ -289,6 +300,16 @@ public partial class Main
         return true;
     }
 
+    private void UpdateSettlementGateFacing()
+    {
+        if (!Session.SettlementToolActive) return;
+        float angle = Mathf.DegToRad(Map.PerspectiveEnabled ? Map.Perspective!.Azimuth : 90);
+        float x = Mathf.Sin(angle), y = Mathf.Cos(angle);
+        Session.SettlementGateSide = x > 0.25f ? BaileyGateSide.Right :
+            Math.Abs(y) >= Math.Abs(x) ? y >= 0 ? BaileyGateSide.Bottom : BaileyGateSide.Top
+            : BaileyGateSide.Left;
+    }
+
     private bool HandleMapNavigationKey(InputEventKey key, Key code)
     {
         if (key.Echo) return false;
@@ -297,6 +318,7 @@ public partial class Main
             Map.ZoomBy(1);
             return true;
         }
+
         if (key.Unicode is '-' or '_' || code is Key.Minus or Key.KpSubtract)
         {
             Map.ZoomBy(-1);
@@ -347,6 +369,8 @@ public partial class Main
 
     private void OnMapInput(InputEvent input)
     {
+        if (input is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left or MouseButton.Right or MouseButton.Middle })
+            ClearDebugSiegeFocus();
         Map.RefreshCells();
         if (_editingName || !Session.MapNavigationAllowed)
         {
@@ -420,7 +444,7 @@ public partial class Main
             }
             Map.TryMapPosition(button.Position, out var gridPosition);
             var position = gridPosition;
-            if (!Session.FixedPlacementToolActive && !Session.RoadToolActive &&
+            if ((!Session.FixedPlacementToolActive || Session.WallDefenseToolActive) && !Session.RoadToolActive &&
                 button.ButtonIndex is MouseButton.Left or MouseButton.Right &&
                 !button.ShiftPressed && !button.CtrlPressed && !button.AltPressed && !button.MetaPressed &&
                 Map.TryPickBuilding(button.Position, out var buildingAnchor))
@@ -454,6 +478,7 @@ public partial class Main
                     }
                     if (Session.FixedPlacementToolActive)
                     {
+                        UpdateSettlementGateFacing();
                         Session.MoveFixedPlacement(position);
                         Session.ConfirmPreview();
                         break;
@@ -484,8 +509,17 @@ public partial class Main
                         Session.BeginDrag(position);
                         break;
                     }
+                    if (Session.FixedPlacementToolActive)
+                    {
+                        Session.CancelPreview();
+                        break;
+                    }
                     Session.PrepareContextMenuAt(position);
-                    if (Session.Game.Map.BuildingAt(position.X, position.Y) is not null)
+                    _constructionContextCell = position;
+                    _constructionContextGame = Session.Game;
+                    if (Session.WallStatus(position) is not null)
+                        Session.ShowWallStatus(position);
+                    else if (Session.Game.Map.BuildingAt(position.X, position.Y) is not null)
                         Session.ShowBuildingStatus(position);
                     else Session.ShowAreaMenu();
                     break;
@@ -520,7 +554,9 @@ public partial class Main
             }
             else if (Session.FixedPlacementToolActive)
             {
-                if (Map.TryMapPosition(motion.Position, out var world)) Session.MoveFixedPlacement(world);
+                if (Session.WallDefenseToolActive && Map.TryPickBuilding(motion.Position, out var wall))
+                    Session.MoveFixedPlacement(wall);
+                else if (Map.TryMapPosition(motion.Position, out var world)) Session.MoveFixedPlacement(world);
             }
             else if (_selecting)
             {

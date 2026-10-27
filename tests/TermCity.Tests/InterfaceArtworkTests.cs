@@ -279,7 +279,10 @@ public class InterfaceArtworkTests
         Assert.Contains(houses, house => !house.CrosswiseRoof);
         Assert.Contains(houses, house => house.Wing);
         Assert.Contains(houses, house => house.Chimney);
-        Assert.Equal(Enum.GetValues<HouseStyle>().Order(), houses.Select(house => house.Style).Distinct().Order());
+        var styles = houses.Select(house => house.Style).ToHashSet();
+        foreach (var type in new GameContent().Buildings.Where(type => type.Zone == ZoneType.Residential))
+            styles.Add(HouseAppearance.At(type, 0, 0).Style);
+        Assert.Equal(Enum.GetValues<HouseStyle>().Order(), styles.Order());
         Assert.Equal(HouseAppearance.At(10, 12, 1), HouseAppearance.At(10, 12, 1));
         Assert.True(HouseAppearance.At(10, 12, 3).Height > HouseAppearance.At(10, 12, 1).Height);
         Assert.All(houses, house =>

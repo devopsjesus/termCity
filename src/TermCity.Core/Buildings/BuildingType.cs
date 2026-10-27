@@ -49,6 +49,7 @@ public sealed class BuildingType : RegisteredType
     public bool PlayerPlaceable { get; init; }
     public bool IsMonument { get; init; }
     public bool DebugOnly { get; init; }
+    public bool SettlementOnly { get; init; }
     public string CatalogName => IsMonument ? Name.Replace(" Monument", "", StringComparison.Ordinal) : Name;
 
     /// <summary>Souls the town needs before the player may raise this (great works are not built for a hamlet).</summary>
@@ -261,13 +262,41 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             Cost = 0,
             Description = "An original colossal golden-yellow stone duck, clasping its helmet in bewilderment; a debug-only monument.",
         });
+        RegisterSettlementBuildings(registry);
         return registry;
+    }
+
+    private static void RegisterSettlementBuildings(BuildingRegistry registry)
+    {
+        Add("Timber Home", ZoneType.Residential, 6, 1, 1, "A modest timber-framed family home");
+        Add("Stone Home", ZoneType.Residential, 8, 1, 1, "A comfortable stone croft");
+        Add("Courtyard House", ZoneType.Residential, 12, 2, 2, "A prosperous household with broad wings and a private courtyard", value: 3);
+        Add("Shanty Tower", ZoneType.Residential, 24, 1, 1, "Stacked wooden rooms on a crowded low-value site", value: 0.7);
+        Add("Wall House", ZoneType.Residential, 18, 1, 1, "Timber rooms attached to the inner wall face; defenses remain intact", value: 0.8);
+        Add("Blacksmith", ZoneType.Industrial, 14, 1, 1, "A hearth, anvil and smith's working yard", pollution: 2);
+        Add("Woodsmith", ZoneType.Industrial, 14, 1, 1, "A carpenter's shop with benches and stacked timber");
+        Add("Armory", ZoneType.Industrial, 14, 1, 1, "An arms workshop and racks of shields near the defenses", pollution: 1);
+        Add("Supply Shop", ZoneType.Commercial, 14, 1, 1, "Crates, barrels and everyday supplies beside the bailey's foot traffic");
+        Add("Market", ZoneType.Commercial, 14, 2, 1, "A small open market of awnings and trading stalls");
+
+        void Add(string name, ZoneType zone, int capacity, int width, int height, string description,
+            double value = 1, int pollution = 0)
+        {
+            var basis = registry.ForZone(zone)!;
+            registry.Register(new BuildingType
+            {
+                Name = name, Zone = zone, Capacity = capacity, Width = width, Height = height,
+                Glyphs = basis.Glyphs, Foreground = basis.Foreground, Description = description,
+                PowerUse = basis.PowerUse, WaterUse = basis.WaterUse, ValueMultiplier = value,
+                Pollution = pollution, SettlementOnly = true,
+            });
+        }
     }
 
     private static void RegisterServices(BuildingRegistry registry)
     {
         registry.Register(Civic("Charcoal Burners", ServiceKind.Power, "Ψ", 0xff8c5a, cost: 34_000, upkeep: 100,
-            capacity: 1_200, pollution: 8, text: "Cheap, plentiful fuel for hearths and forges; the smoke carries a long way"));
+            capacity: 1_200, pollution: 8, text: "Plentiful fuel for hearths and forges; strong smoke stays within six cells, fading out by eight"));
         registry.Register(Civic("Woodlot", ServiceKind.Power, "☼", 0xffe066, cost: 8_000, upkeep: 40,
             capacity: 300, text: "A fenced yard of stacked firewood: clean fuel, but each lot supplies far less"));
         registry.Register(Civic("Aqueduct", ServiceKind.Water, "◍", 0x66c7ff, cost: 14_000, upkeep: 60,
@@ -301,7 +330,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         // The lord's seat: a castle anchors a settlement. It garrisons the surrounding land (defence), lifts land value and
         // the tithe, draws settlers, and a town cannot grow tall without one.
         registry.Register(Civic("Motte and Bailey", ServiceKind.Defence, "♙", 0xd9b48f, cost: 14_000, upkeep: 150,
-            radius: 30, strength: 70, seat: 1, text: "An earth mound, palisade and hall: the lord's first seat; a hamlet becomes a manor"));
+            radius: 30, strength: 70, seat: 1, text: "Found a bailey by drawing its enclosure: automatic towers, a right-facing gate and naturally settling homes and workplaces"));
         registry.Register(Civic("Stone Keep", ServiceKind.Defence, "♜", 0xc8c8d0, cost: 38_000, upkeep: 200,
             radius: 42, strength: 85, seat: 2, minPopulation: 400, text: "A tower of stone and a walled bailey: burghers dare to build taller and richer"));
         registry.Register(Civic("Castle", ServiceKind.Defence, "♚", 0xf2f2f8, cost: 85_000, upkeep: 280,

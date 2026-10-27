@@ -21,7 +21,7 @@ public sealed record BuildingSprite(int Width, int Height, int Lift, byte[] Pixe
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(plotWidth);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(plotHeight);
         int width = Math.Max(16, plotWidth * RoadCurves.CellWidth);
-        const int lift = 8;
+        int lift = type.Name is "Shanty Tower" or "Wall House" ? 18 : 8;
         int height = plotHeight * RoadCurves.CellHeight + lift;
         var pixels = new byte[width * height * 4];
         var ink = Rgb.Hex(0x293534);
@@ -388,6 +388,13 @@ public sealed record BuildingSprite(int Width, int Height, int Lift, byte[] Pixe
                 Rect(bodyWidth - 1, canopyY - 3, 3, 2, timber);
                 Rect(bodyWidth, canopyY - 3, 1, 1, thatch);
             }
+            if (look.Form == WorkplaceForm.SupplyShop)
+            {
+                Rect(3, bottom - 8, 4, 4, timber);
+                Line(3, bottom - 8, 6, bottom - 5, plaster);
+                Rect(bodyWidth - 3, bottom - 7, 3, 4, timber.Scale(0.8));
+                Rect(bodyWidth - 3, bottom - 6, 3, 1, slate);
+            }
         }
         else if (type.Zone == ZoneType.Industrial)
         {
@@ -414,6 +421,22 @@ public sealed record BuildingSprite(int Width, int Height, int Lift, byte[] Pixe
                 Rect(bodyWidth - 2, bottom - 5, 2, 3, timber);
                 Rect(bodyWidth - 3, bottom - 6, 4, 1, slate);
                 Pixel(bodyWidth + 1, bottom - 6, slate.Scale(1.2));
+                if (type.Name == "Blacksmith")
+                {
+                    Rect(bodyWidth - 4, bottom - 3, 5, 2, slate);
+                    Rect(bodyWidth - 3, bottom - 3, 3, 1, Rgb.Hex(0x59777d));
+                }
+            }
+            else if (look.Form == WorkplaceForm.Armory)
+            {
+                Rect(3, bottom - 5, bodyWidth - 2, 1, timber);
+                for (int x = 4; x < bodyWidth; x += 4)
+                {
+                    Rect(x, bottom - 9, 1, 7, timber);
+                    Rect(x - 1, bottom - 10, 3, 2, slate);
+                    Rect(x - 1, bottom - 5, 3, 3, Rgb.Hex(look.CanvasColor));
+                    Pixel(x, bottom - 4, plaster);
+                }
             }
             else if (look.Form == WorkplaceForm.Cooper)
             {
@@ -437,12 +460,20 @@ public sealed record BuildingSprite(int Width, int Height, int Lift, byte[] Pixe
         {
             bool home = type.Zone == ZoneType.Residential;
             Yard(1, lotTop, width - 3, lotDepth, home ? grass : paving);
-            var appearance = HouseAppearance.At(variant, variant * 7, type.Level);
-            int floors = home ? type.Level == 1 ? 5 : type.Level == 2 ? 8 : 9 : 5;
+            var appearance = HouseAppearance.At(type, variant, variant * 7);
+            int floors = appearance.Style == HouseStyle.Shanty ? 14 :
+                appearance.Style == HouseStyle.WallHouse ? 11 : home ? type.Level == 1 ? 5 : type.Level == 2 ? 8 : 9 : 5;
             var roof = home ? Rgb.Hex(appearance.RoofColor) :
                 type.Name is "Infirmary" or "Hospice" or "Chantry School" ? slate : tile;
             var wall = home ? Rgb.Hex(appearance.WallColor) : plaster;
-            if (home && appearance.Wing && plotWidth >= 2 && plotHeight >= 2)
+            if (home && appearance.Style == HouseStyle.Courtyard)
+            {
+                House(2, lotTop + 3, bodyWidth, 7, floors, wall, roof, framed: true);
+                House(2, lotTop + 9, Math.Max(6, bodyWidth / 3), bodyDepth - 6, floors, wall, roof, framed: true);
+                House(2 + bodyWidth * 2 / 3, lotTop + 9, Math.Max(6, bodyWidth / 3),
+                    bodyDepth - 6, floors, wall, roof, framed: true);
+            }
+            else if (home && appearance.Wing && plotWidth >= 2 && plotHeight >= 2)
             {
                 House(2, lotTop + 8, bodyWidth, Math.Max(8, bodyDepth - 4), floors, wall, roof, framed: true);
                 House(2, bottom - 12, bodyWidth / 2, 8, 4, wall, roof, framed: true);
@@ -450,6 +481,8 @@ public sealed record BuildingSprite(int Width, int Height, int Lift, byte[] Pixe
             else House(2, bodyY, bodyWidth, bodyDepth, floors, wall, roof, framed: home);
             if (home)
             {
+                if (type.Name == "Timber Home")
+                    Rect(3, bottom - 6, Math.Max(2, bodyWidth - 4), 1, timber);
                 if (appearance.Chimney) Chimney(bodyWidth - 2, bodyY + 2, 3);
                 Rect(width / 2, bottom - 3, 2, 3, paving);
                 if (width >= 24) Tree(width - 7, bottom - 10);

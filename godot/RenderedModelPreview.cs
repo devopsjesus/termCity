@@ -15,7 +15,7 @@ public partial class RenderedModelPreview : TextureRect
     internal RenderedModelPreviewCache Cache { get; init; } = null!;
     internal ModelPreviewSubject Subject { get; init; } = null!;
     public string ModelName => Subject.Name;
-    public string PreviewKind => Subject.Building is not null ? "Building" :
+    public string PreviewKind => Subject.Defense is not null ? "WallDefense" : Subject.Building is not null ? "Building" :
         Subject.Template is not null ? "RoadTemplate" : "Road";
     public bool MetadataReady { get; internal set; }
     public bool GraphicsAvailable => Cache.GraphicsAvailable;
@@ -52,9 +52,9 @@ public partial class RenderedModelPreview : TextureRect
 }
 
 internal sealed record ModelPreviewSubject(GameContent Content, BuildingType? Building = null,
-    RoadType? Road = null, RoadTemplate? Template = null)
+    RoadType? Road = null, RoadTemplate? Template = null, WallDefenseKind? Defense = null)
 {
-    public string Name => Building?.Name ?? Template?.Name ?? Road!.Name;
+    public string Name => Defense is { } defense ? WallDefenses.Get(defense).Name : Building?.Name ?? Template?.Name ?? Road!.Name;
 }
 
 /// <summary>Serializes thumbnail renders and retains only their static textures, never live preview viewports.</summary>
@@ -154,10 +154,10 @@ public partial class RenderedModelPreviewCache : Node
                 map.ClearCell(x, y);
                 map.SetTerrain(x, y, meadow);
             }
-        int width = subject.Building?.Width ?? subject.Template?.Width ?? 6;
+        int width = subject.Defense is not null ? 1 : subject.Building?.Width ?? subject.Template?.Width ?? 6;
         int height = subject.Building?.Height ?? subject.Template?.Height ?? 1;
         var area = new CellRect((map.Width - width) / 2, (map.Height - height) / 2, width, height);
-        if (subject.Building is { } building)
+        if (subject.Defense is null && subject.Building is { } building)
         {
             if (building.Zone != ZoneType.None)
                 foreach (var p in area.Cells()) map.SetZone(p.X, p.Y, building.Zone);
@@ -166,7 +166,7 @@ public partial class RenderedModelPreviewCache : Node
                     map.SetZone(p.X, p.Y, ZoneType.Residential);
             map.SetBuildingFootprint(building, area);
         }
-        else
+        else if (subject.Defense is null)
         {
             var road = subject.Road ?? subject.Content.Roads.Get(subject.Template!.RoadName);
             var cells = subject.Template?.Cells(new Pos(area.X, area.Y)) ?? area.Cells().ToArray();
@@ -176,8 +176,12 @@ public partial class RenderedModelPreviewCache : Node
         _session!.SetViewport(8, 8);
         _session.CenterOn(new Pos(map.Width / 2, map.Height / 2));
         int extent = Math.Max(width, height);
-        _session.SetZoom(subject.Building is not null && extent <= 2 ? 1 : extent <= 5 ? 0 : -1);
-        _renderer = new PerspectiveCity { Name = "CanonicalModelPreviewRenderer", WaterMotionEnabled = false };
+        _session.SetZoom((subject.Building is not null || subject.Defense is not null) && extent <= 2 ? 1 : extent <= 5 ? 0 : -1);
+        _renderer = new PerspectiveCity
+        {
+            Name = "CanonicalModelPreviewRenderer", WaterMotionEnabled = false,
+            DefenseModelPreview = subject.Defense is { } defense ? (new Pos(area.X, area.Y), defense) : null,
+        };
         AddChild(_renderer);
         var renderSize = new Vector2(768, 576);
         _renderer.Sync(_session, renderSize);
@@ -186,10 +190,10 @@ public partial class RenderedModelPreviewCache : Node
             _session.CameraX + _session.ViewWidth * _session.Stride / 2f,
             _session.CameraY + _session.ViewHeight * _session.Stride / 2f));
         _renderer.Sync(_session, renderSize);
-        float shoulder = subject.Building is not null ? 0.25f :
+        float shoulder = subject.Defense is not null ? 0.5f : subject.Building is not null ? 0.25f :
             (float)(subject.Road ?? subject.Content.Roads.Get(subject.Template!.RoadName)).WidthCells / 2 + 0.25f;
         var bounds = new Aabb(new Vector3(area.X - shoulder, 0, area.Y - shoulder),
-            new Vector3(width + shoulder * 2, 0.25f, height + shoulder * 2));
+            new Vector3(width + shoulder * 2, subject.Defense is not null ? 1.9f : 0.25f, height + shoulder * 2));
         IReadOnlyList<Aabb> volumes = subject.Building is not null
             ? _renderer.BuildingVolumes(new Pos(area.X, area.Y))
                 .Concat(_renderer.YardVolumes(new Pos(area.X, area.Y))).ToArray() : [];

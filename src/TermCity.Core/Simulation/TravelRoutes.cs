@@ -37,6 +37,9 @@ public sealed class TravelRoutes
 
     internal static bool CanFootpathStep(GameMap map, int first, int last)
     {
+        if (map.SettlementBounds is not null &&
+            (!map.FootpathsAllowedAt(first % map.Width, first / map.Width) ||
+                !map.FootpathsAllowedAt(last % map.Width, last / map.Width))) return false;
         if (!Walkable(map, first) || !Walkable(map, last) ||
             IsFootpathBridgeCell(map, first) || IsFootpathBridgeCell(map, last) ||
             !FootpathGround(first) || !FootpathGround(last)) return false;
@@ -288,7 +291,7 @@ public sealed class TravelRoutes
         bool changed = false;
         foreach (var path in BetweenBuildings(map))
             Wear(path);
-        var routes = map.RoadCount > 0 ? NearestRoad(map) : null;
+        var routes = map.SettlementBounds is null && map.RoadCount > 0 ? NearestRoad(map) : null;
         if (routes is not null)
             foreach (var area in map.BuildingFootprints.OrderBy(p => p.Key).Select(p => p.Value))
             {
@@ -344,6 +347,11 @@ public sealed class TravelRoutes
         foreach (var path in BetweenBuildings(map))
         {
             if (path.Length == 0) continue;
+            if (map.SettlementBounds is not null)
+            {
+                yield return path;
+                continue;
+            }
             var journey = new List<int>();
             int BuildingNeighbor(int cell)
             {
@@ -363,7 +371,7 @@ public sealed class TravelRoutes
             if (last >= 0) journey.Add(last);
             yield return journey.ToArray();
         }
-        if (map.RoadCount == 0) yield break;
+        if (map.SettlementBounds is not null || map.RoadCount == 0) yield break;
         var routes = NearestRoad(map);
         foreach (var area in map.BuildingFootprints.Values)
         {
@@ -381,20 +389,30 @@ public sealed class TravelRoutes
         if (map.BuildingFootprints.Count < 2) return map.BuildingPaths = [];
         var routes = new TravelRoutes(map.Width * map.Height);
         var queue = new Queue<int>();
-        var best = new Dictionary<int, (int A, int B, double Distance)>();
-        HashSet<int> served = map.RoadCount == 0 ? [] : map.BuildingFootprints
+        bool settlement = map.SettlementBounds is not null;
+        var best = new Dictionary<(int A, int B), (int A, int B, double Distance)>();
+        HashSet<int> served = settlement || map.RoadCount == 0 ? [] : map.BuildingFootprints
             .Where(pair => RoadApproach(map, pair.Value, NearestRoad(map)).Start >= 0).Select(pair => pair.Key).ToHashSet();
         if (served.Count == map.BuildingFootprints.Count) return map.BuildingPaths = [];
         void Connect(int ownerA, int a, int ownerB, int b)
         {
             if (ownerA == ownerB || served.Contains(ownerA) || served.Contains(ownerB) ||
-                map.Content.Buildings[map.BuildingLayer[ownerA]].Zone == ZoneType.Residential &&
+                !settlement && map.Content.Buildings[map.BuildingLayer[ownerA]].Zone == ZoneType.Residential &&
                 map.Content.Buildings[map.BuildingLayer[ownerB]].Zone == ZoneType.Residential) return;
             double distance = routes.Cost[a] + routes.Cost[b] + (a == b ? 0 : 1);
-            if (!best.TryGetValue(ownerA, out var previousA) || distance < previousA.Distance)
-                best[ownerA] = (a, b, distance);
-            if (!best.TryGetValue(ownerB, out var previousB) || distance < previousB.Distance)
-                best[ownerB] = (b, a, distance);
+            if (settlement)
+            {
+                var key = ownerA < ownerB ? (ownerA, ownerB) : (ownerB, ownerA);
+                if (!best.TryGetValue(key, out var previous) || distance < previous.Distance)
+                    best[key] = ownerA < ownerB ? (a, b, distance) : (b, a, distance);
+            }
+            else
+            {
+                if (!best.TryGetValue((ownerA, ownerA), out var previousA) || distance < previousA.Distance)
+                    best[(ownerA, ownerA)] = (a, b, distance);
+                if (!best.TryGetValue((ownerB, ownerB), out var previousB) || distance < previousB.Distance)
+                    best[(ownerB, ownerB)] = (b, a, distance);
+            }
         }
         foreach (var (owner, area) in map.BuildingFootprints.OrderBy(p => p.Key))
             foreach (var p in PropertyCells(map, area))
@@ -435,13 +453,39 @@ public sealed class TravelRoutes
             }
         }
         var paths = new List<int[]>();
-        foreach (var (_, connection) in best.OrderBy(p => p.Key))
+        var parents = new Dictionary<int, int>();
+        int Root(int owner)
         {
+            if (!parents.TryGetValue(owner, out int root)) return parents[owner] = owner;
+            while (root != parents[root]) root = parents[root] = parents[parents[root]];
+            return parents[owner] = root;
+        }
+        int PropertyEdge(int owner, int cell) => PropertyCells(map, map.BuildingFootprints[owner])
+            .Select(p => map.Index(p.X, p.Y)).First(property =>
+                Math.Abs(property % map.Width - cell % map.Width) +
+                Math.Abs(property / map.Width - cell / map.Width) == 1 &&
+                CanFootpathStep(map, property, cell));
+        var connections = settlement
+            ? best.OrderBy(p => p.Value.Distance).ThenBy(p => p.Key.A).ThenBy(p => p.Key.B)
+            : best.OrderBy(p => p.Key.A).ThenBy(p => p.Key.B);
+        foreach (var (owners, connection) in connections)
+        {
+            if (settlement)
+            {
+                int first = Root(owners.A), last = Root(owners.B);
+                if (first == last) continue;
+                parents[last] = first;
+            }
             var path = new List<int>();
             for (int cell = connection.A; cell >= 0; cell = routes.Next[cell]) path.Add(cell);
             path.Reverse();
             if (connection.A != connection.B)
                 for (int cell = connection.B; cell >= 0; cell = routes.Next[cell]) path.Add(cell);
+            if (settlement)
+            {
+                path.Insert(0, PropertyEdge(owners.A, path[0]));
+                path.Add(PropertyEdge(owners.B, path[^1]));
+            }
             paths.Add(path.ToArray());
         }
         return map.BuildingPaths = paths.ToArray();

@@ -144,7 +144,7 @@ public partial class Main
             window.ContentScaleSize = Vector2I.Zero;
         }
         window.ContentScaleFactor = scale;
-        if (_options.SmokeTest) return;
+        if (_options.SmokeTest || DisplayServer.GetName() == "headless") return;
         FitWindowToFont();
     }
 
@@ -385,6 +385,7 @@ public partial class Main
         mapFrame.Name = "MapFrame";
         mapFrame.SizeFlagsVertical = SizeFlags.ExpandFill;
         city.AddChild(mapFrame);
+        CreateDebugSiegeControls();
         _linePreview = new VBoxContainer { Visible = false };
         _lineSummary = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart };
         _linePreview.AddChild(_lineSummary);
@@ -603,6 +604,7 @@ public partial class Main
         }
         if (!_savePathLabel.Visible) _modalShield.TooltipText = "";
         UpdateModal();
+        UpdateDebugSiegeControls();
         UpdateConstructionPurchaseState();
         UpdateConstructionCoverage();
         FitStatusRow();

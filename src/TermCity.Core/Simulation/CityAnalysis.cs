@@ -127,7 +127,7 @@ public static class CityAnalysis
         double crimeBase = CrimeBase(game, unemployment, stats);
         var taxHappiness = TaxPenalty(game, game.Taxes.Residential);
 
-        foreach (int i in map.ZoneCells(ZoneType.Residential))
+        foreach (int i in map.ZoneCells(ZoneType.Residential).Order())
         {
             if (map.BuildingLayer[i] == 0)
             {
@@ -294,7 +294,6 @@ public static class CityAnalysis
         Charge("Cart traffic", 18 * congestion);
         Charge("Idleness", 45 * Math.Max(0, unemployment - 0.06));
         Charge("Tithes", Math.Clamp(taxPenalty, -4, 20));
-        Charge("Slow journeys", map.Content.Roads.Count > 0 && game.Network.AccessRank(i) == 0 ? 5 : 0);
         h += 0.05 * recreation + 0.04 * faith;
 
         return new Feeling(Math.Clamp(h, 0, 100), crime, LandValue(game, i, crime));

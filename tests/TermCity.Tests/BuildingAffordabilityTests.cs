@@ -47,7 +47,7 @@ public class BuildingAffordabilityTests
         game.Money = 14_000;
         Assert.Null(session.BuildingPurchaseError(motte));
         session.PreviewBuilding(motte);
-        Assert.True(session.BuildingToolActive);
+        Assert.True(session.SettlementToolActive);
         Assert.Equal(14_000, game.Money);
     }
 

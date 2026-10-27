@@ -9,6 +9,7 @@ public partial class Main
     private Label _hudViews = null!;
     private TerminalFrame _viewsBar = null!;
     private readonly List<Button> _viewButtons = [];
+    private Button _viewAreas = null!;
 
     private void CreateViewsBar()
     {
@@ -18,6 +19,11 @@ public partial class Main
             VerticalScrollMode = ScrollContainer.ScrollMode.Disabled };
         var icons = new HBoxContainer();
         icons.AddThemeConstantOverride("separation", 3);
+        _viewAreas = new Button { Name = "ViewAreas", Text = "AREAS", ToggleMode = true,
+            CustomMinimumSize = new Vector2(60, 44),
+            TooltipText = "Toggle vacant zoning and service-range guides" };
+        _viewAreas.Pressed += () => Session.ToggleAreaOverlays();
+        icons.AddChild(_viewAreas);
         foreach (var overlay in Enum.GetValues<MapOverlay>())
         {
             var kind = overlay switch
@@ -41,13 +47,18 @@ public partial class Main
             });
             var button = new Button { Name = $"View{overlay}",
                 CustomMinimumSize = new Vector2(44, 44), ToggleMode = true,
-                TooltipText = overlay == MapOverlay.Off ? "Clear overlay" : MapOverlays.Label(overlay) };
+                TooltipText = overlay == MapOverlay.Off ? "Clear tint and hide area overlays" : MapOverlays.Label(overlay) };
             var artwork = new ConstructionIcon { Name = "ViewArtwork", Kind = kind,
                 Overlay = overlay, MainColor = color, MouseFilter = MouseFilterEnum.Ignore };
             artwork.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
             button.AddChild(artwork);
             button.MouseEntered += artwork.Hover;
-            button.Pressed += () => { artwork.Pulse(); Session.SetOverlay(overlay); };
+            button.Pressed += () =>
+            {
+                artwork.Pulse();
+                Session.SetOverlay(overlay);
+                if (overlay == MapOverlay.Off) Session.SetAreaOverlays(false);
+            };
             icons.AddChild(button);
             _viewButtons.Add(button);
         }
@@ -70,6 +81,7 @@ public partial class Main
         scroll.CustomMinimumSize = new Vector2(Math.Max(1, Map.Size.X - TerminalFrame.Inset * 2), 44);
         _viewsBar.Size = _viewsBar.GetCombinedMinimumSize();
         _viewsBar.Position = Vector2.Zero;
+        _viewAreas.SetPressedNoSignal(Session.AreaOverlaysVisible);
         foreach (var (button, index) in _viewButtons.Select((button, index) => (button, index)))
             button.SetPressedNoSignal((int)Session.Overlay == index);
     }

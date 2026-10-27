@@ -9,6 +9,17 @@ public readonly record struct SidebarCell(string Text, Rgb Color);
 
 public static class SidebarReport
 {
+    public static SidebarCell NextWaveStatus(CityGame game)
+    {
+        if (game.Settlement is not { } siege) return new("No settlement", NoneColor);
+        if (siege.WaveNumber == 0) return new("Attacks at 100 souls", NoneColor);
+        if (siege.NextWaveSeconds <= 0 && siege.Goblins.Count > 0)
+            return new("Waiting for battle's end", BadColor);
+        int seconds = (int)Math.Ceiling(siege.NextWaveSeconds);
+        return new($"Wave {siege.WaveNumber + 1} in {seconds / 60}:{seconds % 60:00}",
+            siege.NextWaveFraction <= 0.2 ? BadColor : WarningColor);
+    }
+
     public static double CoverageRefreshDays(GameConfig config, GameSpeed speed) =>
         3 * config.FastSecondsPerWeek / config.SecondsPerWeek(speed) * config.DaysPerWeek;
 

@@ -115,7 +115,7 @@ public sealed class CityServices
         }
 
         var pollution = new byte[count];
-        var cleaners = new List<(int X, int Y, int Amount)>();
+        var cleaners = new List<(int X, int Y, BuildingType Type)>();
         var buildings = new int[ServiceKinds.Count];
         var active = new int[ServiceKinds.Count];
         int powerSupply = 0, waterSupply = 0, upkeep = 0, seatRank = 0, granary = 0;
@@ -150,8 +150,8 @@ public sealed class CityServices
             seatRank = Math.Max(seatRank, type.SeatRank);
             if (type.Pollution != 0)
             {
-                if (type.Pollution < 0) cleaners.Add((x, y, type.Pollution));
-                else EmitPollution(pollution, map, x, y, type.Pollution);
+                if (type.Pollution < 0) cleaners.Add((x, y, type));
+                else EmitPollution(pollution, map, x, y, type);
             }
         }
 
@@ -165,10 +165,10 @@ public sealed class CityServices
             }
 
             var type = map.Content.Buildings[map.BuildingLayer[index]];
-            EmitPollution(pollution, map, index % map.Width, index / map.Width, type.Pollution);
+            EmitPollution(pollution, map, index % map.Width, index / map.Width, type);
         }
         foreach (var cleaner in cleaners)
-            EmitPollution(pollution, map, cleaner.X, cleaner.Y, cleaner.Amount);
+            EmitPollution(pollution, map, cleaner.X, cleaner.Y, cleaner.Type);
 
         foreach (var zone in Zones.Placeable)
         {
@@ -233,14 +233,15 @@ public sealed class CityServices
         return result;
     }
 
-    private static void EmitPollution(byte[] field, GameMap map, int cx, int cy, int amount)
+    private static void EmitPollution(byte[] field, GameMap map, int cx, int cy, BuildingType type)
     {
+        int amount = type.Pollution;
         if (amount == 0)
         {
             return;
         }
 
-        int radius = PollutionRadius(amount);
+        int radius = PollutionRadius(type);
         int extent = (int)Math.Ceiling(radius * AreaFalloff.Extent);
         int verticalExtent = (int)Math.Ceiling(extent / AreaFalloff.CellAspect);
         int strength = Math.Abs(amount) * 9 + 14;
@@ -277,6 +278,10 @@ public sealed class CityServices
     }
 
     public static int PollutionRadius(int amount) => amount == 0 ? 0 : 3 + 2 * Math.Abs(amount);
+
+    public static int PollutionRadius(BuildingType type) =>
+        type.Service == ServiceKind.Power && type.Pollution > 0
+            ? Math.Min(6, PollutionRadius(type.Pollution)) : PollutionRadius(type.Pollution);
 }
 
 /// <summary>Supply against demand for a utility. A ratio of 1 or more means everyone is served.</summary>

@@ -22,6 +22,10 @@ public partial class CityPanel : Control
     private readonly List<Label> _cityCells = [];
     private GridContainer _cityTable = null!;
     private Label _zoom = null!;
+    private VBoxContainer _nextWave = null!;
+    private Label _nextWaveCountdown = null!;
+    private ProgressBar _nextWaveProgress = null!;
+    private readonly StyleBoxFlat _nextWaveFill = new();
     private VBoxContainer _content = null!;
     private GridContainer _top = null!;
     private readonly List<Label> _headings = [];
@@ -153,12 +157,37 @@ public partial class CityPanel : Control
             _demandHover[zone] = [row, letter, bar];
         }
         _top.AddChild(demand);
+        _nextWave = new VBoxContainer
+        {
+            Name = "NextWaveSection", Visible = false, SizeFlagsHorizontal = SizeFlags.ExpandFill,
+        };
+        _nextWave.AddChild(Heading("NEXT WAVE"));
+        _nextWaveCountdown = new Label
+        {
+            Name = "NextWaveCountdown", AutowrapMode = TextServer.AutowrapMode.WordSmart,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+        };
+        _nextWaveCountdown.AddThemeFontSizeOverride("font_size", 16);
+        _nextWave.AddChild(_nextWaveCountdown);
+        _nextWaveProgress = new ProgressBar
+        {
+            Name = "NextWaveProgress", MinValue = 0, MaxValue = 1, Step = 0.001,
+            ShowPercentage = false, SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            CustomMinimumSize = new Vector2(0, ResourceGauge.BarHeight),
+            MouseFilter = MouseFilterEnum.Stop,
+        };
+        var waveTrack = new StyleBoxFlat { BgColor = Colors.Black, BorderColor = Colors.White };
+        waveTrack.SetBorderWidthAll(1);
+        _nextWaveProgress.AddThemeStyleboxOverride("background", waveTrack);
+        _nextWaveProgress.AddThemeStyleboxOverride("fill", _nextWaveFill);
+        _nextWave.AddChild(_nextWaveProgress);
+        _top.AddChild(_nextWave);
         _cityTable = CreateTable("CityTable", 2);
         var city = new VBoxContainer();
         city.AddChild(Heading("CITY"));
         city.AddChild(_cityTable);
         _content.AddChild(city);
-        _groups.AddRange([overview, demand, city]);
+        _groups.AddRange([overview, demand, _nextWave, city]);
         Resized += FitContents;
         Refresh();
         FitContents();
@@ -366,10 +395,25 @@ public partial class CityPanel : Control
             }
         }
         _demandState = demandState;
+        bool waveVisibilityChanged = _nextWave.Visible != (game.Settlement is not null);
+        _nextWave.Visible = game.Settlement is not null;
+        if (game.Settlement is { } siege)
+        {
+            var status = SidebarReport.NextWaveStatus(game);
+            _nextWaveCountdown.Text = status.Text;
+            _nextWaveCountdown.Modulate = _nextWaveFill.BgColor = ToColor(status.Color);
+            _nextWaveProgress.Value = siege.NextWaveFraction;
+            string tooltip = status.Text + "\n\nThe bar empties as the siege countdown runs. " +
+                "It follows game speed and stops while the simulation is paused. " +
+                "The next wave waits for the current attackers to be defeated." +
+                (Session.ClockSuspended ? "\nCountdown paused." : "");
+            _nextWaveCountdown.TooltipText = _nextWaveProgress.TooltipText = tooltip;
+        }
         int previousCells = _cityCells.Count;
         RefreshTable(_cityTable, SidebarReport.CityRows(game), _cityCells);
         _zoom.Text = Session.ZoomLabel;
         Minimap.QueueRedraw();
-        if (previousCells != _cityCells.Count) FitContents();
+        if (waveVisibilityChanged) _fittedHeight = -1;
+        if (waveVisibilityChanged || previousCells != _cityCells.Count) FitContents();
     }
 }

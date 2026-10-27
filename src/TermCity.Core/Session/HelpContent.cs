@@ -30,6 +30,7 @@ public static class HelpContent
         ("BUILD",
         [
             ["Left icon sidebar", "Road / service catalogs; Add starts placement"],
+            ["G", "Garrison: bailey, weapons, wall repairs and upgrades"],
             ["R  C  I  U", "Zone homesteads, marketplace, craftworks; dezone"],
             ["T  B", "Straight road tool, track preview"],
             ["D, Delete", "Demolish, free of charge"],

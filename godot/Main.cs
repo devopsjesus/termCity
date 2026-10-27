@@ -33,7 +33,8 @@ public partial class Main : Control
                 return;
             }
             Engine.MaxFps = _options.FramesPerSecond;
-            if (_options.SmokeTest && DisplayServer.GetName() == "headless")
+            if ((_options.SmokeTest || _options.DebugSettlement || _options.DebugSiege) &&
+                DisplayServer.GetName() == "headless")
             {
                 GetWindow().ContentScaleSize = new Vector2I(1200, 720);
                 GetWindow().ContentScaleMode = Window.ContentScaleModeEnum.CanvasItems;
@@ -42,11 +43,19 @@ public partial class Main : Control
                 startingDate: !_options.SmokeTest && !_options.DumpMap ? DateTime.Now : null);
             game.Paused = true;
             DebugStarterSetup? starter = _options.DebugStarter ? DebugStarterSetup.Apply(game) : null;
+            Pos? settlementFocus = null;
+            if (_options.DebugSettlement || _options.DebugSiege)
+            {
+                SettlementDebugSetup.Apply(game, _options.DebugSiege, BaileyGateSide.Bottom);
+                var bounds = game.Settlement!.Bounds;
+                settlementFocus = new(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2);
+            }
             string savePath = ProjectSettings.GlobalizePath(
                 _options.SmokeTest ? "user://smoke/quicksave.json" : "user://quicksave.json");
             Session = new GameSession(game, savePath,
-                showGuide: !_options.Load && !_options.SmokeTest && !_options.DumpMap && !_options.DebugStarter,
-                initialCameraTarget: starter?.CameraTarget)
+                showGuide: !_options.Load && !_options.SmokeTest && !_options.DumpMap && !_options.DebugStarter && settlementFocus is null,
+                initialCameraTarget: settlementFocus ?? starter?.CameraTarget,
+                debugSiegeMode: _options.DebugSiege || _options.SettlementSmokeTest)
             {
                 StartAtCurrentWeek = !_options.SmokeTest && !_options.DumpMap,
 #if DEBUG
@@ -57,7 +66,8 @@ public partial class Main : Control
             {
                 throw new IOException(Session.Message);
             }
-            if (!_options.Load && !_options.SmokeTest && !_options.DumpMap) Session.SetZoom(1);
+            if (!_options.Load && !_options.SmokeTest && !_options.DumpMap)
+                Session.SetZoom(settlementFocus is null ? 1 : -1);
             if (_options.DumpMap)
             {
                 var text = new StringBuilder($"Seed {Session.Game.Config.Seed}, {Session.Game.Map.Width}x{Session.Game.Map.Height}\n");
@@ -85,11 +95,12 @@ public partial class Main : Control
             if (!_options.SmokeTest)
             {
                 Map.SetPerspective(true);
-                if (!_options.Load && starter is null) Session.CenterOn(Session.Cursor);
+                if (!_options.Load && starter is null && settlementFocus is null) Session.CenterOn(Session.Cursor);
             }
             CreateMusic();
             CreateClicks();
             Session.Placed += PlayPlacementClick;
+            Session.SiegeWaveStarted += PlayBattleHorn;
             Session.Changed += OnChanged;
             Session.CameraChanged += OnCameraChanged;
             Session.SelectionChanged += OnSelectionChanged;
@@ -99,12 +110,16 @@ public partial class Main : Control
             GetWindow().FocusExited += OnFocusExited;
             _started = true;
             UpdateUi();
+            if (_options.DebugSiege && Session.Game.Settlement is { WaveNumber: > 0 }) PlayBattleHorn();
             if (starter is not null)
                 GD.Print($"TERMCITY_DEBUG_STARTER_OK spur={starter.Spur} well={starter.Well} " +
                     $"woodlot={starter.Woodlot} residential={starter.Residential} " +
                     $"camera-target={starter.CameraTarget} " +
                     $"residential-cells={Session.Game.Map.ZoneCells(TermCity.Core.World.ZoneType.Residential).Count()} " +
                     $"paused={Session.Game.Paused} clock-suspended={Session.ClockSuspended}");
+            if (settlementFocus is not null)
+                GD.Print($"TERMCITY_DEBUG_SETTLEMENT_OK siege={_options.DebugSiege} population={game.Stats.Population} " +
+                    $"bounds={game.Settlement!.Bounds} goblins={game.Settlement.Goblins.Count} focus={settlementFocus}");
             if (_options.SmokeTest)
             {
                 Callable.From(RunSmokeTest).CallDeferred();
@@ -173,7 +188,7 @@ public partial class Main : Control
     {
         _focused = false;
         _music.StreamPaused = true;
-        _clickPlayer.Stop();
+        StopSoundEffects();
         StopPointerGesture();
         _hover = false;
         _panel.Minimap.StopDrag();
@@ -206,6 +221,7 @@ public partial class Main : Control
             return;
         }
         Session.Placed -= PlayPlacementClick;
+        Session.SiegeWaveStarted -= PlayBattleHorn;
         Session.Changed -= OnChanged;
         Session.CameraChanged -= OnCameraChanged;
         Session.SelectionChanged -= OnSelectionChanged;
@@ -214,6 +230,7 @@ public partial class Main : Control
         GetWindow().FocusEntered -= OnFocusEntered;
         GetWindow().FocusExited -= OnFocusExited;
         StopMusic();
+        DisposeSoundEffects();
     }
 
     private async void RunSmokeTest()
@@ -224,6 +241,15 @@ public partial class Main : Control
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             bool headless = DisplayServer.GetName() == "headless";
+            if (_options.SettlementSmokeTest)
+            {
+                await SettlementSmoke.Run(this, _options.CapturePath);
+                GD.Print("TERMCITY_SETTLEMENT_SMOKE_OK");
+                StopMusic();
+                await ToSignal(GetTree().CreateTimer(0.1), SceneTreeTimer.SignalName.Timeout);
+                GetTree().Quit();
+                return;
+            }
             var window = GetWindow();
             var initialSize = headless ? window.ContentScaleSize : window.Size;
             if (headless)

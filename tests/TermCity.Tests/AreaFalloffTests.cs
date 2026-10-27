@@ -36,7 +36,7 @@ public class AreaFalloffTests
         var game = TestCity.Flat(rules: CityRules.Full);
         var burners = game.Map.Content.Buildings.Get("Charcoal Burners");
         Assert.True(game.PlaceBuilding(burners, new(80, 18, 1, 1)).Success);
-        int radius = CityServices.PollutionRadius(burners.Pollution);
+        int radius = CityServices.PollutionRadius(burners);
         for (int dy = -13; dy <= 13; dy++)
         {
             int expected = Math.Min(100, (int)Math.Round((burners.Pollution * 9 + 14) *
@@ -83,7 +83,7 @@ public class AreaFalloffTests
         var game = TestCity.Flat(rules: CityRules.Full);
         var type = game.Map.Content.Buildings.Get("Charcoal Burners");
         Assert.True(game.PlaceBuilding(type, new(80, 18, 1, 1)).Success);
-        int radius = CityServices.PollutionRadius(type.Pollution);
+        int radius = CityServices.PollutionRadius(type);
         int At(int distance) => game.Services.Pollution(game.Map.Index(80 + distance, 18));
         Assert.Equal(At(0), At(radius));
         Assert.InRange(At(radius + 1), 1, At(radius) - 1);
@@ -95,7 +95,11 @@ public class AreaFalloffTests
     {
         var game = TestCity.Flat(rules: CityRules.Full);
         game.HighestMilestone = 500;
-        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Charcoal Burners"), new(80, 18, 1, 1)).Success);
+        var foundry = game.Map.Content.Buildings.ForZone(TermCity.Core.World.ZoneType.Industrial, 3)!;
+        var footprint = foundry.FootprintAt(90, 14);
+        foreach (var p in footprint.Cells()) game.Map.SetZone(p.X, p.Y, TermCity.Core.World.ZoneType.Industrial);
+        game.Map.SetBuildingFootprint(foundry, footprint);
+        game.Touch();
         var before = game.Services;
         var green = game.Map.Content.Buildings.Get("Village Green");
         Assert.True(game.PlaceBuilding(green, new(90, 18, 1, 1)).Success);
@@ -106,6 +110,22 @@ public class AreaFalloffTests
         Assert.Equal(Removed(0), Removed(radius));
         Assert.InRange(Removed(radius + 1), 1, Removed(radius) - 1);
         Assert.Equal(0, Removed((int)Math.Ceiling(radius * AreaFalloff.Extent)));
+    }
+
+    [Fact]
+    public void FuelSmokeHasCompactRangeWithoutReducingSupplyOrLocalIntensity()
+    {
+        var game = TestCity.Flat(rules: CityRules.Full);
+        var fuel = game.Map.Content.Buildings.Get("Charcoal Burners");
+        Assert.Equal(6, CityServices.PollutionRadius(fuel));
+        Assert.Equal(6, Assert.Single(AreaOfEffect.ForBuilding(fuel, new(80, 18))).Radius);
+        Assert.True(game.PlaceBuilding(fuel, new(80, 18, 1, 1)).Success);
+        Assert.Equal(1_200, fuel.Capacity);
+        Assert.Equal(86, game.Services.Pollution(game.Map.Index(80, 18)));
+        Assert.Equal(0, game.Services.Pollution(game.Map.Index(88, 18)));
+        Assert.Equal(0, CityServices.PollutionRadius(game.Map.Content.Buildings.Get("Woodlot")));
+        var foundry = game.Map.Content.Buildings.ForZone(TermCity.Core.World.ZoneType.Industrial, 3)!;
+        Assert.Equal(15, CityServices.PollutionRadius(foundry));
     }
 
     [Fact]

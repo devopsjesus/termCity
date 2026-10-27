@@ -72,6 +72,14 @@ public static class CityProgression
             .Select(b => b.Name).ToList();
         if (milestone.Population == 500) names.Add("burgage-house redevelopment (with a lord's seat and land value)");
         if (milestone.Population == 5_000) names.Add("tenement redevelopment (with a keep, clear land and land value)");
+        foreach (var kind in Enum.GetValues<WallDefenseKind>().Where(k => k != WallDefenseKind.None))
+        {
+            var defense = WallDefenses.Get(kind);
+            if (defense.RequiredPopulation == milestone.Population) names.Add(defense.Name);
+        }
+        if (milestone.Population == 100) names.Add("goblin attacks and automatic tower arrows");
+        if (milestone.Population == 250) names.Add("stone wall upgrade");
+        if (milestone.Population == 1_000) names.Add("iron-reinforced stone wall upgrade");
         return names.Count == 0 ? "All earlier buildings remain available." : "Now available: " + string.Join(", ", names) + ".";
     }
 
@@ -81,6 +89,16 @@ public static class CityProgression
 
     public static string NextStep(CityGame game)
     {
+        if (game.Settlement is { } settlement)
+        {
+            if (settlement.Walls.Any(w => w.Health < w.MaxHealth * 0.5))
+                return "Walls need repair! G: repair or upgrade walls. Right-click a wall for health.";
+            return game.HighestMilestone < 100
+                ? "P resumes settlement. Homes and jobs grow inside the bailey; no roads needed. G: Garrison."
+                : $"Wave {settlement.WaveNumber}: {settlement.Goblins.Count} goblins. G: mount defenses and upgrade walls; towers fire automatically.";
+        }
+        if (game.Config.Scenario == CityScenario.Random && game.Stats.Residential.Zoned == 0)
+            return "G > enclosure: click a corner, move to size the bailey, click again. No roads needed.";
         if (game.Stats.Residential.Zoned == 0)
             return "1. Zone broad homesteads (R); leave service plots. Roads speed arrivals. F6: guide.";
         if (GrowthDiagnostics.ForZone(game, World.ZoneType.Residential).EligibleVacancies == 0 &&

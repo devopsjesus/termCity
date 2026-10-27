@@ -18,7 +18,8 @@ public static class FootpathLayout
         var parents = new Dictionary<int, int>();
         var horizontalRuns = new Dictionary<int, int>();
         var verticalRuns = new Dictionary<int, int>();
-        bool Worn(int cell) => map.PathLayer[cell] > 0 && !TravelRoutes.IsPathRoadTarget(map, cell) &&
+        bool Worn(int cell) => map.PathLayer[cell] > 0 &&
+            map.FootpathsAllowedAt(cell % map.Width, cell / map.Width) && !TravelRoutes.IsPathRoadTarget(map, cell) &&
             !TravelRoutes.IsFootpathBridgeCell(map, cell) && !TravelRoutes.IsFootpathHillCell(map, cell) &&
             map.BuildingLayer[cell] == 0 && !map.IsHouseYardCell(cell) &&
             map.TerrainAt(cell % map.Width, cell / map.Width).Buildable;
@@ -142,7 +143,7 @@ public static class FootpathLayout
                     queue.Enqueue(neighbor);
                 }
             }
-            if (!other && !road && residences.Count >= 2)
+            if (map.SettlementBounds is null && !other && !road && residences.Count >= 2)
                 residentialOnly.UnionWith(component);
         }
         IEnumerable<int> Candidates(int cell)

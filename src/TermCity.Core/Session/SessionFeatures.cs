@@ -14,6 +14,8 @@ public enum PlacementKind
     Building,
     Demolish,
     RoadTemplate,
+    Settlement,
+    WallDefense,
 }
 
 /// <summary>
@@ -23,7 +25,7 @@ public enum PlacementKind
 public sealed record PlacementPreview(
     PlacementKind Kind, CellRect Area, Quote Quote, string Name, RoadType? Road = null, BuildingType? Building = null,
     IReadOnlySet<Pos>? Cells = null, IReadOnlySet<Pos>? ValidCells = null, RoadTemplate? Template = null,
-    IReadOnlyList<Pos>? RoadStroke = null, int Rotation = 0)
+    IReadOnlyList<Pos>? RoadStroke = null, int Rotation = 0, WallDefenseKind Defense = WallDefenseKind.None)
 {
     /// <summary>Whether the placement covers any cell of <paramref name="block"/>.</summary>
     public bool Touches(CellRect block) => Cells is null
@@ -35,6 +37,7 @@ public sealed record PlacementPreview(
         PlacementKind.Road => ValidCells?.Contains(new(x, y)) ?? game.CanPlaceRoad(x, y, Road),
         PlacementKind.Building => ValidCells?.Contains(new(x, y)) == true,
         PlacementKind.RoadTemplate => ValidCells?.Contains(new(x, y)) == true,
+        PlacementKind.Settlement or PlacementKind.WallDefense => ValidCells?.Contains(new(x, y)) == true,
         _ => game.Map.HasRoad(x, y) || game.Map.ZoneAt(x, y) != ZoneType.None ||
              game.Map.BuildingAt(x, y) is not null || game.Map.FeatureAt(x, y) is not null ||
              game.Map.PathWearAt(x, y) > 0,
@@ -99,13 +102,20 @@ public sealed partial class GameSession
     public PlacementPreview? Preview { get; private set; }
     public bool RoadToolActive { get; private set; }
     public bool BuildingToolActive => Preview?.Kind == PlacementKind.Building;
-    public bool FixedPlacementToolActive => BuildingToolActive || Preview?.Kind == PlacementKind.RoadTemplate;
+    public bool SettlementToolActive => Preview?.Kind == PlacementKind.Settlement;
+    public bool WallDefenseToolActive => Preview?.Kind == PlacementKind.WallDefense;
+    public bool FixedPlacementToolActive => BuildingToolActive || Preview?.Kind == PlacementKind.RoadTemplate ||
+        SettlementToolActive || WallDefenseToolActive;
     public bool MapNavigationAllowed => Prompt is null &&
         (Preview is null || RoadToolActive || FixedPlacementToolActive);
     public string? FixedPlacementError
     {
         get
         {
+            if (SettlementToolActive)
+                return _settlementAnchor is null ? null : Game.SettlementPlacementError(Preview!.Area);
+            if (WallDefenseToolActive)
+                return Game.WallDefensePlacementError(Cursor, Preview!.Defense);
             if (Preview?.Template is not { } template) return BuildingPlacementError;
             if (Game.RoadTemplatePlacementError(template, new(Preview.Area.X, Preview.Area.Y)) is { } error) return error;
             return Preview.Quote.Cost > Game.Money
@@ -113,7 +123,11 @@ public sealed partial class GameSession
                 : null;
         }
     }
-    public string? FixedPlacementWarning => Preview?.Template is not null ? Preview.Summary + "; click or Enter to place."
+    public string? FixedPlacementWarning => SettlementToolActive
+        ? _settlementAnchor is null ? "Motte and Bailey: click the first corner of the enclosure."
+            : $"{Preview!.Area.Width}x{Preview.Area.Height} bailey, {Fmt.Money(Preview.Quote.Cost)}; click or Enter to found; Esc cancels."
+        : WallDefenseToolActive ? $"{Preview!.Name}: choose an intact wall top; click or Enter mounts; Esc cancels."
+        : Preview?.Template is not null ? Preview.Summary + "; click or Enter to place."
         : BuildingPlacementWarning;
     public string? BuildingPlacementError => Preview?.Building is { } building
         ? Game.BuildingPlacementError(building, Preview.Area.X, Preview.Area.Y, Preview.Rotation)
@@ -235,7 +249,11 @@ public sealed partial class GameSession
 
     public void MoveFixedPlacement(Pos position)
     {
-        if (Preview?.Template is { } template)
+        if (SettlementToolActive)
+            MoveSettlementPlacement(position);
+        else if (WallDefenseToolActive)
+            MoveWallDefensePlacement(position);
+        else if (Preview?.Template is { } template)
         {
             Cursor = Clamp(position);
             RefreshRoadTemplate(template);
@@ -266,6 +284,11 @@ public sealed partial class GameSession
 
     public void PreviewBuilding(BuildingType building)
     {
+        if (building.Name == "Motte and Bailey")
+        {
+            BeginSettlementPlacement();
+            return;
+        }
         if (BuildingPurchaseError(building) is { } error)
         {
             SetMessage(error, MessageKind.Error);
@@ -375,6 +398,12 @@ public sealed partial class GameSession
         {
             return Complete(ActionResult.Fail("There is no placement to confirm."));
         }
+        if (preview.Kind == PlacementKind.Settlement && _settlementAnchor is null)
+        {
+            _settlementAnchor = Cursor;
+            RefreshSettlementPlacement();
+            return ActionResult.Ok("First corner set. Move to the opposite corner, then click or Enter to found the bailey.");
+        }
 
         var result = Execute(() => preview.Kind switch
         {
@@ -385,6 +414,8 @@ public sealed partial class GameSession
             PlacementKind.RoadTemplate when preview.Template is { } template =>
                 Game.BuildRoadTemplate(template, new(preview.Area.X, preview.Area.Y)),
             PlacementKind.Demolish => Game.Demolish(preview.Cells ?? preview.Area.Cells()),
+            PlacementKind.Settlement => Game.FoundSettlement(preview.Area, SettlementGateSide),
+            PlacementKind.WallDefense => Game.PlaceWallDefense(Cursor, preview.Defense),
             _ => ActionResult.Fail("No building type selected."),
         }, preview.Building is { } type ? Game.BuildingPlacementWarning(type, preview.Area) : null);
         if (result.Success)
@@ -418,6 +449,7 @@ public sealed partial class GameSession
         }
 
         Preview = null;
+        _settlementAnchor = null;
         RoadToolActive = false;
         _lineRoad = null;
         var menu = _previewMenu;
@@ -462,7 +494,7 @@ public sealed partial class GameSession
             return;
         }
 
-        var restored = SaveGameStore.Deserialize(_undoHistory[^1], Game.Map.Content);
+        var restored = SaveGameStore.DeserializeSnapshot(_undoHistory[^1], Game.Map.Content);
         _undoHistory.RemoveAt(_undoHistory.Count - 1);
         ReplaceGame(restored, clearUndo: false);
         Game.Paused = true;
@@ -576,8 +608,12 @@ public sealed partial class GameSession
         else GuardProgress("Quit", () => QuitRequested?.Invoke());
     }
 
-    public void RequestNewCity(bool restart) => GuardProgress(restart ? "Restart this seed" : "New city", () =>
-        NewGame(Game.Config with { Seed = restart ? Game.Config.Seed : Random.Shared.Next(), StartingYear = null }));
+    public void RequestNewCity(bool restart)
+    {
+        if (restart && DebugSiegeMode) RequestDebugSiegeRestart();
+        else GuardProgress(restart ? "Restart this seed" : "New city", () =>
+            NewGame(Game.Config with { Seed = restart ? Game.Config.Seed : Random.Shared.Next(), StartingYear = null }));
+    }
 
     public void RequestLoad(string path)
     {

@@ -49,6 +49,8 @@ public partial class Main
     private AudioStreamWav[] _clicks = [];
 
     private AudioStreamPlayer _clickPlayer = null!;
+    private AudioStreamPlayer _battleHornPlayer = null!;
+    internal int BattleHornPlayCount { get; private set; }
 
     private readonly Random _clickRandom = new();
 
@@ -108,6 +110,40 @@ public partial class Main
         }).ToArray();
         _clickPlayer = new AudioStreamPlayer { Name = "PlacementClick", VolumeDb = VolumeDb(SoundVolume, -12) };
         AddChild(_clickPlayer);
+        _battleHornPlayer = new AudioStreamPlayer
+        {
+            Name = "BattleHorn", VolumeDb = VolumeDb(SoundVolume, -9),
+            Stream = new AudioStreamWav
+            {
+                Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = BattleHorn.SampleRate,
+                Stereo = false, Data = BattleHorn.Render(),
+            },
+        };
+        AddChild(_battleHornPlayer);
+    }
+
+    private void PlayBattleHorn()
+    {
+        if (!_focused || !SoundEnabled || SoundVolume == 0) return;
+        _battleHornPlayer.Play();
+        BattleHornPlayCount++;
+    }
+
+    private void StopSoundEffects()
+    {
+        _clickPlayer.Stop();
+        _battleHornPlayer.Stop();
+    }
+
+    private void DisposeSoundEffects()
+    {
+        StopSoundEffects();
+        _clickPlayer.Stream = null;
+        foreach (var click in _clicks) click.Dispose();
+        _clicks = [];
+        var horn = _battleHornPlayer.Stream;
+        _battleHornPlayer.Stream = null;
+        horn?.Dispose();
     }
 
     private void PlayPlacementClick()
@@ -167,7 +203,7 @@ public partial class Main
     private void ToggleSound()
     {
         SoundEnabled = !SoundEnabled;
-        if (!SoundEnabled) _clickPlayer.Stop();
+        if (!SoundEnabled) StopSoundEffects();
         SavePreferences();
         RefreshMenuState(ToggleSound, SoundEnabled ? "ON" : "OFF");
     }
@@ -238,7 +274,11 @@ public partial class Main
             if (music) MusicVolume = volume; else SoundVolume = volume;
             (music ? _music : _clickPlayer).VolumeDb = VolumeDb(volume, music ? -24 : -12);
             if (music) _music.StreamPaused = !MusicEnabled || MusicVolume == 0 || !_focused;
-            else if (volume == 0) _clickPlayer.Stop();
+            else
+            {
+                _battleHornPlayer.VolumeDb = VolumeDb(volume, -9);
+                if (volume == 0) StopSoundEffects();
+            }
             SavePreferences();
         };
         mute.Pressed += () =>
@@ -251,7 +291,7 @@ public partial class Main
             else
             {
                 SoundEnabled = !SoundEnabled;
-                if (!SoundEnabled) _clickPlayer.Stop();
+                if (!SoundEnabled) StopSoundEffects();
             }
             speaker.QueueRedraw();
             SavePreferences();

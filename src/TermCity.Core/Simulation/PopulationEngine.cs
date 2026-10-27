@@ -210,6 +210,11 @@ internal static class PopulationEngine
 
     private static void Density(CityGame game)
     {
+        if (game.Settlement is not null)
+        {
+            game.RedevelopSettlement();
+            return;
+        }
         var map = game.Map;
         var rng = game.Rng;
         var ind = game.Indicators;

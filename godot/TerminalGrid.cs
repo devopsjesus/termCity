@@ -111,7 +111,8 @@ public sealed class TerminalGrid
         session.SetViewport(Math.Max(1, (int)(_width / PixelWidth)), Math.Max(1, (int)(_height / PixelHeight)));
         VectorRoads = true;
         var sampler = new BlockSampler(session.Game)
-            { Overlay = session.Overlay, VectorRoads = VectorRoads, BuildingSprites = true };
+            { Overlay = session.Overlay, VectorRoads = VectorRoads, BuildingSprites = true,
+                ShowAreas = session.AreaOverlaysVisible };
         var hillGlyphs = session.Game.Map.Content.Terrains
             .Where(terrain => terrain.Generator is HillGenerator)
             .SelectMany(terrain => terrain.Glyphs).ToHashSet();
@@ -129,7 +130,7 @@ public sealed class TerminalGrid
                     ? session.ZoomLevel < 0
                         ? sampler.Sample(position.X, position.Y, session.Stride, out road)
                         : CellRenderer.Render(session.Game, position.X, position.Y, session.Overlay, VectorRoads,
-                            buildingSprites: true)
+                            buildingSprites: true, showAreas: session.AreaOverlaysVisible)
                     : null;
                 if (session.ZoomLevel >= 0)
                 {

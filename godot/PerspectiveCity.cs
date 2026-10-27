@@ -201,6 +201,7 @@ public partial class PerspectiveCity : Node
     internal CellRect? SelectionArea => _selection;
     private PlacementPreview? _preview;
     private MapOverlay _overlay;
+    private bool _areaOverlaysVisible;
     private bool _drawingPreview;
     private bool _drawingYard;
     private Transform3D _buildingTransform = Transform3D.Identity;
@@ -219,12 +220,14 @@ public partial class PerspectiveCity : Node
     private float _indicatorThickness;
     public float SelectionOutlineThickness => _indicatorThickness;
     public float SelectionOutlineHeight { get; private set; }
+    private float? _selectedWallTop;
     public int GeometryBuilds { get; private set; }
     public double GroundBuildMilliseconds { get; private set; }
     public double ObjectBuildMilliseconds { get; private set; }
     public double TerrainPixelsMilliseconds { get; private set; }
     public double RoadPixelsMilliseconds { get; private set; }
-    public int SceneObjectCount => _world.GetChildCount() + _indicators.GetChildCount();
+    public int SceneObjectCount => _world.GetChildCount() + _indicators.GetChildCount() +
+        _fortifications.GetChildCount() + _siegeActors.GetChildCount();
     public int IndicatorObjectCount => _indicators.GetChildCount();
     public float CameraSpan => _camera.Size;
     public Vector2I RenderSize => _viewport.Size;
@@ -309,6 +312,8 @@ public partial class PerspectiveCity : Node
         AddChild(_viewport);
         _viewport.AddChild(_world);
         _viewport.AddChild(_indicators);
+        InitializeSiegeRendering();
+        InitializeSelectionHighlight();
         InitializeRiverActivity();
         _viewport.AddChild(_camera);
         _camera.Current = true;
@@ -353,6 +358,9 @@ public partial class PerspectiveCity : Node
 
     public override void _ExitTree()
     {
+        DisposeSelectionHighlight();
+        foreach (var instance in _wallInstances.Values.Concat(_actorInstances.Values))
+            instance.Multimesh.Dispose();
         foreach (var material in _groundMaterials.Values)
         {
             material.Dispose();
@@ -420,20 +428,32 @@ public partial class PerspectiveCity : Node
         int bottom = Math.Clamp((int)Math.Ceiling(corners.Max(p => p.Z)) + 6, top, map.Height - 1);
         var view = new CellRect(left, top, right - left + 1, bottom - top + 1);
         var selection = session.HasCursor && !session.FixedPlacementToolActive ? session.ActiveArea : (CellRect?)null;
+        var selectedWall = session.HasCursor &&
+            (selection == session.BlockAt(session.Cursor) && session.Anchor is null || session.WallDefenseToolActive)
+            ? session.Game.Settlement?.Walls.FirstOrDefault(w => w.Cell == session.Cursor) : null;
+        float? selectedWallTop = selectedWall is null ? null :
+            TerrainSprite.Elevation(map, selectedWall.Cell.X, selectedWall.Cell.Y) +
+            WallDamageLayout.TopHeight(selectedWall) + (selectedWall.Health > 0 ? 0.36f : 0.06f);
+        if (selection is not null && selectedWall is not null)
+            selection = selectedWall.SectionBounds;
         Pos? propertyAnchor = selection == session.BlockAt(session.Cursor) &&
             map.BuildingAt(session.Cursor.X, session.Cursor.Y) is not null
             ? map.PosOf(map.BuildingAnchor(map.Index(session.Cursor.X, session.Cursor.Y))) : null;
         bool geometryChanged = !ReferenceEquals(_map, map) || _version != session.Game.MapVersion ||
-            _overlay != session.Overlay || view.X < _view.X || view.Y < _view.Y ||
+            _overlay != session.Overlay || _areaOverlaysVisible != session.AreaOverlaysVisible ||
+            view.X < _view.X || view.Y < _view.Y ||
             view.Right > _view.Right || view.Bottom > _view.Bottom ||
             scaleChanged;
         float outlineThickness = 2 * _camera.Size / Math.Max(1, displaySize.Y);
         bool indicatorsChanged = geometryChanged || _selection != selection ||
+            _selectedWallTop != selectedWallTop ||
             _selectedPropertyAnchor != propertyAnchor ||
             _indicatorThickness != outlineThickness || !ReferenceEquals(_preview, session.Preview);
         _indicatorThickness = outlineThickness;
         _map = map; _version = session.Game.MapVersion;
         _selection = selection; _preview = session.Preview; _overlay = session.Overlay;
+        _selectedWallTop = selectedWallTop;
+        _areaOverlaysVisible = session.AreaOverlaysVisible;
         _selectedPropertyAnchor = propertyAnchor;
         if (geometryChanged)
         {
@@ -450,6 +470,8 @@ public partial class PerspectiveCity : Node
         if (geometryChanged) CacheRiverActivitySites();
         if (geometryChanged || cameraChanged) SelectRiverActivitySites();
         if (geometryChanged || cameraChanged || !_waterAnimating) UpdateRiverActivity();
+        SyncSiege(session);
+        SyncSelectionHighlight(session);
         if (cameraChanged || geometryChanged || indicatorsChanged)
         {
             _renderFrames = 2;
@@ -621,7 +643,7 @@ public partial class PerspectiveCity : Node
         var origin = _camera.ProjectRayOrigin(pixel);
         var direction = _camera.ProjectRayNormal(pixel);
         float nearest = float.PositiveInfinity;
-        foreach (var box in _pickBoxes.Concat(_yardBoxes))
+        foreach (var box in _pickBoxes.Concat(_yardBoxes).Concat(_siegePickBoxes))
         {
             float near = 0, far = float.PositiveInfinity;
             bool hit = true;
@@ -666,7 +688,7 @@ public partial class PerspectiveCity : Node
                 Roughness = 1,
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled
             };
-            if (rgb is 0x58d068 or 0x58a6ff or 0xf2c94c)
+            if (rgb is 0x58d068 or 0x58a6ff or 0xf2c94c or 0xff6b25 or 0xffaa33 or 0xffdd66)
                 material.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
             else if (FootpathArtwork.IsTexturedColor(rgb))
             {
@@ -740,6 +762,7 @@ public partial class PerspectiveCity : Node
         BatchBox(rgb, new Transform3D(Basis.Identity.Scaled(size), center));
         if (!_drawingPreview && anchor is { } owner)
         {
+            if (!_drawingYard) _structureHighlightBoxes.Add((_buildingTransform * new Transform3D(Basis.Identity.Scaled(size), center), owner));
             var volume = (BuildingBounds(center, size), owner, rgb);
             (_drawingYard ? _yardBoxes : _boxes).Add(volume);
             if (pick && !_drawingYard) _pickBoxes.Add(volume);
@@ -841,6 +864,7 @@ public partial class PerspectiveCity : Node
         _cliffEdges.Clear();
         foreach (var child in _world.GetChildren()) { _world.RemoveChild(child); child.QueueFree(); }
         _boxes.Clear(); _pickBoxes.Clear(); _yardBoxes.Clear(); _roofFaces.Clear(); _bridgeRails.Clear(); BuildingsDrawn = 0; ZonePlotsDrawn = 0;
+        _structureHighlightBoxes.Clear();
         ZoneRoadOverlapArea = MaximumZoneTriangleRoadOverlapArea = 0;
         ZoneFootpathOverlapArea = MaximumZoneTriangleFootpathOverlapArea = 0;
         ZoneTrianglesChecked = 0;
@@ -865,7 +889,8 @@ public partial class PerspectiveCity : Node
         {
             float level = RenderedGroundHeight(map, p.X + 0.5f, p.Y + 0.5f);
             var zone = map.ZoneAt(p.X, p.Y);
-            if (zone != ZoneType.None && map.BuildingAt(p.X, p.Y) is null && !_yardCells.Contains(p))
+            if (session.AreaOverlaysVisible && zone != ZoneType.None &&
+                map.BuildingAt(p.X, p.Y) is null && !_yardCells.Contains(p))
                 ZonePlot(session, p);
             if (map.FeatureAt(p.X, p.Y) is { } feature && TerrainSprite.NaturalFeatureVisible(session.Game, p.X, p.Y))
             {
@@ -891,6 +916,7 @@ public partial class PerspectiveCity : Node
                 try { HouseYard(map, yard, anchor); }
                 finally { _drawingYard = false; }
             }
+        DrawDefenseModelPreview();
         FlushBatches(_world);
         _builtCount = BuildingsDrawn;
         ObjectBuildMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
@@ -925,10 +951,11 @@ public partial class PerspectiveCity : Node
                 OutlineProperty(map, PropertySelectionOutline, 0xe5cf79);
             }
             else if (RoadSelectionOutline.Length >= 3) OutlineRoad(map, RoadSelectionOutline, 0xe5cf79);
-            else Outline(map, selected, 0xe5cf79);
+            else Outline(map, selected, 0xe5cf79, _selectedWallTop);
         }
         if (_preview is { } preview)
         {
+            DrawSettlementGhost(session, preview);
             if (preview.Building is { } building)
             {
                 _drawingPreview = true;
@@ -968,7 +995,8 @@ public partial class PerspectiveCity : Node
                     preview.Quote.Cells > 0, preview.Area);
             }
             if (preview.Kind != PlacementKind.Road || preview.RoadStroke is null)
-                Outline(map, preview.Area, preview.Quote.Cells > 0 ? 0x64c788 : 0xe47676);
+                Outline(map, preview.Area, preview.Quote.Cells > 0 ? 0x64c788 : 0xe47676,
+                    preview.Kind == PlacementKind.WallDefense ? _selectedWallTop : null);
         }
         void DrawRoadGhost(IReadOnlyDictionary<int, TermCity.Core.Roads.RoadType> planned, bool valid, CellRect bounds)
         {
@@ -1391,13 +1419,13 @@ public partial class PerspectiveCity : Node
         }
     }
 
-    private void Outline(GameMap map, CellRect area, int color)
+    private void Outline(GameMap map, CellRect area, int color, float? surfaceHeight = null)
     {
         float x = area.X, z = area.Y, w = area.Width, d = area.Height;
         SelectionOutlineHeight = float.NegativeInfinity;
         Vector3 Point(float px, float pz)
         {
-            float height = RenderedGroundHeight(map, Math.Clamp(px, x + 0.001f, x + w - 0.001f),
+            float height = surfaceHeight ?? RenderedGroundHeight(map, Math.Clamp(px, x + 0.001f, x + w - 0.001f),
                 Math.Clamp(pz, z + 0.001f, z + d - 0.001f)) + _indicatorThickness + 0.025f;
             SelectionOutlineHeight = Math.Max(SelectionOutlineHeight, height);
             return new(px, height, pz);
@@ -1489,6 +1517,9 @@ public partial class PerspectiveCity : Node
         var anchor = new Pos(area.X, area.Y);
         float ground = area.Cells().Max(p => TerrainSprite.Elevation(map, p.X, p.Y));
         var center = new Vector3(area.X + area.Width / 2f, ground, area.Y + area.Height / 2f);
+        if (type.Name == "Wall House" && map.SettlementBounds is { } bounds)
+            center += new Vector3(area.X == bounds.X + 1 ? -0.35f : area.Right == bounds.Right - 1 ? 0.35f : 0,
+                0, area.Y == bounds.Y + 1 ? -0.35f : area.Bottom == bounds.Bottom - 1 ? 0.35f : 0);
         int rotation = previewRotation ?? map.BuildingRotations.GetValueOrDefault(map.Index(area.X, area.Y));
         var modelArea = rotation % 2 == 0 ? area : new CellRect(area.X, area.Y, area.Height, area.Width);
         if (type.Zone == ZoneType.Residential)
@@ -1520,7 +1551,7 @@ public partial class PerspectiveCity : Node
     private void HouseFoundation(GameMap map, CellRect area, CellRect modelArea, int rotation,
         Vector3 center, BuildingType type, Pos anchor)
     {
-        var appearance = HouseAppearance.At(anchor.X, anchor.Y, type.Level);
+        var appearance = HouseAppearance.At(type, anchor.X, anchor.Y);
         foreach (var block in appearance.BlocksOnPlot(modelArea.Width, modelArea.Height, type.Level))
         {
             var offset = rotation switch
@@ -1650,7 +1681,7 @@ public partial class PerspectiveCity : Node
 
     private void House(CellRect area, BuildingType type, Pos anchor, Vector3 center)
     {
-        var appearance = HouseAppearance.At(anchor.X, anchor.Y, type.Level);
+        var appearance = HouseAppearance.At(type, anchor.X, anchor.Y);
         var dimensions = appearance.OnPlot(area.Width, area.Height, type.Level);
         HouseApproach(area, center, dimensions.Depth, anchor);
         var blocks = appearance.BlocksOnPlot(area.Width, area.Height, type.Level);
@@ -1674,6 +1705,16 @@ public partial class PerspectiveCity : Node
                     new(course.Size.X, course.Size.Y, course.Size.Z), anchor);
             }
             HouseOpenings(origin, block, index == 0, anchor);
+            if (appearance.Style is HouseStyle.Shanty or HouseStyle.WallHouse)
+                for (int floor = 0; floor < block.Stories; floor++)
+                {
+                    float y = (floor + 0.7f) * block.Height / block.Stories;
+                    float offset = floor % 2 == 0 ? -0.035f : 0.035f;
+                    Box(origin + new Vector3(offset, y, block.Depth / 2 + 0.025f),
+                        new(block.Width + 0.06f, 0.055f, 0.08f), HouseAppearance.TimberColor, anchor);
+                    Box(origin + new Vector3(block.Width / 2 + 0.025f, y - 0.08f, offset),
+                        new(0.08f, 0.045f, block.Depth + 0.06f), HouseAppearance.SillColor, anchor);
+                }
             if (index == 0 && appearance.Chimney)
                 Box(origin + new Vector3(-block.Width * 0.25f,
                         block.Height + block.RoofRise - 0.04f, -block.Depth * 0.15f),
@@ -1920,7 +1961,7 @@ public partial class PerspectiveCity : Node
             Barrel(center + new Vector3(-w * 0.36f, 0.03f, -d * 0.32f));
             return;
         }
-        bool shop = look.Form is WorkplaceForm.Shop or WorkplaceForm.MarketHall;
+        bool shop = look.Form is WorkplaceForm.Shop or WorkplaceForm.MarketHall or WorkplaceForm.SupplyShop;
         Box(body + new Vector3(0, h / 2, 0), new(w, h, d * 0.72f), look.WallColor, anchor);
         Gable(body, w, d * 0.72f, h, look.RoofRise);
         // One broad doorway bay remains unobstructed; trade takes place under a separate low canopy.
@@ -1936,6 +1977,23 @@ public partial class PerspectiveCity : Node
             Box(sign + new Vector3(0, 0, 0.022f), new(0.075f, 0.04f, 0.015f), 0xc5ab70, anchor);
             if (look.Form == WorkplaceForm.MarketHall)
                 Barrel(center + new Vector3(-w * 0.4f, 0.025f, -d * 0.25f));
+            if (look.Form == WorkplaceForm.SupplyShop)
+                foreach (float x in new[] { -w * 0.30f, w * 0.30f })
+                {
+                    Barrel(center + new Vector3(x, 0.025f, -d * 0.30f));
+                    Box(center + new Vector3(x, 0.16f, d * 0.10f), new(0.18f, 0.24f, 0.17f), 0x967a56, anchor);
+                }
+            return;
+        }
+        if (look.Form == WorkplaceForm.Armory)
+        {
+            for (int rack = 0; rack < 3; rack++)
+            {
+                float x = (rack - 1) * w * 0.25f;
+                Box(center + new Vector3(x, 0.25f, d * 0.38f), new(0.035f, 0.48f, 0.035f), 0x967a56, anchor);
+                Box(center + new Vector3(x, 0.52f, d * 0.38f), new(0.07f, 0.12f, 0.04f), 0x768183, anchor);
+                Box(center + new Vector3(x, 0.22f, d * 0.41f), new(0.13f, 0.18f, 0.035f), look.CanvasColor, anchor);
+            }
             return;
         }
         if (look.Form is WorkplaceForm.Smithy or WorkplaceForm.Forge)

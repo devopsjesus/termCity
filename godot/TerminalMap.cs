@@ -16,6 +16,7 @@ public partial class TerminalMap : Control
     public GameSession Session { get; set; } = null!;
     public Font CellFont { get; set; } = null!;
     private bool _cellsDirty = true;
+    private int _siegeAnimationRevision = -1;
     private readonly List<GlyphDraw> _overlays = [];
     private Vector2 _shakeOffset;
     private readonly RoadVectorLayer _roads = new();
@@ -159,7 +160,13 @@ public partial class TerminalMap : Control
 
     public void AdvanceAnimation(double delta, bool focused)
     {
-        if (Grid.AdvanceAnimation(delta, focused))
+        int siegeRevision = Session.Game.Settlement?.Revision ?? -1;
+        bool siegeChanged = siegeRevision != _siegeAnimationRevision;
+        _siegeAnimationRevision = siegeRevision;
+        bool siegeMoving = focused && !Session.ClockSuspended &&
+            Session.Game.Settlement is { } siege && (siege.Goblins.Count > 0 || siege.Projectiles.Count > 0 ||
+                siege.RepairingWall is not null || siege.UpgradingWall is not null || siege.Walls.Any(WallDamageLayout.IsBurning));
+        if (Grid.AdvanceAnimation(delta, focused) || siegeChanged || siegeMoving)
         {
             QueueRedraw();
         }
@@ -169,7 +176,10 @@ public partial class TerminalMap : Control
     {
         Session.SetCameraEdgePadding(PerspectiveEnabled);
         if (Perspective is { } perspective)
+        {
             perspective.WaterMotionEnabled = Effects?.Settings.ReducedMotion != true && Effects?.Settings.Level != EffectLevel.Off;
+            perspective.SiegeAnimationEnabled = Effects?.Settings.ReducedMotion != true;
+        }
         if (!_cellsDirty)
         {
             return;
@@ -220,6 +230,7 @@ public partial class TerminalMap : Control
             TextureFilter = TextureFilterEnum.Nearest;
             DrawTextureRect(perspective.Texture, new Rect2(Vector2.Zero, Size), false);
             DrawPerspectiveAreas(perspective);
+            DrawSiegeOverlay();
             BuildingsDrawn = perspective.BuildingsDrawn;
             return;
         }
@@ -292,7 +303,8 @@ public partial class TerminalMap : Control
                 if (Session.Game.Map.InBounds(world))
                 {
                     var map = Session.Game.Map;
-                    bool natural = map.BuildingAt(world.X, world.Y) is null && map.ZoneAt(world.X, world.Y) == ZoneType.None;
+                    bool natural = map.BuildingAt(world.X, world.Y) is null &&
+                        (!Session.AreaOverlaysVisible || map.ZoneAt(world.X, world.Y) == ZoneType.None);
                     if (natural && (map.FeatureAt(world.X, world.Y) is { Name: DefaultFeatures.TreeName or DefaultFeatures.RockName } ||
                         map.FeatureAt(world.X, world.Y) is null &&
                         map.TerrainAt(world.X, world.Y).Name is DefaultTerrains.GrassName or DefaultTerrains.HillName or DefaultTerrains.WaterName))
@@ -308,6 +320,7 @@ public partial class TerminalMap : Control
         DrawRoadCurves(scale, cellWidth, cellHeight);
         DrawPaths(cellWidth, cellHeight);
         DrawBuildingFootprints(cellWidth, cellHeight);
+        DrawSiegeOverlay();
         DrawAreas(cellWidth, cellHeight, fontSize);
         foreach (var mainDraw in _mains)
         {
@@ -340,6 +353,9 @@ public partial class TerminalMap : Control
 
     private void DrawPerspectiveAreas(PerspectiveCity perspective)
     {
+        AreasDrawn = 0;
+        _perspectiveRangeBounds.Clear();
+        if (!Session.AreaOverlaysVisible) return;
         IEnumerable<EffectArea> areas = Session.HasCursor && !Session.FixedPlacementToolActive
             ? AreaOfEffect.InView(Session.Game, perspective.RenderedView, Session.ActiveArea) : [];
         if (Session.Preview is { Building: { } type } preview && Session.BuildingPlacementError is null)
@@ -457,7 +473,9 @@ public partial class TerminalMap : Control
             TextureFilter = TextureFilterEnum.Nearest;
             var rect = new Rect2(position - new Vector2(0, cached.Sprite.Lift * pixelScale),
                 new Vector2(cached.Sprite.Width, cached.Sprite.Height) * pixelScale);
-            DrawTextureRect(cached.Texture, rect, false);
+            bool selected = !Session.FixedPlacementToolActive && Session.Selection is not null && Session.HasCursor &&
+                Session.ActiveArea == Session.BlockAt(Session.Cursor) && area.Contains(Session.Cursor);
+            DrawTextureRect(cached.Texture, rect, false, selected ? new Color(1.18f, 1.14f, 1.05f) : Colors.White);
             BuildingsDrawn++;
             var center = new Pos((area.X - origin.X) / Session.Stride, (area.Y - origin.Y) / Session.Stride);
             if (center.X >= 0 && center.Y >= 0 && center.X < Grid.Columns && center.Y < Grid.Rows &&
@@ -515,6 +533,12 @@ public partial class TerminalMap : Control
             (pointer.X - _shakeOffset.X) * RoadCurves.CellWidth * Session.Stride / Grid.PixelWidth;
         double worldY = origin.Y * RoadCurves.CellHeight +
             (pointer.Y - _shakeOffset.Y) * RoadCurves.CellHeight * Session.Stride / Grid.PixelHeight;
+        var wallCell = new Pos((int)Math.Floor(worldX / RoadCurves.CellWidth), (int)Math.Floor(worldY / RoadCurves.CellHeight));
+        if (Session.Game.Settlement?.Walls.Any(w => w.Cell == wallCell) == true)
+        {
+            anchor = wallCell;
+            return true;
+        }
         foreach (var area in BuildingAreasInView().OrderByDescending(a => a.Bottom).ThenByDescending(a => a.X))
         {
             if (worldX < area.X * RoadCurves.CellWidth || worldX >= (area.Right + 1) * RoadCurves.CellWidth + 4 ||
@@ -547,13 +571,13 @@ public partial class TerminalMap : Control
             for (int x = Math.Max(0, origin.X); x < Math.Min(map.Width, origin.X + Grid.Columns * Session.Stride); x++)
             {
                 int wear = map.PathWearAt(x, y);
-                if (wear == 0 || map.HasRoad(x, y) || map.BuildingAt(x, y) is not null) continue;
+                if (wear == 0 || !map.FootpathsAllowedAt(x, y) || map.HasRoad(x, y) || map.BuildingAt(x, y) is not null) continue;
                 var center = new Vector2((x - origin.X + 0.5f) * sx, (y - origin.Y + 0.5f) * sy);
                 var color = new Color("#b19564") with { A = Math.Min(0.85f, 0.25f + wear * 0.05f) };
                 float thickness = Math.Max(1, sx * 0.2f);
                 DrawRect(new Rect2(center - Vector2.One * thickness / 2, Vector2.One * thickness), color);
                 foreach (var (dx, dy) in TermCity.Core.Simulation.RoadNetwork.Neighbors)
-                    if (map.InBounds(x + dx, y + dy) && (map.PathWearAt(x + dx, y + dy) > 0 ||
+                    if (map.FootpathsAllowedAt(x + dx, y + dy) && (map.PathWearAt(x + dx, y + dy) > 0 ||
                         map.HasRoad(x + dx, y + dy) || map.BuildingAt(x + dx, y + dy) is not null))
                         DrawLine(center, center + new Vector2(dx * sx, dy * sy) / 2, color, thickness);
             }
@@ -561,6 +585,8 @@ public partial class TerminalMap : Control
 
     private void DrawAreas(int cellWidth, int cellHeight, int fontSize)
     {
+        AreasDrawn = 0;
+        if (!Session.AreaOverlaysVisible) return;
         var origin = Session.ScreenToMap(0, 0);
         var view = new CellRect(origin.X, origin.Y, Grid.Columns * Session.Stride, Grid.Rows * Session.Stride);
         IEnumerable<EffectArea> areas = Session.HasCursor && !Session.FixedPlacementToolActive

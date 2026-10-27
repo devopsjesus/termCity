@@ -13,6 +13,9 @@ public static class CellInspector
     public static BuildingCondition? Status(CityGame game, Pos pos)
     {
         var map = game.Map;
+        if (game.Settlement?.Walls.FirstOrDefault(w => w.Cell == pos) is { } wall)
+            return new($"{(wall.IsGate ? "Gate" : wall.IsTower ? "Arrow tower" : $"Wall ({wall.SectionLength} cells)")}: {wall.Health:0}/{wall.MaxHealth:0} health",
+                Rgb.Hex(wall.Health <= wall.MaxHealth * 0.35 ? 0xff7777 : 0x88ee99));
         if (!map.InBounds(pos) || map.BuildingAt(pos.X, pos.Y) is not { } building) return null;
         var error = Rgb.Hex(0xff7777);
         var warning = Rgb.Hex(0xffe066);
@@ -87,6 +90,17 @@ public static class CellInspector
         }
 
         var lines = new List<string> { $"({pos.X},{pos.Y}) {map.TerrainAt(pos.X, pos.Y).Name}" };
+        if (game.Settlement?.Walls.FirstOrDefault(w => w.Cell == pos) is { } wall)
+        {
+            lines.Add($"{game.Settlement.MaterialFor(wall)} {(wall.IsGate ? "gate" : wall.IsTower ? "arrow tower" : $"wall ({wall.SectionLength} cells)")}: {wall.Health:0}/{wall.MaxHealth:0} health");
+            if (game.Settlement.UpgradeTargetMaterial is { } target)
+                lines.Add($"Upgrading to {target}: {game.Settlement.OverallUpgradeProgress:P0} overall; this section {game.Settlement.ProgressFor(wall):P0}");
+            if (wall.Defense != WallDefenseKind.None) lines.Add(WallDefenses.Get(wall.Defense).Name);
+            if (game.Settlement.RepairingWall == pos)
+                lines.Add($"Civilian crew: {game.Settlement.RepairRatePerSecond(game):0.##} health per siege second");
+            lines.Add("Right-click for Garrison, repairs and upgrades");
+            return lines;
+        }
         if (map.TerrainAt(pos.X, pos.Y).Name == TermCity.Core.Terrain.DefaultTerrains.WaterName &&
             TerrainSprite.Flow(map).At(pos.X, pos.Y) is { River: true } flow)
             lines.Add($"River flow: {(flow.Direction.X > 0 ? "east" : flow.Direction.X < 0 ? "west" :
@@ -115,10 +129,13 @@ public static class CellInspector
         if (zone != ZoneType.None)
         {
             bool served = game.Network.IsServed(map, pos.X, pos.Y);
-            lines.Add($"{Zones.Get(zone).Name} plot" + (served ? string.Empty : " (unreachable over land)"));
+            lines.Add($"{Zones.Get(zone).Name} {(game.InsideSettlement(pos) ? "building" : "plot")}" +
+                (served ? string.Empty : " (unreachable over land)"));
             if (map.BuildingAt(pos.X, pos.Y) is { } building)
             {
                 lines.Add(building.Name);
+                if (game.InsideSettlement(pos))
+                    lines.Add($"Site worth: {game.SettlementLandValue(pos):0}/100. {building.Description}");
                 if (Status(game, pos) is { } status) lines.Add(status.Text);
                 var h = map.HouseholdAt(pos.X, pos.Y);
                 if (!h.IsEmpty)

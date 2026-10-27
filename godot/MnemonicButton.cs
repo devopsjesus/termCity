@@ -22,7 +22,12 @@ public partial class MnemonicButton : Button
         };
         float x = left + font.GetStringSize(Text[..UnderlineIndex], fontSize: size).X;
         float width = font.GetStringSize(Text.Substring(UnderlineIndex, 1), fontSize: size).X;
-        float y = (Size.Y - font.GetHeight(size)) / 2 + font.GetAscent(size) + 1;
-        DrawLine(new Vector2(x, y), new Vector2(x + width, y), GetThemeColor("font_color"));
+        var style = GetThemeStylebox("normal");
+        float top = style.GetMargin(Side.Top), bottom = style.GetMargin(Side.Bottom);
+        float y = top + (Size.Y - top - bottom - font.GetHeight(size)) / 2 + font.GetAscent(size) + 1;
+        float right = Size.X - style.GetMargin(Side.Right);
+        if (!ClipText || x < right)
+            DrawLine(new Vector2(x, y), new Vector2(ClipText ? Math.Min(x + width, right) : x + width, y),
+                GetThemeColor("font_color"));
     }
 }

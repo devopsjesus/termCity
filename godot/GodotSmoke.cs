@@ -186,13 +186,13 @@ internal static class GodotSmoke
                 HouseAppearance.WallCoreInset), bounds.Size + new Vector3(HouseAppearance.WallCoreInset * 2, 0,
                 HouseAppearance.WallCoreInset * 2))).ToArray();
 
-    private static async Task VerifyModelPreviews(Main host, Control scope, string? capturePath = null)
+    internal static async Task VerifyModelPreviews(Main host, Control scope, string? capturePath = null)
     {
         var previews = Descendants(scope).OfType<RenderedModelPreview>().Where(preview =>
             preview.IsVisibleInTree() && preview.GetGlobalRect().Intersects(scope.GetGlobalRect()) &&
             preview.GetGlobalRect().Intersects(host.GetGlobalRect())).ToArray();
         Require(previews.Length > 0 && previews.All(preview => preview.MetadataReady &&
-            preview.ModelName.Length > 0 && preview.PreviewKind is "Building" or "Road" or "RoadTemplate"),
+            preview.ModelName.Length > 0 && preview.PreviewKind is "Building" or "Road" or "RoadTemplate" or "WallDefense"),
             "Building/road illustrations must use registered canonical model previews, not Unicode art.");
         string saved = SaveGameStore.Serialize(host.Session.Game);
         var cache = Descendants(host).OfType<RenderedModelPreviewCache>().Single();
@@ -425,6 +425,7 @@ internal static class GodotSmoke
         await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
         await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
         var green = map.BuildingFootprints.Values.First(a => map.BuildingAt(a.X, a.Y)!.Name == "Village Green");
+        session.SetAreaOverlays(true);
         foreach (int tilt in new[] { 0, 1, 2 })
         {
             if (tilt > 0) view.Tilt();
@@ -2470,6 +2471,7 @@ internal static class GodotSmoke
     private static async Task VerifyZoneRendering(Main host, string? capturePath)
     {
         var session = host.Session;
+        session.SetAreaOverlays(true);
         var map = session.Game.Map;
         var view = host.Map.Perspective!;
         var origin = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf).Where(p =>
@@ -2502,6 +2504,12 @@ internal static class GodotSmoke
         view.ResetCameraOffset();
         view.Sync(session, host.Map.Size);
         Require(view.ZonePlotsDrawn >= 12, "Vacant residential, commercial and industrial plots must remain visible after clearing selection.");
+        session.SetAreaOverlays(false);
+        view.Sync(session, host.Map.Size);
+        Require(view.ZonePlotsDrawn == 0, "Turning AREAS off must clear all vacant-zone markers.");
+        session.SetAreaOverlays(true);
+        view.Sync(session, host.Map.Size);
+        Require(view.ZonePlotsDrawn >= 12, "Turning AREAS back on must restore the designated plots.");
         foreach (var footprint in map.BuildingFootprints.Values)
         {
             var type = map.BuildingAt(footprint.X, footprint.Y)!;
@@ -6198,6 +6206,7 @@ internal static class GodotSmoke
         Require(host.Map.Grid.VisualAt(session, placementCell.X, placementCell.Y)?.Background == Rgb.Hex(0xffdc5a),
             "The normal cursor must retain its yellow highlight.");
         session.PreviewBuilding(green);
+        session.SetAreaOverlays(true);
         session.ClosePrompt();
         await Frames();
         Require(host.Map.Grid.VisualAt(session, placementCell.X, placementCell.Y)?.Background == Rgb.Hex(0x2a7849),
@@ -7228,7 +7237,7 @@ internal static class GodotSmoke
             "The fitted map frame exceeds its available space.");
     }
 
-    private static void VerifyDialogButtonBorders(Control dialog)
+    internal static void VerifyDialogButtonBorders(Control dialog)
     {
         foreach (var button in Descendants(dialog).OfType<Button>())
             foreach (string state in new[] { "normal", "hover", "pressed", "hover_pressed", "disabled", "focus" })
@@ -7432,9 +7441,10 @@ internal static class GodotSmoke
         }
     }
 
-    private static void OpenGameMenu(Main host)
+    internal static void OpenGameMenu(Main host)
     {
-        host._UnhandledInput(new InputEventKey { Keycode = Key.Escape, Pressed = true });
+        using var key = new InputEventKey { Keycode = Key.Escape, Pressed = true };
+        host._UnhandledInput(key);
         Require(host.Session.Prompt?.Title == "GAME MENU", "Escape during gameplay must open the game menu.");
     }
 

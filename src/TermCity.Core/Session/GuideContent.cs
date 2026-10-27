@@ -35,6 +35,7 @@ public static class GuideContent
         int homes = game.Config.MinResidentialCells;
         return Join(
             showNextStep ? "YOUR NEXT STEP\n" + CityProgression.NextStep(game) : "",
+            Settlement(),
             "A town grows when people have somewhere to live, work to do, walkable routes and\n" +
             "the services they need. You steer it by marking land, laying roads and building.",
             Table(["STEP", "KEYS", "WHAT TO DO"],
@@ -65,8 +66,27 @@ public static class GuideContent
             "DIALOGS\n" +
             "  Underlined letters pick a row, Up/Down move, Enter selects, Esc closes. Shift+click or\n" +
             "  Shift+Enter opens option help on the right without activating it. Shift+letter still selects.\n" +
+            "  In building catalogs, letters pick a type and Enter activates Add. A fitting building\n" +
+            "  chosen through a right-click menu is placed at that spot; otherwise move its preview.\n" +
             "  Left/Right (or a click) changes guide tabs. F1 is the short list of controls.");
     }
+
+    private static string Settlement() => Join(
+        "SETTLEMENT AND SIEGE",
+        "G opens the Garrison menu. Choose Motte and Bailey enclosure, click a first corner,\n" +
+        "then move the mouse to size a rectangular bailey. Click again or Enter to found it.\n" +
+        "Esc or right-click cancels. Middle-drag pans; zoom, rotation and tilt remain available.",
+        "Walls close automatically, with corner towers and additional towers every 15 cells.\n" +
+        "The gate faces the viewer, preferring right. A hall, well and woodlot are included.\n" +
+        "Families settle naturally inside; homes, shops and workshops appear as needed.\n" +
+        "No roads or manual zoning are required inside the bailey. P resumes settlement.",
+        "At Hamlet (100 souls), goblins approach and attack individual wall components.\n" +
+        "Arrow towers fire automatically in range. Inspect wall health with right-click.\n" +
+        "Garrison mounts oil cauldrons, rocks, ballistae and trebuchets on intact wall tops.\n" +
+        "Each weapon has a range, reload time and splash radius; siege engines have blind spots.\n" +
+        "Later milestones unlock stronger weapons and stone, then iron-reinforced stone walls.\n" +
+        "Repair breaches for gold. Goblin waves strengthen as permanent milestones increase.",
+        "LEGACY SANDBOX\nManual zoning, roads and existing city scenarios remain available.");
 
     private static string Milestones(CityGame game)
     {
@@ -294,7 +314,6 @@ public static class GuideContent
             ["Unguarded", "7", "A motte, keep or castle covering the homes"],
             ["No solace", "4", "A chapel or church in a town big enough to want one"],
             ["Taxes", "-4 to 20", "Lower the tax towards the fair rate (Budget)"],
-            ["Slow journeys", "5", "Improve worn paths or add roads"],
         ]),
         "Service charges grow with how much of the town's need is unmet, so a hamlet is not punished\n" +
         "for lacking a sheriff it does not yet need. Press O to see fuel, water, services, smoke, land\n" +

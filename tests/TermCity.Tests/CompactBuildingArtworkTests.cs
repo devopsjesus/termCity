@@ -103,9 +103,9 @@ public class CompactBuildingArtworkTests
                 {
                     var sprite = BuildingSprite.Render(type, area.Width, area.Height, variant);
                     Assert.Equal(sprite.Pixels, BuildingSprite.Render(type, area.Width, area.Height, variant).Pixels);
-                    Assert.Equal(8, sprite.Lift);
+                    Assert.Equal(type.Name is "Shanty Tower" or "Wall House" ? 18 : 8, sprite.Lift);
                     variants.Add(Convert.ToBase64String(sprite.Pixels));
-                    if (variant == 0) signatures.Add(Convert.ToBase64String(sprite.Pixels));
+                    if (variant == 0 && !type.SettlementOnly) signatures.Add(Convert.ToBase64String(sprite.Pixels));
                     int opaque = 0;
                     for (int y = 0; y < sprite.Height; y++)
                         for (int x = 0; x < sprite.Width; x++)
@@ -143,6 +143,8 @@ public class CompactBuildingArtworkTests
         var styles = Enumerable.Range(0, 64)
             .Select(index => HouseAppearance.At(index % 8, index / 8, 1).Style)
             .ToHashSet();
+        foreach (var type in new GameContent().Buildings.Where(type => type.Zone == ZoneType.Residential))
+            styles.Add(HouseAppearance.At(type, 0, 0).Style);
 
         Assert.Equal(Enum.GetValues<HouseStyle>().Order(), styles.Order());
     }

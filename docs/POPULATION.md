@@ -8,6 +8,39 @@ TermCity plays by one of two rule sets (`GameConfig.Rules`):
 
 Everything is deterministic for a seed. Nothing in `TermCity.Core` knows about the UI.
 
+## Enclosed settlement growth
+
+Founding a motte-and-bailey enclosure reserves its walls and supplies starter fuel and
+water. Immigration and business demand commission individual buildings on shared,
+unzoned interior land, rather than reserving residential/commercial/industrial strips.
+Site scores combine service-backed land value, proximity to the seat, gate traffic,
+nearby homes, trade variety and space between buildings. Markets and supply shops
+prefer customers and the gate; blacksmiths, woodsmiths and armories favor peripheral
+working sites. Paths, gate approaches and access to existing buildings remain clear.
+No road, outside road connection or manual zoning is required.
+
+Higher-value homes take broad, low courtyard plots where complete wings fit. Once
+60% of the developable core is occupied, low-value homes can redevelop into four-story
+timber shanties, and three-story wall houses attach to the inner wall face. Wall cells,
+towers and defenses remain intact, with an inner repair alley and clear gate approach.
+Redevelopment preserves existing households: additional residents still arrive through
+normal immigration. Services, jobs, taxes and upkeep count each multi-cell building once.
+Only occupied footprints carry the internal residential/trade/workplace classification;
+vacant land is never zoned. Older settlement saves release vacant reservations on load
+without moving existing buildings. The older manually zoned city route is unchanged.
+
+Bailey journeys form natural paths between reachable buildings, including neighboring
+homes, rather than seeking roads. Growth and use compact these interior trails over
+time; wall cells and exterior land are excluded. Existing interior wear survives saves.
+Fuel pollution is local: Charcoal Burners keep their output and smoke strength but
+reach only six cells (with a fading fringe to 7.5); Woodlots remain clean.
+
+At the permanent 100-person milestone the siege loop starts. Goblins approach over dry
+land, attack individual components, and can breach walls. Towers shoot automatically;
+wall-top defenses add short-range splash or longer-range siege fire. Population
+milestones permanently unlock weapons and wall materials and also strengthen later
+goblin waves. Combat state is part of saves and paused undo, not an ambient visual effect.
+
 ## The loop
 
 Each game week, in order:
@@ -70,7 +103,10 @@ happiness of 70 minus charges, each in points:
 | Traffic | up to 18 |
 | Unemployment | 45 x (rate - 6%) |
 | Taxes | rate above the scenario's fair rate, clamped to -4..20 |
-| Slow walking journeys without nearby roads | 5 |
+
+Walking distance and distance from roads do not reduce happiness or generate
+resident petitions. Roads remain optional travel-speed boosts; actual service
+delivery delays and capacity shortages still affect the services residents receive.
 
 Service *need* grows with population (fire from 300 people, the sheriff 600, physic 700, schools 450, greens 900, defence 400, faith 500), so a
 hamlet is not punished for lacking a sheriff it does not need yet. Jobs come from working commercial and industrial buildings plus a base of

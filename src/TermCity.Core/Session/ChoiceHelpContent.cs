@@ -66,6 +66,16 @@ public static class ChoiceHelpContent
         return new(Icons(building.Glyphs), building.Description, string.Join("\n\n", details));
     }
 
+    public static ChoiceHelp WallDefense(WallDefenseKind kind)
+    {
+        var definition = WallDefenses.Get(kind);
+        return new("^", "Mounted on an intact wall top; fires automatically at goblins within range.",
+            $"Cost: {Fmt.Money(definition.Cost)}\n\nDamage: {definition.Damage}\n\n" +
+            $"Splash radius: {definition.SplashRadius} cells\n\nRange: {definition.MinimumRange}-{definition.Range} cells\n\n" +
+            $"Reload: {definition.ReloadSeconds}s\n\nUnlock: {definition.RequiredPopulation:N0} souls\n\n" +
+            "Placement: choose an intact wall or tower top inside the Garrison.");
+    }
+
     public static ChoiceHelp RoadTemplate(CityGame game, TermCity.Core.Roads.RoadTemplate template)
     {
         var road = game.Map.Content.Roads.Get(template.RoadName);

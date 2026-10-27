@@ -1,8 +1,9 @@
 # TermCity
 
-A DOS-terminal-styled city builder built with **Godot .NET and C# on .NET 10**, set in the **Middle Ages**.
-Raise a hamlet into a chartered city: lay out tracks and burgage plots, build a lord's castle, feed your people through
-the farming year, and keep the crown's reeve paid. It runs in a desktop window on Windows, macOS, or Linux.
+A terminal-styled medieval settlement and siege game built with **Godot .NET and C# on .NET 10**.
+Draw a motte-and-bailey enclosure, welcome settlers and defend its walls against growing goblin raids.
+The earlier city-building sandbox and populated scenarios remain available.
+It runs in a desktop window on Windows, macOS, or Linux.
 Godot is the game's only frontend; no interactive console is required.
 
 For architecture, extension points, builds, exports, and tests, see the
@@ -48,6 +49,8 @@ Game options follow Godot's `--` separator:
 | `--fps <n>` | Render frame cap, 5-60; default 30 |
 | `--reduced-motion` | Disable all terminal effects (sprites, shakes, ambient life) |
 | `--dump-map` | Print the generated/loaded map as text and exit; works headlessly |
+| `--debug-settlement` | Debug build only: pre-drawn bailey, focused camera and natural immigration |
+| `--debug-siege` | Debug build only: 24x24 bailey with 100 residents and the first goblin attack |
 | `-h`, `--help` | Print game options and exit; works headlessly |
 
 ```bash
@@ -60,6 +63,135 @@ A command-line load failure exits with an error. In-game load failures keep the 
 leave a visible error in the dialog. When loading, the saved map/configuration overrides seed and size.
 
 ## How to play
+
+### Found and defend a settlement
+
+New random maps start paused. Open **Garrison** with **G** or the shield icon.
+Choose **Motte and Bailey enclosure**, click a first corner, then move the mouse to
+size a closed rectangular bailey. A live wall preview follows the pointer; click again
+or press **Enter** to found it. **Esc** or right-click cancels without spending gold.
+Middle-drag, zoom, camera rotation and tilt remain available during placement.
+Choose clear, dry ground; invalid terrain, occupied land and unaffordable enclosures
+are rejected as one action, not partially built.
+
+The founding cost includes the lord's hall, well, woodlot, walls, corner towers and
+additional arrow towers at 15-cell intervals. A gate is generated on the viewer-facing
+wall. Homes, shops and workshops then grow naturally **inside the walls** as families
+arrive and business demand grows. **No roads or manual zoning are required.**
+Repeated journeys wear connected paths between buildings within the bailey, including
+neighboring homes. These paths stay inside the walls rather than leading to exterior roads.
+Press **P** to resume.
+
+At the permanent **Hamlet milestone (100 residents)**, goblin waves begin approaching
+and attacking individual wall components. Towers fire arrows automatically in range.
+The sidebar's **NEXT WAVE** bar empties toward the next attack and shows the remaining
+time. It follows game speed, freezes when paused, and refills for each new wave.
+If it reaches zero during a battle, the next wave waits until the current attackers are gone.
+Each new wave sounds an original synthesized battle horn and switches play to
+**1x (Slow)** so the attack does not rush past. The horn respects SOUND mute/volume;
+you can change speed again after the wave begins.
+The opening wave brings **24 goblins with 96 health each**; later waves grow in number
+and durability, up to 120 attackers. Older siege saves upgrade goblin health while
+preserving the percentage of damage already taken.
+Goblins become larger and stronger at later milestones. Damaged walls have visible
+health bars; right-click a wall or tower to inspect it and open Garrison.
+
+Garrison offers wall-top **oil cauldrons**, **rocks**, **ballistae** and **trebuchets**.
+It uses the same construction catalog as other services: select a component to see
+its rendered model and statistics, then choose **Add** to place it. Repairs and wall
+upgrades use the same catalog and show their current gold cost.
+Every type has an underlined keyboard shortcut. Press its letter to select it, then
+**Enter** (or keypad Enter) to activate **Add** from the type list. Arrow-key focus
+also updates the selected type and details; locked choices remain inspectable.
+When the menu was opened by right-clicking a map spot, fitting buildings and mounted
+defenses are placed there immediately. If they do not fit, an unpaid placement preview
+opens at that spot with an explanation, ready to move or rotate. Sidebar catalogs
+still start ordinary placement previews.
+The menu shows each weapon's unlock population, cost, damage, splash, range and reload.
+Cauldrons cover nearby groups, rocks hit harder at short range, ballistae reach farther,
+and trebuchets have the greatest damage and range, but cannot hit inside their minimum
+range. Mounted weapons require an intact, unoccupied wall top. Gold pays for repairs
+and upgrades from wood to **stone (250 souls)**, then **iron-reinforced stone (1,000)**.
+Unlocks persist after population falls. Walls, weapons, attackers and combat clocks
+are saved; paused undo restores an entire founding or defense purchase.
+
+Ordinary walls form spans of up to **three cells**, stopping at towers and the gate.
+Each span has one shared health bar and the combined strength of its cells; damage,
+breaches, repairs and upgrades apply to the whole span. Towers remain separate.
+Selection and valid mounted-defense placement squares sit on the wall or tower top.
+Selected buildings, towers and wall spans also receive a subtle warm surface highlight;
+the yellow outline remains visible. Clearing selection removes the tint.
+
+Purchased wall upgrades are built one section at a time, taking **three siege seconds
+per section** (six real seconds at 1x). Crews lay visible stone courses over wood, then
+add iron reinforcement on the next upgrade. Completed sections gain the new strength
+without erasing damage; unfinished sections keep their old strength. Work pauses with
+the game and survives saving and undo.
+
+Between waves, civilians gradually repair the walls without spending gold. Crews
+finish breaches first, then work through the most damaged sections until everything
+is restored. More residents, occupied industry and active service buildings speed
+the work. Doorway-scale civilians first throw buckets of water onto burning sections.
+Once the flames are out, they hammer on small scaffolds while a second worker
+carries replacement boards; repairs pause during
+attacks or a paused game. Repair progress survives save/load; paid instant repairs
+remain available in Garrison.
+
+Damaged walls, gates and towers progressively lose chunks and crenellations, leaving
+ragged tops and rubble. Below **33% health**, coarse animated flames mark the damage,
+including breached sections; repairing back to 33% extinguishes them. Flames are a
+visual warning only, not additional damage or spreading fire.
+
+Inside an enclosure, residents and trades choose individual sites on shared land;
+there are no pre-zoned housing, industry or commercial districts. Markets and supply
+shops favor gate traffic and nearby homes, while blacksmiths, woodsmiths and armories
+occupy working sites around the edges. Prosperous households spread into broad
+courtyard houses. Crowded, lower-value neighborhoods grow stacked wooden shanties
+and homes attached to inner wall faces, without replacing defenses or blocking the
+gate and repair alley. Existing households survive redevelopment; new residents
+still need normal immigration and supplies.
+
+Vacant-zone shading (legacy cities) and service/weapon range overlays start **off**. Use
+**VIEWS → AREAS** to show them; this does not change zoning or settlement growth.
+
+Goblins use smooth, sprite-like stepping with alternating limbs and body sway. They
+face their walking direction and turn toward the wall when attacking. Arrows are
+fast, directional traces rather than slow-floating blocks. These visuals do not
+change goblin travel speed, weapon damage or reload timing.
+Goblins reserve physical body space at spawn and queue when another attacker blocks
+their route; they cannot stack or pass through one another. Larger goblins require
+more space. Blocked attackers seek another reachable, unoccupied wall frontage instead
+of remaining stuck behind the front rank. They attack the nearest section actually
+within melee reach, never through another goblin. At a wall they visibly wind up, lunge into a weapon strike, and recoil
+on their normal attack cycle. Older saves with stacked attackers spread those units
+onto reachable dry land when loaded.
+
+Fuel smoke is compact enough for enclosed settlements: Charcoal Burners have a
+**six-cell pollution radius**, fading out by 7.5 cells, without reducing fuel output
+or the smoke's local intensity. Woodlots remain pollution-free.
+
+```bash
+godot --path godot -- --seed 42 --debug-settlement
+godot --path godot -- --seed 42 --debug-siege
+```
+
+These Debug-only starts cannot be combined with each other, loaded cities, populated
+scenarios, map dumps or smoke modes.
+
+**Debug Siege map controls:** `--debug-siege` adds a terminal-framed strip at the map's
+top edge. Set a swarm size from **1 to 120**, then choose **START WAVE** (or press
+Enter in the size field) to replace the current attackers with that exact count.
+**REMOVE GOBLINS** clears all attackers and projectiles and restarts the wave countdown.
+**REPAIR ALL** restores walls, gates, towers and mounted defenses for free; ordinary
+town buildings do not have siege hit points. **RESTART GAME** offers save/continue/cancel,
+then restores the same seed's fresh bailey, 100 residents and first wave.
+The **Walls width x height** inputs choose the starting enclosure for that restart.
+Each dimension must be 12-160 cells and fit the map with exterior space; the exact
+rectangle must have affordable dry land and room for 100 residents. Invalid or
+unplaceable sizes leave the current game untouched, never silently shrinking the walls.
+These controls are absent from ordinary gameplay and Release builds.
+
+### Legacy city-building sandbox
 
 Random cities start paused; **F6 > Start** contains next-step first-city advice. Connect a short track to an existing highway or a map
 edge and zone 20-30 nearby homes with **R**, leaving open service plots. **Before resuming with P**,
@@ -85,10 +217,10 @@ and gives advice. **F7** lists reached and upcoming gates. Falling population do
 
 | Population | Milestone | Newly available |
 |---|---|---|
-| 100 | Hamlet | Settlement milestone; keep fuel, water and jobs balanced |
-| 250 | Growing Hamlet | Fire Watch, Watch House, Sheriff's Hall, Apothecary, Chantry School |
+| 100 | Hamlet | Goblin waves, oil cauldrons and dropped rocks for founded baileys |
+| 250 | Growing Hamlet | Ballistae, stone walls; Fire Watch, Watch House, Sheriff's Hall, Apothecary, Chantry School |
 | 500 | Village | Stone Keep, Hospice, Parish Church, Market Cross, Granary; grain management and level-2 redevelopment |
-| 1,000 | Market Town | Gaol, Infirmary, Monastery, Guildhall |
+| 1,000 | Market Town | Trebuchets, iron-reinforced stone walls; Gaol, Infirmary, Monastery, Guildhall |
 | 2,500 | Borough | Castle |
 | 5,000 | City | Cathedral; level-3 redevelopment |
 | 10,000 | Great City | Final achievement; all city-size gates open |
@@ -111,7 +243,7 @@ Economy; Left/Right or a click switches tab) that explains how each thing you pl
 New audio preferences default to 70% music and 60% sound; existing saved volume choices are retained.
 Muting retains each volume setting; the controls are saved between runs. Music continues during
 gameplay pauses and dialogs, but pauses when the window loses focus.
-Population milestones can trigger decorative confetti bursts, not damage or disasters.
+Optional milestone confetti is decorative; founded baileys also begin goblin attacks at Hamlet.
 They are off by default. Effects and Celebrations are not shown in the game menu.
 
 ### Services, budget and the full city engine

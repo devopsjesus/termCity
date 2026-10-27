@@ -95,7 +95,9 @@ internal static class PerspectivePerformanceSmoke
             {
                 view.RequestRender();
                 host.Map.QueueRedraw();
-                await host.ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                var rendered = host.ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                RenderingServer.ForceDraw();
+                await rendered;
             }
             minimapWorst = Math.Max(minimapWorst, watch.Elapsed.TotalMilliseconds);
             GD.Print($"TERMCITY_MINIMAP_SAMPLE target={target.X},{target.Y} cpu={cpu:0.0}ms " +

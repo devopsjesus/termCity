@@ -29,6 +29,7 @@
     <Compile Include="..\..\godot\GreensleevesTrack.cs" Link="Godot\GreensleevesTrack.cs" />
     <Compile Include="..\..\godot\MedievalMusic.cs" Link="Godot\MedievalMusic.cs" />
     <Compile Include="..\..\godot\PlacementClick.cs" Link="Godot\PlacementClick.cs" />
+    <Compile Include="..\..\godot\BattleHorn.cs" Link="Godot\BattleHorn.cs" />
     <Compile Include="..\..\godot\SidebarReport.cs" Link="Godot\SidebarReport.cs" />
     <Compile Include="..\..\godot\PeasantNeeds.cs" Link="Godot\PeasantNeeds.cs" />
     <Compile Include="..\..\godot\ReportTables.cs" Link="Godot\ReportTables.cs" />

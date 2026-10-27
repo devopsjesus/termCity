@@ -12,8 +12,10 @@ public partial class Main
 {
     internal const int IconPadding = 6;
     internal const int RailPadding = 4;
+    private enum WallAction { Upgrade, Repair }
     private sealed record ConstructionChoice(string Name, Color Color, ChoiceHelp Help,
-        BuildingType? Building = null, RoadType? Road = null, RoadTemplate? Template = null);
+        BuildingType? Building = null, RoadType? Road = null, RoadTemplate? Template = null,
+        WallDefenseKind? Defense = null, WallAction? WallAction = null);
 
     private SessionPrompt? _constructionPrompt;
     private readonly List<Button> _constructionIcons = [];
@@ -25,9 +27,20 @@ public partial class Main
     private Button _constructionAdd = null!;
     private RenderedModelPreview _constructionPreview = null!;
     private RenderedModelPreviewCache? _modelPreviewCache;
+    private Pos? _constructionContextCell;
+    private CityGame? _constructionContextGame;
+
+    private Pos? ConstructionContextCell => ReferenceEquals(_constructionContextGame, Session.Game)
+        ? _constructionContextCell : null;
+
+    private void ClearConstructionContext()
+    {
+        _constructionContextCell = null;
+        _constructionContextGame = null;
+    }
 
     private RenderedModelPreview CreateModelPreview(string name, BuildingType? building = null,
-        RoadType? road = null, RoadTemplate? template = null)
+        RoadType? road = null, RoadTemplate? template = null, WallDefenseKind? defense = null)
     {
         if (_modelPreviewCache is null)
         {
@@ -37,8 +50,8 @@ public partial class Main
         return new RenderedModelPreview
         {
             Name = name, Cache = _modelPreviewCache,
-            Subject = new ModelPreviewSubject(Session.Game.Map.Content, building, road, template),
-            TooltipText = building?.Name ?? template?.Name ?? road!.Name,
+            Subject = new ModelPreviewSubject(Session.Game.Map.Content, building, road, template, defense),
+            TooltipText = defense is { } weapon ? WallDefenses.Get(weapon).Name : building?.Name ?? template?.Name ?? road!.Name,
         };
     }
 
@@ -116,8 +129,9 @@ public partial class Main
     private static Color ToColor(TermCity.Core.Util.Rgb color) =>
         Color.Color8(color.R, color.G, color.B);
 
-    private void ShowConstructionMenu(ServiceKind? service, bool monuments = false)
+    private void ShowConstructionMenu(ServiceKind? service, bool monuments = false, bool fromContextMenu = false)
     {
+        if (!fromContextMenu) ClearConstructionContext();
         if (ConstructionMenuVisible) Session.ClosePrompt();
         var game = Session.Game;
         _constructionChoices = monuments
@@ -138,11 +152,29 @@ public partial class Main
                     ToColor(game.Map.Content.Roads.Get(DefaultRoads.CobbledName).Foreground),
                     ChoiceHelpContent.RoadTemplate(game, RoadTemplate.TrafficCircle),
                     Template: RoadTemplate.TrafficCircle)).ToArray();
+        if (service == ServiceKind.Defence && !monuments)
+        {
+            var weapons = Enum.GetValues<WallDefenseKind>().Where(kind => kind != WallDefenseKind.None)
+                .Select(kind => new ConstructionChoice(WallDefenses.Get(kind).Name, new Color("#d9b48f"),
+                    ChoiceHelpContent.WallDefense(kind), Defense: kind));
+            var stone = game.Map.Content.Buildings.Get("Stone Keep");
+            _constructionChoices = _constructionChoices.Concat(weapons)
+                .OrderBy(choice => choice.Defense is { } weapon ? WallDefenses.Get(weapon).RequiredPopulation :
+                    CityProgression.RequiredPopulation(choice.Building!))
+                .Append(new("Upgrade all walls", new Color("#c8c8d0"),
+                    new("^", "Upgrade the entire bailey from wood to stone, then iron-reinforced stone.",
+                        "Cost: paid for every wall component\n\nUnlock: stone at 250 souls; reinforced stone at 1,000 souls\n\n" +
+                        "Effect: stronger walls; existing damage is preserved"), Building: stone, WallAction: WallAction.Upgrade))
+                .Append(new("Repair all walls", new Color("#88ee99"),
+                    new("^", "Restore the health of damaged walls, towers and the gate.",
+                        "Cost: based on missing health\n\nEffect: restore damaged components without changing their material"),
+                    Building: stone, WallAction: WallAction.Repair)).ToArray();
+        }
         string title = monuments ? "Monuments (Debug)" : service is { } category ? CityReport.ServiceName(category) : "Roads";
         _constructionIndex = 0;
         var choices = _constructionChoices.Select((choice, index) =>
             new SessionChoice(choice.Name, () => SelectConstruction(index))).ToArray();
-        _constructionPrompt = new SessionPrompt(title, "Choose a type, then Add to start placement.", choices);
+        _constructionPrompt = new SessionPrompt(title, "Underlined letter: choose a type. Enter: Add. Esc: cancel.", choices);
         Session.ShowPrompt(_constructionPrompt);
     }
 
@@ -184,6 +216,9 @@ public partial class Main
             .Concat(_constructionChoices.Select(choice => choice.Name));
         float typeWidth = names.Max(name =>
             Theme.DefaultFont.GetStringSize(name, fontSize: nameFontSize).X) + 56;
+        typeWidth = Math.Max(typeWidth, _constructionChoices.Where(ConstructionLocked).Select(choice =>
+            Theme.DefaultFont.GetStringSize(choice.Name, fontSize: nameFontSize).X + 44 + 28 + RailPadding * 2)
+            .DefaultIfEmpty(0).Max());
         var capacities = Session.Game.Map.Content.Buildings
             .Where(building => building.PlayerPlaceable && building.Capacity > 0)
             .Select(ChoiceHelpContent.CapacityText);
@@ -194,11 +229,14 @@ public partial class Main
         {
             int index = i;
             var choice = _constructionChoices[i];
-            bool locked = choice.Building is { } gated && !CityProgression.IsUnlocked(Session.Game, gated);
+            bool locked = ConstructionLocked(choice);
             string? capacity = choice.Building is { Capacity: > 0 } building
                 ? ChoiceHelpContent.CapacityText(building) : null;
-            var button = new Button { Text = choice.Name, ClipText = true,
-                TooltipText = capacity is null ? choice.Name : $"{choice.Name}\nCapacity: {capacity}",
+            var shortcut = _constructionPrompt.Shortcuts[i];
+            var button = new MnemonicButton { Text = shortcut.DisplayLabel(choice.Name), ClipText = true,
+                UnderlineIndex = shortcut.UnderlineIndex < 0 ? choice.Name.Length + 2 : shortcut.UnderlineIndex,
+                TooltipText = (capacity is null ? choice.Name : $"{choice.Name}\nCapacity: {capacity}") +
+                    $"\nKey: {(shortcut.Shift ? "Shift+" : "")}{shortcut.Letter}",
                 Alignment = HorizontalAlignment.Left,
                 CustomMinimumSize = new Vector2(0, capacity is null ? 44 : 64) };
             button.AddThemeFontSizeOverride("font_size", nameFontSize);
@@ -211,7 +249,7 @@ public partial class Main
                 style.ContentMarginBottom = capacity is null ? 6 : 26;
                 button.AddThemeStyleboxOverride(state, style);
             }
-            var icon = CreateModelPreview("ConstructionTypePreview", choice.Building, choice.Road, choice.Template);
+            var icon = CreateModelPreview("ConstructionTypePreview", choice.Building, choice.Road, choice.Template, choice.Defense);
             icon.AnchorBottom = capacity is null ? 1 : 0;
             icon.OffsetBottom = capacity is null ? 0 : 44;
             icon.OffsetRight = 40;
@@ -249,7 +287,11 @@ public partial class Main
             }
             button.AddThemeColorOverride("font_color", choice.Color);
             button.Pressed += () => SelectPromptChoice(index);
-            button.FocusEntered += () => Session.Prompt!.SelectedIndex = index;
+            button.FocusEntered += () =>
+            {
+                Session.Prompt!.SelectedIndex = index;
+                if (_constructionIndex != index) SelectConstruction(index);
+            };
             types.AddChild(button);
             _promptButtons.Add(button);
             _dialogControls.Add(button);
@@ -324,6 +366,7 @@ public partial class Main
     private void SelectConstruction(int index)
     {
         _constructionIndex = index;
+        Session.Prompt!.SelectedIndex = index;
         var choice = _constructionChoices[index];
         var previewSlot = _constructionDescription.GetParent().GetParent().GetNode<VBoxContainer>("ConstructionPreviewSlot");
         foreach (var oldPreview in previewSlot.GetChildren())
@@ -331,13 +374,13 @@ public partial class Main
             previewSlot.RemoveChild(oldPreview);
             oldPreview.QueueFree();
         }
-        _constructionPreview = CreateModelPreview("ConstructionModelPreview", choice.Building, choice.Road, choice.Template);
+        _constructionPreview = CreateModelPreview("ConstructionModelPreview", choice.Building, choice.Road, choice.Template, choice.Defense);
         _constructionPreview.CustomMinimumSize = new Vector2(0, 144);
         _constructionPreview.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         previewSlot.AddChild(_constructionPreview);
         _constructionDescription.Text = choice.Help.Description;
         string effectDescription = "";
-        if (choice.Building is { } describedBuilding)
+        if (choice.WallAction is null && choice.Building is { } describedBuilding)
         {
             var effects = AreaOfEffect.ForBuilding(describedBuilding, new Pos(0, 0))
                 .SelectMany(area => area.Glyphs.Select(glyph =>
@@ -370,6 +413,9 @@ public partial class Main
                 {
                     "Cost" when choice.Template is { } template => Fmt.Money(Session.Game.QuoteRoadTemplate(template, Session.Cursor).Cost) +
                         " (current plot)",
+                    "Cost" when choice.WallAction == WallAction.Upgrade => Fmt.Money(Session.Game.WallUpgradeCost),
+                    "Cost" when choice.WallAction == WallAction.Repair => Fmt.Money(Session.Game.WallRepairCost),
+                    "Cost" when choice.Defense is { } defense => Fmt.Money(WallDefenses.Get(defense).Cost),
                     "Cost" => Fmt.Money(choice.Building?.Cost ?? (int)Math.Round(
                         Session.Game.Config.RoadCostPerCell * choice.Road!.CostMultiplier)),
                     "Footprint" => row.Value.Replace(" cells", "", StringComparison.Ordinal),
@@ -381,7 +427,7 @@ public partial class Main
             }).ToArray();
         var effectValues = rows.Where(row => row.Name == "Effect").Select(row => row.Value)
             .Concat(effectDescription.Length > 0 ? [effectDescription] : Array.Empty<string>()).ToArray();
-        if (choice.Building is not null && effectDescription.Length == 0) effectValues = [];
+        if (choice.Building is not null && choice.WallAction is null && effectDescription.Length == 0) effectValues = [];
         if (choice.Template is not null) effectValues = [];
         rows = rows.Where(row => row.Name != "Effect")
             .Concat(effectValues.Length > 0
@@ -433,9 +479,20 @@ public partial class Main
     {
         if (!ConstructionMenuVisible || _constructionChoices.Length == 0) return;
         var choice = _constructionChoices[_constructionIndex];
-        string? error = choice.Building is { } building ? Session.BuildingPurchaseError(building) : null;
+        string? error = choice.WallAction switch
+        {
+            WallAction.Upgrade => Session.Game.WallUpgradeError(),
+            WallAction.Repair => Session.Game.WallRepairError(),
+            _ => choice.Defense is { } defense ? Session.WallDefensePurchaseError(defense) :
+                choice.Building is { Name: "Motte and Bailey" } && Session.Game.Settlement is not null
+                    ? "A bailey is already founded; mount defenses, repair or upgrade its walls."
+                    : choice.Building is { } building ? Session.BuildingPurchaseError(building) : null,
+        };
+        _constructionAdd.Text = choice.WallAction?.ToString() ?? "Add";
         _constructionAdd.Disabled = error is not null;
-        _constructionAdd.TooltipText = error ?? "Start placement on the map.";
+        _constructionAdd.TooltipText = error ?? (ConstructionContextCell is not null
+            ? "Enter: place at the right-clicked spot if it fits; otherwise choose another spot."
+            : "Enter: start placement on the map.");
         _constructionAdd.AddThemeColorOverride("font_disabled_color", new Color("#888888"));
     }
 
@@ -456,14 +513,61 @@ public partial class Main
 
     private void AddConstruction()
     {
+        if (_constructionAdd.Disabled) return;
+        var context = ConstructionContextCell;
         var choice = _constructionChoices[_constructionIndex];
-        if (choice.Building is { } building)
+        if (choice.WallAction is { } action)
+        {
+            if (action == WallAction.Upgrade) Session.UpgradeWalls();
+            else Session.RepairWalls();
+            SelectConstruction(_constructionIndex);
+            return;
+        }
+        if (choice.Defense is { } defense)
+        {
+            Session.PreviewWallDefense(defense);
+            if (!Session.WallDefenseToolActive) return;
+        }
+        else if (choice.Building is { } building)
         {
             Session.PreviewBuilding(building);
-            if (!Session.BuildingToolActive) return;
+            if (!Session.BuildingToolActive && !Session.SettlementToolActive) return;
         }
         else if (choice.Template is { } template) Session.PreviewRoadTemplate(template);
         else if (choice.Road is { } road) Session.BeginRoadLine(road);
         Session.ClosePrompt();
+        ConfirmContextConstruction(context);
+    }
+
+    private void ConfirmContextConstruction(Pos? cell)
+    {
+        if (cell is not { } target) return;
+        if (Session.Preview is { Kind: PlacementKind.Building })
+        {
+            ClearConstructionContext();
+            Session.MoveBuildingPlacement(target);
+            if (Session.BuildingPlacementError is null) Session.ConfirmPreview();
+            else Session.SetMessage(Session.BuildingPlacementError + " Choose another spot to place the building.", MessageKind.Error);
+        }
+        else if (Session.Preview is { Kind: PlacementKind.WallDefense } preview)
+        {
+            ClearConstructionContext();
+            Session.MoveFixedPlacement(target);
+            var error = Session.Game.WallDefensePlacementError(target, preview.Defense);
+            if (error is null) Session.ConfirmPreview();
+            else Session.SetMessage(error + " Choose another wall top.", MessageKind.Error);
+        }
+    }
+
+    private bool ConstructionLocked(ConstructionChoice choice)
+    {
+        if (choice.WallAction == WallAction.Repair) return false;
+        if (choice.WallAction == WallAction.Upgrade)
+            return Session.Game.HighestPopulation <
+                (Session.Game.Settlement?.Material == WallMaterial.Wood ? 250 : 1_000);
+        if (choice.Defense is { } defense)
+            return Math.Max(Session.Game.HighestPopulation, Session.Game.HighestMilestone) <
+                WallDefenses.Get(defense).RequiredPopulation;
+        return choice.Building is { } building && !CityProgression.IsUnlocked(Session.Game, building);
     }
 }

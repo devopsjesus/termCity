@@ -1,5 +1,6 @@
 using System.Numerics;
 using TermCity.Core.Util;
+using TermCity.Core.Buildings;
 
 namespace TermCity.Core.Rendering;
 
@@ -11,6 +12,9 @@ public enum HouseStyle
     Burgage,
     Longhouse,
     WeaversHouse,
+    Courtyard,
+    Shanty,
+    WallHouse,
 }
 
 public sealed record HouseAppearance(float Width, float Depth, float Height, float RoofRise,
@@ -124,17 +128,54 @@ public sealed record HouseAppearance(float Width, float Depth, float Height, flo
         wall, roof, style, shape is 3 or 5, shape is 2 or 5, level > 1 || shape is 3 or 4);
     }
 
+    public static HouseAppearance At(BuildingType type, int x, int y)
+    {
+        var basis = At(x, y, type.Level);
+        return type.Name switch
+        {
+            "Timber Home" => basis with { Style = HouseStyle.TimberGable, WallColor = 0xbaa98a },
+            "Stone Home" => basis with { Style = HouseStyle.StoneCroft, WallColor = StoneColor, Chimney = true },
+            "Courtyard House" => basis with
+            {
+                Style = HouseStyle.Courtyard, Width = 0.82f, Depth = 0.80f, Height = 0.53f,
+                Wing = true, Chimney = true, RoofColor = 0x687574,
+            },
+            "Shanty Tower" => basis with
+            {
+                Style = HouseStyle.Shanty, Width = 0.80f, Depth = 0.78f, Height = 1.48f,
+                RoofRise = 0.18f, WallColor = TimberColor, Wing = false, Chimney = false,
+            },
+            "Wall House" => basis with
+            {
+                Style = HouseStyle.WallHouse, Width = 0.82f, Depth = 0.82f, Height = 1.02f,
+                RoofRise = 0.18f, WallColor = TimberColor, Wing = false, Chimney = false,
+            },
+            _ => basis,
+        };
+    }
+
     public HouseDimensions OnPlot(int width, int depth, int level)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(depth);
         return new(width * Width, depth * Depth,
-            Height, RoofRise, level > 1 ? 2 : 1, Wing && width >= 2 && depth >= 2);
+            Height, RoofRise, Style == HouseStyle.Shanty ? 4 : Style == HouseStyle.WallHouse ? 3 :
+                level > 1 ? 2 : 1, Wing && width >= 2 && depth >= 2);
     }
 
     public IReadOnlyList<HouseBlock> BlocksOnPlot(int width, int depth, int level)
     {
         var dimensions = OnPlot(width, depth, level);
+        if (Style == HouseStyle.Courtyard)
+        {
+            float wing = dimensions.Width * 0.27f;
+            float back = dimensions.Depth * 0.30f;
+            return [
+                new(0, -(dimensions.Depth - back) / 2, dimensions.Width, back, Height, RoofRise, 1, false),
+                new(-(dimensions.Width - wing) / 2, back / 2, wing, dimensions.Depth - back, Height, RoofRise, 1, true),
+                new((dimensions.Width - wing) / 2, back / 2, wing, dimensions.Depth - back, Height, RoofRise, 1, true),
+            ];
+        }
         bool crosswise = depth > width || depth == width && CrosswiseRoof;
         if (!dimensions.Wing)
             return [new(0, 0, dimensions.Width, dimensions.Depth, dimensions.Height,

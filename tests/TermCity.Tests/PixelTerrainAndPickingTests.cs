@@ -451,12 +451,14 @@ public class PixelTerrainAndPickingTests
         foreach (var type in content.Buildings)
         {
             var sprite = BuildingSprite.Render(type, type.Width, type.Height);
-            Assert.Equal(8, sprite.Lift);
+            Assert.Equal(type.Name is "Shanty Tower" or "Wall House" ? 18 : 8, sprite.Lift);
             Assert.Equal(sprite.Pixels, BuildingSprite.Render(type, type.Width, type.Height).Pixels);
             signatures.Add(Convert.ToBase64String(sprite.Pixels));
         }
         Assert.True(signatures.Count >= content.Buildings.Count - 3,
-            "Building types should use distinct roof, courtyard, utility and workshop layouts.");
+            "Building types should use distinct layouts. Duplicates: " + string.Join("; ",
+                content.Buildings.GroupBy(type => Convert.ToBase64String(BuildingSprite.Render(type, type.Width, type.Height).Pixels))
+                    .Where(group => group.Count() > 1).Select(group => string.Join(", ", group.Select(type => type.Name)))));
         var cottage = content.Buildings.Get("Burgage House");
         Assert.NotEqual(BuildingSprite.Render(cottage, 2, 2, 0).Pixels, BuildingSprite.Render(cottage, 2, 2, 1).Pixels);
         Assert.Throws<ArgumentOutOfRangeException>(() => BuildingSprite.Render(cottage, 0, 2));

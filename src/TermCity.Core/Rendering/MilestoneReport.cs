@@ -23,6 +23,9 @@ public static class MilestoneReport
                 Row("Advice", milestone.Advice),
             ]),
         };
+        string unlocks = CityProgression.Unlocks(game, milestone);
+        if (unlocks.StartsWith("Now available:", StringComparison.Ordinal))
+            groups[0] = new(groups[0].Title, groups[0].Rows.Append(Row("Unlocks", unlocks)).ToArray());
         foreach (var building in game.Map.Content.Buildings.Where(building => building.PlayerPlaceable &&
             building.MinPopulation > 0 && CityProgression.RequiredPopulation(building) == milestone.Population)
             .OrderBy(building => building.Cost))

@@ -11,6 +11,9 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
     public bool DumpMap { get; init; }
     public bool ReducedMotion { get; init; }
     public bool DebugStarter { get; init; }
+    public bool DebugSettlement { get; init; }
+    public bool DebugSiege { get; init; }
+    public bool SettlementSmokeTest { get; init; }
     public bool BuildingSmokeTest { get; init; }
     public bool MilestoneSmokeTest { get; init; }
     public bool WoodlotSmokeTest { get; init; }
@@ -29,6 +32,8 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
           --dump-map        Print the map and exit
           --reduced-motion  Turn all visual effects off (the V key cannot turn them back on)
           --debug-starter   Debug only: well, woodlot, 4x10 homes beside the spur; start unpaused
+          --debug-settlement Debug only: pre-drawn bailey; camera focused inside; start unpaused
+          --debug-siege     Debug only: 100-settler bailey, goblin wave and map-edge siege controls
           -h, --help        Show this help
           --smoke-test     Run engine integration checks and exit
           --building-smoke-test Verify building sprites at every zoom and exit
@@ -37,6 +42,7 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
           --placement-smoke-test Verify map controls and clicked placement while building
           --perspective-smoke-test Verify tilted 3D camera, rotation and picking
           --perspective-performance-test Check zoom, pan and selection performance
+          --settlement-smoke-test Verify enclosure tools, wall picking, garrison and combat rendering
           --capture <path> Save a PNG during a graphical smoke run
         """;
 
@@ -53,6 +59,7 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
         string? capturePath = null;
         bool load = false, help = false, dump = false, reducedMotion = false;
         bool debugStarter = false;
+        bool debugSettlement = false, debugSiege = false, settlementSmokeTest = false;
         string? loadPath = null;
         int fps = 30;
         for (int i = 0; i < arguments.Length; i++)
@@ -76,6 +83,18 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
             if (argument == "--debug-starter")
             {
                 debugStarter = true;
+                continue;
+            }
+            if (argument is "--debug-settlement" or "--debug-siege")
+            {
+                debugSettlement |= argument == "--debug-settlement";
+                debugSiege |= argument == "--debug-siege";
+                continue;
+            }
+            if (argument == "--settlement-smoke-test")
+            {
+                smokeTest = true;
+                settlementSmokeTest = true;
                 continue;
             }
             if (argument == "--load")
@@ -181,14 +200,19 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
         if (milestoneSmokeTest && (load || config.Scenario != CityScenario.Random ||
             woodlotSmokeTest || perspectiveSmokeTest || perspectivePerformanceTest))
             throw new ArgumentException("--milestone-smoke-test requires a new random city and cannot be combined with other model smoke modes.");
-        if (debugStarter && !help)
+        if (settlementSmokeTest && (load || config.Scenario != CityScenario.Random ||
+            buildingSmokeTest || perspectivePerformanceTest))
+            throw new ArgumentException("--settlement-smoke-test requires a new random city and cannot be combined with other smoke modes.");
+        if ((debugStarter || debugSettlement || debugSiege) && !help)
         {
+            if ((debugStarter ? 1 : 0) + (debugSettlement ? 1 : 0) + (debugSiege ? 1 : 0) > 1)
+                throw new ArgumentException("Choose only one Debug starter configuration.");
             if (!CityGame.DebugToolsAvailable)
-                throw new ArgumentException("--debug-starter requires a Debug build.");
+                throw new ArgumentException("Debug starter configurations require a Debug build.");
             if (load || config.Scenario != CityScenario.Random)
-                throw new ArgumentException("--debug-starter requires a new random city, not a saved city or populated scenario.");
+                throw new ArgumentException("Debug starter configurations require a new random city, not a saved city or populated scenario.");
             if (smokeTest || dump)
-                throw new ArgumentException("--debug-starter cannot be combined with smoke tests or --dump-map.");
+                throw new ArgumentException("Debug starter configurations cannot be combined with smoke tests or --dump-map.");
         }
         return new(config, smokeTest, capturePath)
         {
@@ -200,6 +224,7 @@ public sealed record GodotOptions(GameConfig Config, bool SmokeTest, string? Cap
             PerspectiveSmokeTest = perspectiveSmokeTest,
             PerspectivePerformanceTest = perspectivePerformanceTest,
             DebugStarter = debugStarter,
+            DebugSettlement = debugSettlement, DebugSiege = debugSiege, SettlementSmokeTest = settlementSmokeTest,
         };
     }
 }

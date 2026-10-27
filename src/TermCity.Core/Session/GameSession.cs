@@ -33,11 +33,16 @@ public sealed partial class GameSession
     private Pos? _initialCameraTarget;
     private readonly bool _hasCustomStartupFocus;
 
-    public GameSession(CityGame game, string? savePath = null, bool showGuide = false, Pos? initialCameraTarget = null)
+    public GameSession(CityGame game, string? savePath = null, bool showGuide = false, Pos? initialCameraTarget = null,
+        bool debugSiegeMode = false)
     {
+        if (debugSiegeMode && !CityGame.DebugToolsAvailable)
+            throw new InvalidOperationException("Debug siege mode requires a Debug build.");
+        DebugSiegeMode = debugSiegeMode;
         SavePath = savePath ?? SaveGameStore.DefaultPath;
         Game = game;
         Game.Changed += OnGameChanged;
+        Game.SiegeWaveStarted += ForwardSiegeWaveStarted;
         _hasCustomStartupFocus = initialCameraTarget.HasValue;
         Cursor = Clamp(initialCameraTarget ?? StartingPosition());
         ViewWidth = 80;
@@ -54,6 +59,10 @@ public sealed partial class GameSession
     }
 
     public CityGame Game { get; private set; }
+    public bool DebugSiegeMode { get; }
+    public event Action? SiegeWaveStarted;
+
+    private void ForwardSiegeWaveStarted() => SiegeWaveStarted?.Invoke();
 
     public string SavePath { get; }
 
@@ -694,9 +703,11 @@ public sealed partial class GameSession
         _promptHistory.Clear();
         if (clearUndo) _undoHistory.Clear();
         Game.Changed -= OnGameChanged;
+        Game.SiegeWaveStarted -= ForwardSiegeWaveStarted;
         Game = game;
         _resumeWhileInteracting = false;
         Game.Changed += OnGameChanged;
+        Game.SiegeWaveStarted += ForwardSiegeWaveStarted;
         InitializeFeedback();
         GuideVisible = game.Config.Scenario == CityScenario.Random && !game.GuideDismissed;
         _autosaveElapsed = 0;

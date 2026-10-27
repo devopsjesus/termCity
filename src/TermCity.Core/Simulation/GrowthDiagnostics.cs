@@ -22,6 +22,14 @@ public static class GrowthDiagnostics
 {
     public static GrowthDiagnostic ForZone(CityGame game, ZoneType zone)
     {
+        if (game.Settlement is not null)
+        {
+            int sites = game.VacantPlots(zone).Count;
+            var forecast = Capacity(game, zone, sites);
+            if (forecast.Status != GrowthStatus.Ready) return forecast;
+            return sites > 0 ? forecast with { Message = "Settlers choose individual sites inside the walls; no zoning needed." } :
+                Result(GrowthStatus.NeedsSpace, "Interior sites are crowded; low-value homes can stack upward. Keep paths and gate access clear.", 0, game);
+        }
         int eligible = game.Map.ZoneCells(zone).Count(i => game.Map.BuildingLayer[i] == 0 &&
             game.Network.IsServed(i) && !game.Network.RoadOverlapsCell(i));
         if (eligible == 0 && !game.Map.ZoneCells(zone).Any(i => game.Map.BuildingLayer[i] == 0))
