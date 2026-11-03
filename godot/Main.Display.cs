@@ -554,14 +554,15 @@ public partial class Main
         _hudStats.Modulate = game.Money <= 0 ? new Color("#ff7777") : new Color("#88ee99");
         FitHeaderFonts();
         UpdateMenuSizeControls();
-        string cellInfo = Session.HasCursor ? CellInspector.Summary(game, Session.Cursor,
-            Map.PerspectiveEnabled ? Map.Perspective?.SelectedSurfacePoint(Session.Cursor) : null) : "Press F1 for HELP";
+        string cellInfo = Session.SelectedEnemySummary ?? (Session.HasCursor ? CellInspector.Summary(game, Session.Cursor,
+            Map.PerspectiveEnabled ? Map.Perspective?.SelectedSurfacePoint(Session.Cursor) : null) : "Press F1 for HELP");
         bool gameMenu = Session.Prompt?.Title == GameDialogTitle;
         if (Session.Selection is { Area: > 1 } selection)
             cellInfo += $" | Selection {selection.Width}x{selection.Height} ({selection.Area} cells)";
         _status.Text = gameMenu ? $"Seed {game.Config.Seed} | {game.Map.Width}x{game.Map.Height}" : Session.InputDebug
             ? $"{_lastInput} | loop {Session.LoopGapMs} ms, worst {Session.LoopWorstGapMs} ms"
-            : Session.MessageVisible ? (Session.HasCursor ? $"{cellInfo} | {Session.Message}" : Session.Message) : cellInfo;
+            : Session.MessageVisible ? (Session.HasCursor || Session.SelectedEnemy is not null
+                ? $"{cellInfo} | {Session.Message}" : Session.Message) : cellInfo;
         _status.TooltipText = _status.Text;
         var buildingStatus = Session.HasCursor ? CellInspector.Status(game, Session.Cursor) : null;
         _status.Modulate = gameMenu ? Colors.White : Session.MessageVisible && Session.MessageKind is MessageKind.Error or MessageKind.Warning

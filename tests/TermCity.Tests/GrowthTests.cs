@@ -7,8 +7,16 @@ namespace TermCity.Tests;
 public class GrowthTests
 {
     // Zones sit directly beside the road on row 20 so they are served.
-    private static void ZoneRow(CityGame game, int y, int x, int count, ZoneType zone) =>
-        Assert.True(game.Designate(new CellRect(x, y, count, 1), zone).Success);
+    private static void ZoneRow(CityGame game, int y, int x, int count, ZoneType zone)
+    {
+        var type = game.Map.Content.Buildings.ForZone(zone)!;
+        int columns = Math.Min(count, (game.Map.Width - x) / type.Width);
+        int rows = (count + columns - 1) / columns;
+        int top = y < 20 ? (zone == ZoneType.Industrial ? 10 : 20) - rows * type.Height : y;
+        for (int i = 0; i < count; i++)
+            Assert.True(game.Designate(type.FootprintAt(x + i % columns * type.Width,
+                top + i / columns * type.Height), zone).Success);
+    }
 
     [Fact]
     public void ResidentsMoveInBesideLocalRoads()
@@ -63,7 +71,7 @@ public class GrowthTests
         Assert.Equal(0, game.Stats.Commercial.Filled);
         Assert.Equal(0, game.Stats.Industrial.Filled);
 
-        ZoneRow(game, 21, 9, 31, ZoneType.Residential);
+        ZoneRow(game, 21, 45, 31, ZoneType.Residential);
         TestCity.Advance(game, 30);
         Assert.True(game.Stats.Residential.Filled >= 10);
         Assert.Equal(game.SupportedCells(ZoneType.Commercial), game.Stats.Commercial.Filled);
@@ -187,11 +195,8 @@ public class GrowthTests
     [Fact]
     public void EachWeekAddsTheBaseCapPlusAShareOfTheHomesAlreadyThere()
     {
-        var game = TestCity.Flat();
-        ZoneRow(game, 21, 0, 160, ZoneType.Residential);
-        ZoneRow(game, 22, 0, 160, ZoneType.Residential);
-        ZoneRow(game, 19, 0, 160, ZoneType.Residential);
-        ZoneRow(game, 18, 0, 160, ZoneType.Residential);
+        var game = TestCity.Flat(config: new GameConfig { MapWidth = 320, MapHeight = 192 });
+        ZoneRow(game, 21, 0, 640, ZoneType.Residential);
 
         for (int week = 0; week < 40; week++)
         {
@@ -250,20 +255,12 @@ public class GrowthTests
         }
 
         // A big established city: 2,560 homes already filled somewhere else on the map.
-        var house = map.Content.Buildings.ForZone(ZoneType.Residential)!;
-        for (int y = 100; y < 104; y++)
-        {
-            for (int x = 0; x < 640; x++)
-            {
-                map.SetZone(x, y, ZoneType.Residential);
-                map.SetBuilding(x, y, house);
-                map.SetHousehold(x, y, new Household(2, 2, 1));
-            }
-        }
+        for (int i = 0; i < 2560; i++)
+            TestCity.Stamp(game, "Cottage", new(i % 128 * 5, 80 + i / 128 * 5), new(2, 2, 1));
 
         // Leave enough multi-cell land for every supported employer.
-        game.Designate(new CellRect(0, 58, 200, 2), ZoneType.Commercial);
-        game.Designate(new CellRect(300, 54, 340, 6), ZoneType.Industrial);
+        game.Designate(new CellRect(0, 25, 200, 35), ZoneType.Commercial);
+        game.Designate(new CellRect(240, 25, 400, 35), ZoneType.Industrial);
         game.Touch();
 
         int homes = game.Stats.Residential.Filled;

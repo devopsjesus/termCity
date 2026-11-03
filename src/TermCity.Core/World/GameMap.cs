@@ -3,12 +3,34 @@ using TermCity.Core.Features;
 using TermCity.Core.Roads;
 using TermCity.Core.Terrain;
 using TermCity.Core.Util;
+using TermCity.Core.Simulation;
 
 namespace TermCity.Core.World;
 
 /// <summary>The set of registries that define what exists in the game world.</summary>
 public sealed class GameContent
 {
+    public static GameContent ForScenario(Simulation.CityScenario scenario, GameContent? existing = null)
+    {
+        bool legacy = scenario != Simulation.CityScenario.Random;
+        int scale = legacy ? 1 : WorldScale.ArchitectureScale;
+        if (existing is null) return legacy ? new()
+        {
+            Buildings = BuildingRegistry.CreateDefault(retainLegacyLayout: true),
+            Roads = RoadRegistry.CreateDefault(retainLegacyLayout: true),
+        } : new();
+        if (existing.Buildings.All(building => building.ModelScale == scale)) return existing;
+        var buildings = new BuildingRegistry();
+        foreach (var building in existing.Buildings) buildings.Register(building.WithModelScale(scale));
+        var roads = new RoadRegistry();
+        foreach (var road in existing.Roads) roads.Register(road.WithLegacyLayout(legacy));
+        return new()
+        {
+            Terrains = existing.Terrains, Features = existing.Features,
+            Buildings = buildings, Roads = roads,
+        };
+    }
+
     public TerrainRegistry Terrains { get; init; } = TerrainRegistry.CreateDefault();
 
     public FeatureRegistry Features { get; init; } = FeatureRegistry.CreateDefault();
@@ -69,9 +91,17 @@ public sealed class GameMap
     public IReadOnlyDictionary<int, int> HouseYardCells => _houseYardCells;
     public Dictionary<int, int> BuildingRotations { get; } = [];
     public CellRect? SettlementBounds { get; private set; }
+    internal readonly List<SettlementFootbridge> FootbridgeList = [];
+    public IReadOnlyList<SettlementFootbridge> Footbridges => FootbridgeList;
+    public bool HasFootbridge(int x, int y) => FootbridgeList.Any(bridge => bridge.Complete &&
+        (bridge.Start.X == bridge.End.X ? x == bridge.Start.X && y >= Math.Min(bridge.Start.Y, bridge.End.Y) &&
+            y <= Math.Max(bridge.Start.Y, bridge.End.Y) : y == bridge.Start.Y &&
+            x >= Math.Min(bridge.Start.X, bridge.End.X) && x <= Math.Max(bridge.Start.X, bridge.End.X)));
+    internal Simulation.SettlementState? Fortifications { get; set; }
 
     public bool FootpathsAllowedAt(int x, int y) => InBounds(x, y) &&
-        (SettlementBounds is not { } bounds ||
+        (Fortifications is { } fortifications ? (fortifications.EstablishedAt(new(x, y)) || HasFootbridge(x, y)) &&
+            !fortifications.GroundBlocked(new(x + .5f, y + .5f)) : SettlementBounds is not { } bounds ||
             x > bounds.X && x < bounds.Right && y > bounds.Y && y < bounds.Bottom);
 
     internal void SetSettlementBounds(CellRect? bounds)
@@ -175,7 +205,7 @@ public sealed class GameMap
             SetBuilding(p.X, p.Y, building);
         }
         RegisterBuildingFootprint(area);
-        if (SettlementBounds is { } bounds && area.Cells().All(bounds.Contains))
+        if (Fortifications is { } fortifications && area.Cells().All(fortifications.EstablishedAt))
             foreach (var p in area.Cells()) SetZone(p.X, p.Y, building.Zone);
         if (yard is { } yardCell) RegisterHouseYard(owner, yardCell);
     }
@@ -244,6 +274,27 @@ public sealed class GameMap
 
     public GameContent Content { get; }
     public int TerrainVersion { get; private set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public TerrainElevationProfile ElevationProfile { get; private set; } = TerrainElevationProfile.Current;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public TerrainElevationProfile PreviewElevationProfile => ElevationProfile;
+
+    public void SetPreviewElevationProfile(TerrainElevationProfile profile)
+    {
+        if (!CityGame.DebugToolsAvailable)
+            throw new InvalidOperationException("Terrain elevation comparisons require a Debug build.");
+        SetElevationProfile(profile);
+    }
+
+    internal void SetElevationProfile(TerrainElevationProfile profile)
+    {
+        if (!Enum.IsDefined(profile)) throw new ArgumentOutOfRangeException(nameof(profile));
+        if (ElevationProfile == profile) return;
+        ElevationProfile = profile;
+        CoastalHillCaps = null;
+        TerrainVersion++;
+        InvalidateTravel();
+    }
 
     public bool InBounds(int x, int y) => x >= 0 && y >= 0 && x < Width && y < Height;
 

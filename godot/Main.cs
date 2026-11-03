@@ -20,8 +20,9 @@ public partial class Main : Control
     private double _hudElapsed;
 
     private bool _started;
+    private readonly CancellationTokenSource _debugStartupCancellation = new();
 
-    public override void _Ready()
+    public override async void _Ready()
     {
         try
         {
@@ -33,22 +34,55 @@ public partial class Main : Control
                 return;
             }
             Engine.MaxFps = _options.FramesPerSecond;
+            if (_options.DepthComparison)
+            {
+                var comparison = new DepthComparison
+                {
+                    SmokeTest = _options.DepthComparisonSmokeTest,
+                    CapturePath = _options.CapturePath,
+                    TerrainStudy = _options.TerrainComparison,
+                };
+                AddChild(comparison);
+                comparison.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+                return;
+            }
             if ((_options.SmokeTest || _options.DebugSettlement || _options.DebugSiege) &&
                 DisplayServer.GetName() == "headless")
             {
                 GetWindow().ContentScaleSize = new Vector2I(1200, 720);
                 GetWindow().ContentScaleMode = Window.ContentScaleModeEnum.CanvasItems;
             }
-            var game = CityGame.New(_options.Config,
-                startingDate: !_options.SmokeTest && !_options.DumpMap ? DateTime.Now : null);
-            game.Paused = true;
-            DebugStarterSetup? starter = _options.DebugStarter ? DebugStarterSetup.Apply(game) : null;
+            DateTime? startingDate = !_options.SmokeTest && !_options.DumpMap ? DateTime.Now : null;
+            CityGame game;
+            DebugStarterSetup? starter = null;
             Pos? settlementFocus = null;
+            int regeneratedMaps = 0;
             if (_options.DebugSettlement || _options.DebugSiege)
             {
-                SettlementDebugSetup.Apply(game, _options.DebugSiege, BaileyGateSide.Bottom);
-                var bounds = game.Settlement!.Bounds;
-                settlementFocus = new(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2);
+                var cancellation = _debugStartupCancellation.Token;
+                string title = GetWindow().Title;
+                GetWindow().Title = "TermCity - generating a map for the debug settlement";
+                var preset = await Task.Run(() => SettlementDebugSetup.Create(_options.Config, _options.DebugSiege,
+                    BaileyGateSide.Bottom, startingDate: startingDate, cancellationToken: cancellation), cancellation);
+                if (cancellation.IsCancellationRequested) return;
+                GetWindow().Title = title;
+                game = preset.Game;
+                settlementFocus = preset.Target;
+                regeneratedMaps = preset.RegeneratedMaps;
+                if (regeneratedMaps > 0)
+                    GD.Print($"TERMCITY_DEBUG_SETTLEMENT_REGENERATED rejected-maps={regeneratedMaps} " +
+                        $"initial-seed={_options.Config.Seed} selected-seed={game.Config.Seed}");
+            }
+            else
+            {
+                game = CityGame.New(_options.Config, startingDate: startingDate);
+                game.Paused = true;
+                starter = _options.DebugStarter ? DebugStarterSetup.Apply(game) : null;
+            }
+            if (_options.TerrainPerformanceTreatment is { } terrainTreatment)
+            {
+                game.Map.SetPreviewElevationProfile(TerrainStudyFixture.Profile(terrainTreatment));
+                game.Touch();
             }
             string savePath = ProjectSettings.GlobalizePath(
                 _options.SmokeTest ? "user://smoke/quicksave.json" : "user://quicksave.json");
@@ -62,6 +96,10 @@ public partial class Main : Control
                 ConfirmQuit = _options.SmokeTest,
 #endif
             };
+            if (regeneratedMaps > 0)
+                Session.SetMessage($"Generated a suitable {SettlementDebugSetup.DefaultWallSize}x" +
+                    $"{SettlementDebugSetup.DefaultWallSize} debug settlement after regenerating " +
+                    $"{regeneratedMaps} map(s). Map seed: {game.Config.Seed}.");
             if (_options.Load && !Session.LoadFrom(_options.LoadPath ?? savePath))
             {
                 throw new IOException(Session.Message);
@@ -88,7 +126,12 @@ public partial class Main : Control
                 GetWindow().Mode = Window.ModeEnum.Maximized;
 #endif
             var font = LoadBundledFont();
-            Map = new TerminalMap { Session = Session, CellFont = font };
+            Map = new TerminalMap
+            {
+                Session = Session, CellFont = font,
+                DepthStudyTreatment = _options.DepthPerformanceBaseline ? DepthTreatment.Baseline : DepthStudyArtwork.DefaultTreatment,
+                TerrainStudyTreatment = _options.TerrainPerformanceTreatment ?? TerrainStudyTreatment.Balanced,
+            };
             Map.VerifyGlyphs(Session.Game.Map.Content);
             CreateEffects();
             CreateLayout(font);
@@ -119,11 +162,15 @@ public partial class Main : Control
                     $"paused={Session.Game.Paused} clock-suspended={Session.ClockSuspended}");
             if (settlementFocus is not null)
                 GD.Print($"TERMCITY_DEBUG_SETTLEMENT_OK siege={_options.DebugSiege} population={game.Stats.Population} " +
-                    $"bounds={game.Settlement!.Bounds} goblins={game.Settlement.Goblins.Count} focus={settlementFocus}");
+                    $"bounds={game.Settlement!.Bounds} goblins={game.Settlement.Enemies.Count} focus={settlementFocus}");
             if (_options.SmokeTest)
             {
                 Callable.From(RunSmokeTest).CallDeferred();
             }
+        }
+        catch (OperationCanceledException) when (_debugStartupCancellation.IsCancellationRequested)
+        {
+            return;
         }
         catch (Exception error) when (error is ArgumentException or InvalidOperationException or IOException)
         {
@@ -216,6 +263,8 @@ public partial class Main : Control
 
     public override void _ExitTree()
     {
+        _debugStartupCancellation.Cancel();
+        _debugStartupCancellation.Dispose();
         if (!_started)
         {
             return;
@@ -241,6 +290,28 @@ public partial class Main : Control
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             bool headless = DisplayServer.GetName() == "headless";
+            if (!headless)
+            {
+                GetWindow().GrabFocus();
+                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            }
+            if (_options.WallNetworkSmokeTest)
+            {
+                await WallNetworkSmoke.Run(this, _options.CapturePath);
+                GD.Print("TERMCITY_WALL_NETWORK_SMOKE_OK");
+                StopMusic();
+                GetTree().Quit();
+                return;
+            }
+            if (_options.WorldScaleSmokeTest)
+            {
+                await WorldScaleSmoke.Run(this, _options.CapturePath);
+                GD.Print("TERMCITY_WORLD_SCALE_SMOKE_OK");
+                StopMusic();
+                GetTree().Quit();
+                return;
+            }
             if (_options.SettlementSmokeTest)
             {
                 await SettlementSmoke.Run(this, _options.CapturePath);
@@ -299,7 +370,7 @@ public partial class Main : Control
                 {
                     throw new InvalidOperationException("Screenshots require a graphical display.");
                 }
-                await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                await GodotSmoke.RenderedFrame(this);
                 var error = GetViewport().GetTexture().GetImage().SavePng(path);
                 if (error != Error.Ok)
                 {
@@ -309,14 +380,14 @@ public partial class Main : Control
                 {
                     Map.ZoomBy(-1);
                     for (int frame = 0; frame < 3; frame++) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
-                    await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                    await GodotSmoke.RenderedFrame(this);
                     var halfZoomError = GetViewport().GetTexture().GetImage().SavePng(Path.ChangeExtension(path, ".zoom05.png"));
                     if (halfZoomError != Error.Ok) throw new IOException($"Half-zoom screenshot failed: {halfZoomError}.");
                     Map.ZoomBy(1);
                     Map.ZoomBy(1);
                     await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
                     await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
-                    await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                    await GodotSmoke.RenderedFrame(this);
                     var zoomError = GetViewport().GetTexture().GetImage().SavePng(Path.ChangeExtension(path, ".zoom2.png"));
                     if (zoomError != Error.Ok) throw new IOException($"Zoom screenshot failed: {zoomError}.");
                     Map.ZoomBy(-1);
@@ -324,7 +395,7 @@ public partial class Main : Control
                     Map.Invalidate(true);
                     await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
                     await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
-                    await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                    await GodotSmoke.RenderedFrame(this);
                     var riverError = GetViewport().GetTexture().GetImage().SavePng(Path.ChangeExtension(path, ".river.png"));
                     if (riverError != Error.Ok) throw new IOException($"River screenshot failed: {riverError}.");
                     var green = Session.Game.Map.ServiceCells.Select(Session.Game.Map.PosOf)
@@ -336,7 +407,7 @@ public partial class Main : Control
                     Map.Invalidate(true);
                     await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
                     await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
-                    await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                    await GodotSmoke.RenderedFrame(this);
                     var rangeError = GetViewport().GetTexture().GetImage().SavePng(Path.ChangeExtension(path, ".ranges.png"));
                     if (rangeError != Error.Ok) throw new IOException($"Range screenshot failed: {rangeError}.");
                 }

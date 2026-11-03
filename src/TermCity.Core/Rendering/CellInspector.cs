@@ -90,12 +90,32 @@ public static class CellInspector
         }
 
         var lines = new List<string> { $"({pos.X},{pos.Y}) {map.TerrainAt(pos.X, pos.Y).Name}" };
+        if (map.Footbridges.FirstOrDefault(bridge => bridge.Cells().Contains(pos)) is { } footbridge)
+        {
+            lines.Add(footbridge.Complete ? "Civilian footbridge: walkable pedestrian crossing" :
+                SettlementFootbridges.Valid(map, footbridge, requireEnclosure: true)
+                    ? $"Civilian footbridge under construction: {footbridge.Progress}/{SettlementFootbridge.ConstructionDays}"
+                    : "Civilian footbridge construction paused: restore enclosure and clear both banks.");
+        }
         if (game.Settlement?.Walls.FirstOrDefault(w => w.Cell == pos) is { } wall)
         {
             lines.Add($"{game.Settlement.MaterialFor(wall)} {(wall.IsGate ? "gate" : wall.IsTower ? "arrow tower" : $"wall ({wall.SectionLength} cells)")}: {wall.Health:0}/{wall.MaxHealth:0} health");
             if (game.Settlement.UpgradeTargetMaterial is { } target)
                 lines.Add($"Upgrading to {target}: {game.Settlement.OverallUpgradeProgress:P0} overall; this section {game.Settlement.ProgressFor(wall):P0}");
-            if (wall.Defense != WallDefenseKind.None) lines.Add(WallDefenses.Get(wall.Defense).Name);
+            if (wall.Defense != WallDefenseKind.None)
+            {
+                var weapon = WallDefenses.Get(wall.Defense);
+                lines.Add($"{weapon.Name}: {weapon.Damage:0} damage / {weapon.ReloadSeconds:0.#}s; " +
+                    (wall.Defense is WallDefenseKind.OilCauldron or WallDefenseKind.Rocks
+                        ? $"{DropAttackLayout.Size(wall.Defense):0.#} x {DropAttackLayout.Size(wall.Defense):0.#} station footprint; ground contact"
+                        : $"maximum reach {weapon.MinimumRange:0.#}-{weapon.Range:0.#}; clear trajectory"));
+            }
+            if (wall.IsTower)
+            {
+                var arrows = WallDefenses.Get(WallDefenseKind.None);
+                lines.Add($"Independent tower arrows: {arrows.Damage:0} damage / {arrows.ReloadSeconds:0.#}s; " +
+                    $"maximum reach {arrows.Range:0.#}, clear shot required");
+            }
             if (game.Settlement.RepairingWall == pos)
                 lines.Add($"Civilian crew: {game.Settlement.RepairRatePerSecond(game):0.##} health per siege second");
             lines.Add("Right-click for Garrison, repairs and upgrades");
@@ -174,6 +194,12 @@ public static class CellInspector
                     lines.Add($"{h.Total} souls: {h.Adults}A {h.Children}C {h.Seniors}S");
                 }
             }
+        }
+        else if (game.Settlement is { } settlement && settlement.WallBounds.Contains(pos))
+        {
+            var diagnostic = GrowthDiagnostics.ForSettlementCell(game, pos);
+            lines.Add("Settlement growth: " + diagnostic.Message);
+            if (diagnostic.Paused) lines.Add("Paused - press P to resume");
         }
 
         return lines;

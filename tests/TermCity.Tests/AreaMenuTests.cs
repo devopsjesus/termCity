@@ -92,6 +92,7 @@ public class AreaMenuTests
     public void BuildingMenuHandlesEmptyRegistryAndPlayerExtensions()
     {
         var session = Session();
+        session.PlaceCursor(new(10, 10));
         session.ShowAreaMenu();
         session.SelectPrompt(2);
         Assert.Equal("Choose a building, then click or press Enter to place it.", session.Prompt!.Text);
@@ -113,7 +114,7 @@ public class AreaMenuTests
         Assert.Same(building, session.Preview!.Building);
         Assert.Equal(1_000, session.Preview.Quote.Cost);
         Assert.True(session.ConfirmPreview().Success);
-        Assert.Same(building, session.Game.Map.BuildingAt(10, 19));
+        Assert.Same(building, session.Game.Map.BuildingAt(10, 10));
     }
 
     [Fact]

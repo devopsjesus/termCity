@@ -13,7 +13,10 @@ public static class SidebarReport
     {
         if (game.Settlement is not { } siege) return new("No settlement", NoneColor);
         if (siege.WaveNumber == 0) return new("Attacks at 100 souls", NoneColor);
-        if (siege.NextWaveSeconds <= 0 && siege.Goblins.Count > 0)
+        if (siege.TrollApproachExpected) return new("First trolls approaching", BadColor);
+        if (siege.FirstOrcApproach is { } side)
+            return new($"First Orcs: {side.ToString().ToUpperInvariant()} WALL", BadColor);
+        if (siege.NextWaveSeconds <= 0 && siege.Enemies.Count > 0)
             return new("Waiting for battle's end", BadColor);
         int seconds = (int)Math.Ceiling(siege.NextWaveSeconds);
         return new($"Wave {siege.WaveNumber + 1} in {seconds / 60}:{seconds % 60:00}",

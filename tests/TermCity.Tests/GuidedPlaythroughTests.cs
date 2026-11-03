@@ -14,16 +14,25 @@ public class GuidedPlaythroughTests(ITestOutputHelper output)
 {
     [Theory]
     [Trait("Category", "Playthrough")]
-    [InlineData("small", 42)]
-    [InlineData("medium", 42)]
+    [InlineData("480x288", 42)]
+    [InlineData("560x336", 42)]
     [InlineData("large", 42)]
-    [InlineData("small", 137)]
-    [InlineData("medium", 137)]
+    [InlineData("480x288", 137)]
+    [InlineData("560x336", 137)]
     [InlineData("large", 137)]
     public void GuideCanReachGreatCityWithoutLoansOrFreeBuildings(string sizeName, int seed)
     {
-        var size = MapSize.Presets[sizeName];
+        Assert.True(MapSize.TryParse(sizeName, out var size, out var sizeError), sizeError);
         var clock = Stopwatch.StartNew();
+        string? artifacts = Environment.GetEnvironmentVariable("TERMCITY_PLAYTEST_OUTPUT");
+        string? progress = string.IsNullOrEmpty(artifacts) ? null : Path.Combine(artifacts, $"{sizeName}-{seed}.log");
+        if (!string.IsNullOrEmpty(artifacts)) Directory.CreateDirectory(artifacts);
+        if (progress is not null) File.WriteAllText(progress, "");
+        void Report(string message)
+        {
+            output.WriteLine(message);
+            if (progress is not null) File.AppendAllText(progress, message + Environment.NewLine);
+        }
         var game = CityGame.New(new GameConfig { MapWidth = size.Width, MapHeight = size.Height, Seed = seed });
         var center = new Pos(size.Width / 2, size.Height / 2);
         var sites = game.Map.RoadCells.Select(game.Map.PosOf)
@@ -49,7 +58,7 @@ public class GuidedPlaythroughTests(ITestOutputHelper output)
                             !game.Map.HasRoad(p.X, p.Y) && game.Map.BuildingAt(p.X, p.Y) is null &&
                             !game.Network.RoadOverlapsCell(game.Map.Index(p.X, p.Y))))
                         options.Add(new Pos(x, y));
-            if (options.Count == 0 && type.Service.IsUtility())
+            if (options.Count == 0)
                 for (int y = 0; y < size.Height; y++)
                     for (int x = 0; x < size.Width; x++)
                         if (game.Network.IsServed(game.Map.Index(x, y)) && game.CanPlaceBuilding(type, x, y))
@@ -122,6 +131,12 @@ public class GuidedPlaythroughTests(ITestOutputHelper output)
         {
             int pop = game.Stats.Population;
             int reserve = Math.Max(8_000, pop * 5);
+            if (pop >= 1_000 && game.Indicators.Happiness < 45 && game.Finance.Net > 3_000 &&
+                game.Money > reserve + 100_000 && ServiceKinds.Area.Any(kind => game.Budget.Funding(kind) < 1))
+            {
+                foreach (var kind in ServiceKinds.Area) game.SetFunding(kind, 1);
+                Report($"{sizeName}/{seed}: week {game.Week}, restored full civic funding to address stalled happiness.");
+            }
             if (game.Services.Power.Supply < game.Services.Power.Demand + 60)
                 Build("Woodlot", center, game.Services.Power.Supply == 0 ? 0 : reserve);
             if (game.Services.Water.Supply < game.Services.Water.Demand + 60)
@@ -133,7 +148,7 @@ public class GuidedPlaythroughTests(ITestOutputHelper output)
                 Zone(ZoneType.Industrial, game.SupportedCells(ZoneType.Industrial) + 5 -
                     game.Stats.Industrial.Occupied - game.VacantPlots(ZoneType.Industrial).Count);
             }
-            if (pop >= 300 && week % 4 == 0 && game.Stats.Residential.Zoned - game.Stats.Residential.Filled < 60)
+            if (pop >= 300 && week % 4 == 0 && game.VacantPlots(ZoneType.Residential).Count < 60)
             {
                 if (ExpandRoads()) Zone(ZoneType.Residential, 30);
             }
@@ -159,38 +174,36 @@ public class GuidedPlaythroughTests(ITestOutputHelper output)
             {
                 var starter = game.Map.Content.Buildings.Get(name);
                 if (!CityProgression.IsUnlocked(game, starter)) continue;
-                var type = game.Map.Content.Buildings.ServiceBuildings(kind)
-                    .Where(b => CityProgression.IsUnlocked(game, b) &&
+                if (game.Services.ActiveCounts[(int)kind] > 0 &&
+                    (game.Indicators.Complaints.FirstOrDefault(c => c.Reason == reason)?.Points ?? 0) < 3)
+                    continue;
+                var types = game.Map.Content.Buildings.ServiceBuildings(kind)
+                    .Where(b => SettlementState.RosterCapacity(b) == 0 && CityProgression.IsUnlocked(game, b) &&
                         game.Money >= b.Cost + reserve && game.Finance.Net >= b.WeeklyUpkeep * 1.5)
                     .OrderByDescending(b => b.Strength).ThenByDescending(b => b.Radius)
-                    .FirstOrDefault() ?? starter;
-                double attainable = type.Strength * game.Budget.Effective(kind, game.Insolvent);
-                int providers = game.Map.ServiceCells.Count(i => game.Map.BuildingAt(
-                    i % size.Width, i / size.Width) == type);
-                if (game.Finance.Net < type.WeeklyUpkeep * 1.5 ||
-                    game.Services.ActiveCounts[(int)kind] > 0 &&
-                        (game.Indicators.Complaints.FirstOrDefault(c => c.Reason == reason)?.Points ?? 0) < 3 ||
-                    game.Indicators.CoverageOf(kind) >= attainable * 0.85 ||
-                    providers >= Math.Max(2,
-                        (int)Math.Ceiling(pop / Math.Max(1, type.StaffingCapacity * game.Budget.Effective(kind, game.Insolvent))) + 1))
-                    continue;
+                    .ToArray();
                 var homes = game.Map.ZoneCells(ZoneType.Residential)
                     .Where(i => !game.Map.HouseholdLayer[i].IsEmpty)
                     .OrderBy(i => game.Services.Coverage(kind, i)).ToArray();
                 bool built = false;
-                foreach (int home in homes.Take(5))
-                    if (Build(type.Name, game.Map.PosOf(home), reserve))
-                    {
-                        var oldProvider = game.Map.ServiceCells
-                            .Where(i => game.Map.BuildingAt(i % size.Width, i / size.Width) is { } existing &&
-                                existing.Service == kind && existing.Strength < type.Strength)
-                            .OrderBy(i => Distance(game.Map.PosOf(i), game.Map.PosOf(home))).FirstOrDefault(-1);
-                        if (oldProvider >= 0)
-                            Assert.True(game.Demolish(CellRect.Single(game.Map.PosOf(oldProvider))).Success);
-                        built = true;
-                        break;
-                    }
-                if (built || game.Money < type.Cost * 1.5 + reserve) break;
+                foreach (var type in types)
+                {
+                    double attainable = type.Strength * game.Budget.Effective(kind, game.Insolvent);
+                    int providers = game.Map.ServiceCells.Count(i => game.Map.BuildingAt(
+                        i % size.Width, i / size.Width) == type);
+                    if (game.Indicators.CoverageOf(kind) >= attainable * 0.85 ||
+                        providers >= Math.Max(2, (int)Math.Ceiling(pop /
+                            Math.Max(1, type.StaffingCapacity * game.Budget.Effective(kind, game.Insolvent))) + 1))
+                        continue;
+                    foreach (int home in homes.Take(5))
+                        if (Build(type.Name, game.Map.PosOf(home), reserve))
+                        {
+                            built = true;
+                            break;
+                        }
+                    if (built) break;
+                }
+                if (built) break;
             }
             if (pop >= 200 && game.Indicators.CoverageOf(ServiceKind.Trade) < 40 && game.Finance.Net > 200)
                 Build("Market Cross", center, reserve);
@@ -211,7 +224,7 @@ public class GuidedPlaythroughTests(ITestOutputHelper output)
             if (vacant < 30 && game.Services.Power.Ratio >= 1 && game.Services.Water.Ratio >= 1)
             {
                 Zone(ZoneType.Residential, 60 - vacant);
-                if (game.Stats.Residential.Zoned - game.Stats.Residential.Filled < 30 && game.Money > reserve + 20_000)
+                if (game.VacantPlots(ZoneType.Residential).Count < 30 && game.Money > reserve + 20_000)
                 {
                     int row = (week / 10 * 5 + center.Y) % size.Height;
                     var line = new CellRect(0, row, Math.Min(size.Width, 160), 1);
@@ -228,13 +241,13 @@ public class GuidedPlaythroughTests(ITestOutputHelper output)
             if (game.HighestMilestone > lastMilestone)
             {
                 lastMilestone = game.HighestMilestone;
-                output.WriteLine($"{sizeName}/{seed}: week {game.Week}, milestone {lastMilestone}, pop {game.Stats.Population}, gold {game.Money}, net {game.Finance.Net}, happiness {game.Indicators.Happiness:F1}");
+                Report($"{sizeName}/{seed}: week {game.Week}, milestone {lastMilestone}, pop {game.Stats.Population}, gold {game.Money}, net {game.Finance.Net}, happiness {game.Indicators.Happiness:F1}");
             }
             if (game.Week % 200 == 0 || game.Week <= 100 && game.Week % 10 == 0 || game.Money <= 0)
             {
-                output.WriteLine($"CHECK week {game.Week}: pop {game.Stats.Population}, gold {game.Money}, net {game.Finance.Net}, happiness {game.Indicators.Happiness:F1}, unemployment {game.Indicators.Unemployment:P0}, fuel {game.Services.Power.Ratio:F2}, water {game.Services.Water.Ratio:F2}, vacant {game.Stats.Residential.Zoned - game.Stats.Residential.Filled}");
-                output.WriteLine("Complaints: " + string.Join(", ", game.Indicators.Complaints.Select(c => $"{c.Reason} {c.Points:F1}")));
-                output.WriteLine("Services: " + string.Join(", ", game.Map.ServiceCells.Select(i => game.Map.Content.Buildings[game.Map.BuildingLayer[i]].Name).GroupBy(n => n).Select(g => $"{g.Key} x{g.Count()}")));
+                Report($"CHECK week {game.Week}: pop {game.Stats.Population}, gold {game.Money}, net {game.Finance.Net}, happiness {game.Indicators.Happiness:F1}, unemployment {game.Indicators.Unemployment:P0}, fuel {game.Services.Power.Ratio:F2}, water {game.Services.Water.Ratio:F2}, vacant {game.VacantPlots(ZoneType.Residential).Count}");
+                Report("Complaints: " + string.Join(", ", game.Indicators.Complaints.Select(c => $"{c.Reason} {c.Points:F1}")));
+                Report("Services: " + string.Join(", ", game.Map.ServiceCells.Select(i => game.Map.Content.Buildings[game.Map.BuildingLayer[i]].Name).GroupBy(n => n).Select(g => $"{g.Key} x{g.Count()}")));
                 if (game.Money <= 0)
                     output.WriteLine("Events: " + string.Join("; ", game.Events.TakeLast(5).Select(e => e.Message)));
             }
@@ -244,14 +257,13 @@ public class GuidedPlaythroughTests(ITestOutputHelper output)
         }
 
         clock.Stop();
-        output.WriteLine($"RESULT {sizeName}/{seed}: {clock.Elapsed.TotalSeconds:F2}s execution; {game.Week} weeks; {game.Week * game.Config.FastSecondsPerWeek / 60:F2} fast-speed minutes; pop {game.Stats.Population}; gold {game.Money}; minimum gold {minimumGold}; net {game.Finance.Net}; happiness {game.Indicators.Happiness:F1}; {purchases} paid buildings; {roads} paid road cells.");
+        Report($"RESULT {sizeName}/{seed}: {clock.Elapsed.TotalSeconds:F2}s execution; {game.Week} weeks; {game.Week * game.Config.FastSecondsPerWeek / 60:F2} fast-speed minutes; pop {game.Stats.Population}; gold {game.Money}; minimum gold {minimumGold}; net {game.Finance.Net}; happiness {game.Indicators.Happiness:F1}; {purchases} paid buildings; {roads} paid road cells.");
+        if (!string.IsNullOrEmpty(artifacts))
+            SaveGameStore.Save(game, Path.Combine(artifacts, $"{sizeName}-{seed}.json"));
         Assert.Equal(10_000, game.HighestMilestone);
         Assert.True(game.Finance.Net > 0);
         Assert.Equal(0, game.Budget.Loan);
         Assert.All(game.Map.Content.Buildings.Where(b => b.PlayerPlaceable && !b.DebugOnly), b => Assert.True(CityProgression.IsUnlocked(game, b)));
-        string? artifacts = Environment.GetEnvironmentVariable("TERMCITY_PLAYTEST_OUTPUT");
-        if (!string.IsNullOrEmpty(artifacts))
-            SaveGameStore.Save(game, Path.Combine(artifacts, $"{sizeName}-{seed}.json"));
     }
 
     private static int Distance(Pos a, Pos b) => Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y);

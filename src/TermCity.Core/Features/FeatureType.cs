@@ -2,6 +2,7 @@ using TermCity.Core.Registry;
 using TermCity.Core.Rendering;
 using TermCity.Core.Terrain;
 using TermCity.Core.Util;
+using TermCity.Core.World;
 
 namespace TermCity.Core.Features;
 
@@ -42,12 +43,18 @@ public sealed class ScatterFeatureGenerator : IFeatureGenerator
 
     public double ClusterFrequency { get; init; } = 0.07;
 
+    /// <summary>Minimum center-to-center distance in map cells; zero keeps unrestricted scatter.</summary>
+    public double MinimumSpacing { get; init; }
+
     public void Generate(GenerationContext context, FeatureType feature)
     {
+        if (!double.IsFinite(MinimumSpacing) || MinimumSpacing < 0)
+            throw new ArgumentOutOfRangeException(nameof(MinimumSpacing), "Feature spacing must be finite and nonnegative.");
         var map = context.Map;
         var rng = context.CreateRandom("feature:" + feature.Name);
         double[]? cluster = null;
         double threshold = 0;
+        List<Pos>? candidates = MinimumSpacing > 0 ? [] : null;
 
         if (ClusterCoverage > 0)
         {
@@ -77,9 +84,27 @@ public sealed class ScatterFeatureGenerator : IFeatureGenerator
                 double density = cluster is not null && cluster[y * map.Width + x] >= threshold ? ClusterDensity : BaseDensity;
                 if (rng.Chance(density * terrain.DensityFor(feature.Name)) && ShorelineLayout.NaturalFeatureFits(map, x, y))
                 {
-                    map.SetFeature(x, y, feature);
+                    if (candidates is null) map.SetFeature(x, y, feature);
+                    else candidates.Add(new(x, y));
                 }
             }
+        }
+        if (candidates is null) return;
+        int radius = (int)Math.Min(Math.Ceiling(MinimumSpacing), Math.Max(map.Width, map.Height));
+        double spacingSquared = MinimumSpacing * MinimumSpacing;
+        foreach (var candidate in candidates.OrderBy(p => CellHash.Pick(p.X ^ context.Seed, p.Y, int.MaxValue))
+            .ThenBy(p => p.Y).ThenBy(p => p.X))
+        {
+            bool crowded = false;
+            for (int y = Math.Max(0, candidate.Y - radius); y <= Math.Min(map.Height - 1, candidate.Y + radius) && !crowded; y++)
+                for (int x = Math.Max(0, candidate.X - radius); x <= Math.Min(map.Width - 1, candidate.X + radius); x++)
+                    if (map.FeatureAt(x, y) == feature &&
+                        (x - candidate.X) * (double)(x - candidate.X) + (y - candidate.Y) * (double)(y - candidate.Y) < spacingSquared)
+                    {
+                        crowded = true;
+                        break;
+                    }
+            if (!crowded) map.SetFeature(candidate.X, candidate.Y, feature);
         }
     }
 }
@@ -116,6 +141,7 @@ public static class DefaultFeatures
             BaseDensity = 0.012,
             ClusterCoverage = 0.22,
             ClusterDensity = 0.55,
+            MinimumSpacing = WorldScale.NaturalTreeSpacing,
         },
         Description = "Woodland (cleared when built over)",
     };

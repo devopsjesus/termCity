@@ -28,7 +28,18 @@ public static class BuildingReport
         rows.Add(Row("Upkeep", $"{Fmt.Money(game.Config.FullRules ?
             (int)Math.Round(building.WeeklyUpkeep * game.Budget.Funding(building.Service)) : 0)}/week"));
         if (building.Capacity > 0) rows.Add(Row("Capacity", ChoiceHelpContent.CapacityText(building)));
-        if (building.Radius > 0)
+        int roster = SettlementState.RosterCapacity(building);
+        if (roster > 0)
+        {
+            var home = new Pos(footprint.X, footprint.Y);
+            var units = game.Settlement?.Defenders.Where(d => d.Home == home && d.Health > 0).ToArray() ?? [];
+            rows.Add(Row("Roster", $"{units.Length}/{roster} living defenders; replacements funded by upkeep"));
+            rows.Add(Row("Orders", $"{units.Count(d => d.Order == DefenderOrder.Automatic)} automatic; " +
+                $"{units.Count(d => d.Order == DefenderOrder.Move)} moving; {units.Count(d => d.Order == DefenderOrder.Attack)} attacking assigned targets"));
+            rows.Add(Row("Recruitment", game.Insolvent || game.Budget.Funding(building.Service) <= 0
+                ? "Stopped: restore treasury and garrison funding" : "2 siege seconds per recruit; 18-second casualty replacement cooldown"));
+        }
+        if (building.Radius > 0 && roster == 0)
         {
             rows.Add(Row("Staffing", $"{building.StaffingCapacity:N0} residents at full funding"));
             rows.Add(Row("Response target", $"{building.ResponseTargetDays:0.00} days; no distance cutoff"));

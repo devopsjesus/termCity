@@ -16,6 +16,9 @@ public enum PlacementKind
     RoadTemplate,
     Settlement,
     WallDefense,
+    WallRun,
+    Gate,
+    RemoveWall,
 }
 
 /// <summary>
@@ -25,7 +28,8 @@ public enum PlacementKind
 public sealed record PlacementPreview(
     PlacementKind Kind, CellRect Area, Quote Quote, string Name, RoadType? Road = null, BuildingType? Building = null,
     IReadOnlySet<Pos>? Cells = null, IReadOnlySet<Pos>? ValidCells = null, RoadTemplate? Template = null,
-    IReadOnlyList<Pos>? RoadStroke = null, int Rotation = 0, WallDefenseKind Defense = WallDefenseKind.None)
+    IReadOnlyList<Pos>? RoadStroke = null, int Rotation = 0, WallDefenseKind Defense = WallDefenseKind.None,
+    WallRunPlan? WallPlan = null, IReadOnlyList<IReadOnlyList<System.Numerics.Vector2>>? WallEnclosures = null)
 {
     /// <summary>Whether the placement covers any cell of <paramref name="block"/>.</summary>
     public bool Touches(CellRect block) => Cells is null
@@ -37,7 +41,8 @@ public sealed record PlacementPreview(
         PlacementKind.Road => ValidCells?.Contains(new(x, y)) ?? game.CanPlaceRoad(x, y, Road),
         PlacementKind.Building => ValidCells?.Contains(new(x, y)) == true,
         PlacementKind.RoadTemplate => ValidCells?.Contains(new(x, y)) == true,
-        PlacementKind.Settlement or PlacementKind.WallDefense => ValidCells?.Contains(new(x, y)) == true,
+        PlacementKind.Settlement or PlacementKind.WallDefense or PlacementKind.WallRun or PlacementKind.Gate or
+            PlacementKind.RemoveWall => ValidCells?.Contains(new(x, y)) == true,
         _ => game.Map.HasRoad(x, y) || game.Map.ZoneAt(x, y) != ZoneType.None ||
              game.Map.BuildingAt(x, y) is not null || game.Map.FeatureAt(x, y) is not null ||
              game.Map.PathWearAt(x, y) > 0,
@@ -104,8 +109,9 @@ public sealed partial class GameSession
     public bool BuildingToolActive => Preview?.Kind == PlacementKind.Building;
     public bool SettlementToolActive => Preview?.Kind == PlacementKind.Settlement;
     public bool WallDefenseToolActive => Preview?.Kind == PlacementKind.WallDefense;
+    public bool WallToolActive => Preview?.Kind is PlacementKind.WallRun or PlacementKind.Gate or PlacementKind.RemoveWall;
     public bool FixedPlacementToolActive => BuildingToolActive || Preview?.Kind == PlacementKind.RoadTemplate ||
-        SettlementToolActive || WallDefenseToolActive;
+        SettlementToolActive || WallDefenseToolActive || WallToolActive;
     public bool MapNavigationAllowed => Prompt is null &&
         (Preview is null || RoadToolActive || FixedPlacementToolActive);
     public string? FixedPlacementError
@@ -113,9 +119,13 @@ public sealed partial class GameSession
         get
         {
             if (SettlementToolActive)
-                return _settlementAnchor is null ? null : Game.SettlementPlacementError(Preview!.Area);
+                return _settlementAnchor is null ? null : Game.SettlementPlacementError(Preview!.Area, SettlementGateSide);
             if (WallDefenseToolActive)
-                return Game.WallDefensePlacementError(Cursor, Preview!.Defense);
+                return Game.WallDefensePlacementError(Cursor, Preview!.Defense, SelectedWallComponent?.Id);
+            if (WallToolActive)
+                return Preview!.Kind == PlacementKind.RemoveWall
+                    ? SelectedWallComponent is not null ? null : "Choose an existing wall section."
+                    : Preview.WallPlan?.Error;
             if (Preview?.Template is not { } template) return BuildingPlacementError;
             if (Game.RoadTemplatePlacementError(template, new(Preview.Area.X, Preview.Area.Y)) is { } error) return error;
             return Preview.Quote.Cost > Game.Money
@@ -123,10 +133,10 @@ public sealed partial class GameSession
                 : null;
         }
     }
-    public string? FixedPlacementWarning => SettlementToolActive
+    public string? FixedPlacementWarning => WallToolActive ? WallPlacementHint : SettlementToolActive
         ? _settlementAnchor is null ? "Motte and Bailey: click the first corner of the enclosure."
             : $"{Preview!.Area.Width}x{Preview.Area.Height} bailey, {Fmt.Money(Preview.Quote.Cost)}; click or Enter to found; Esc cancels."
-        : WallDefenseToolActive ? $"{Preview!.Name}: choose an intact wall top; click or Enter mounts; Esc cancels."
+        : WallDefenseToolActive ? $"{Preview!.Name}: choose an intact wall top; R flips a new wall's defended face; Enter mounts; Esc cancels."
         : Preview?.Template is not null ? Preview.Summary + "; click or Enter to place."
         : BuildingPlacementWarning;
     public string? BuildingPlacementError => Preview?.Building is { } building
@@ -253,6 +263,12 @@ public sealed partial class GameSession
             MoveSettlementPlacement(position);
         else if (WallDefenseToolActive)
             MoveWallDefensePlacement(position);
+        else if (WallToolActive)
+        {
+            Cursor = Clamp(position);
+            RefreshWallPlacement();
+            FollowCursor();
+        }
         else if (Preview?.Template is { } template)
         {
             Cursor = Clamp(position);
@@ -404,6 +420,23 @@ public sealed partial class GameSession
             RefreshSettlementPlacement();
             return ActionResult.Ok("First corner set. Move to the opposite corner, then click or Enter to found the bailey.");
         }
+        if (preview.Kind == PlacementKind.WallRun && _wallAnchor is null)
+        {
+            _wallAnchor = Game.SnapWallPoint(new(Cursor.X + .5f, Cursor.Y + .5f));
+            RefreshWallPlacement();
+            return ActionResult.Ok("Wall anchor set. Choose an endpoint; click or Enter builds the entire run.");
+        }
+        if (preview.Kind == PlacementKind.RemoveWall)
+        {
+            var cell = Cursor;
+            int? wallId = SelectedWallComponent?.Id;
+            if (wallId is null) return Complete(ActionResult.Fail("Choose an existing wall section."));
+            ShowPrompt("Remove wall section",
+                "Remove this section? Newly exposed areas stop accepting arrivals, but existing residents remain.",
+                [new("Remove", () => { Execute(() => Game.RemoveWallSection(cell, wallId)); ClosePrompt(); RefreshWallPlacement(); }),
+                 new("Cancel", ClosePrompt)]);
+            return ActionResult.Ok("Confirm removal of the selected section.");
+        }
 
         var result = Execute(() => preview.Kind switch
         {
@@ -415,12 +448,21 @@ public sealed partial class GameSession
                 Game.BuildRoadTemplate(template, new(preview.Area.X, preview.Area.Y)),
             PlacementKind.Demolish => Game.Demolish(preview.Cells ?? preview.Area.Cells()),
             PlacementKind.Settlement => Game.FoundSettlement(preview.Area, SettlementGateSide),
-            PlacementKind.WallDefense => Game.PlaceWallDefense(Cursor, preview.Defense),
+            PlacementKind.WallDefense => Game.PlaceWallDefense(Cursor, preview.Defense, SelectedWallComponent?.Id,
+                preview.Rotation == 2 ? -1 : 1),
+            PlacementKind.WallRun or PlacementKind.Gate when preview.WallPlan is { } plan =>
+                Game.BuildWallRun(plan.Start, plan.End, plan.Gate),
             _ => ActionResult.Fail("No building type selected."),
         }, preview.Building is { } type ? Game.BuildingPlacementWarning(type, preview.Area) : null);
         if (result.Success)
         {
-            if (preview.Kind == PlacementKind.Road)
+            if (preview.Kind == PlacementKind.WallRun && preview.WallPlan is { } placed)
+            {
+                _wallAnchor = placed.End;
+                RefreshWallPlacement();
+            }
+            else if (preview.Kind == PlacementKind.Gate) RefreshWallPlacement();
+            else if (preview.Kind == PlacementKind.Road)
             {
                 RoadToolActive = true;
                 _lineRoad = preview.Road ?? Game.DefaultRoad;
@@ -450,6 +492,7 @@ public sealed partial class GameSession
 
         Preview = null;
         _settlementAnchor = null;
+        _wallAnchor = null;
         RoadToolActive = false;
         _lineRoad = null;
         var menu = _previewMenu;
@@ -468,14 +511,16 @@ public sealed partial class GameSession
 
         var road = RoadToolActive ? _lineRoad : null;
         var template = Preview?.Template;
+        PlacementKind? wallKind = WallToolActive ? Preview!.Kind : null;
         var cursor = Cursor;
         var roadMenu = _previewMenu;
         void ResumeRoadPlacement()
         {
-            if (road is null && template is null) return;
+            if (road is null && template is null && wallKind is null) return;
             PlaceCursor(cursor);
             if (road is not null) BeginRoadLine(road);
             else if (template is not null) PreviewRoadTemplate(template);
+            else if (wallKind is { } kind) BeginWallPlacement(kind);
             _previewMenu = roadMenu;
         }
         Game.Paused = true;

@@ -15,6 +15,8 @@ internal static class ConstructionKeyboardSmoke
         var session = host.Session;
         var game = session.Game;
         game.Paused = true;
+        typeof(CityGame).GetProperty(nameof(game.Money))!.SetValue(game, Math.Max(game.Money, 200_000));
+        game.Touch();
         session.ClosePrompt();
         session.ClearSelection();
         var rail = Descendants(host).OfType<ScrollContainer>().Single(node => node.Name == "ConstructionSidebar");
@@ -98,12 +100,17 @@ internal static class ConstructionKeyboardSmoke
         {
             host.Map.SetPerspective(true);
             session.PlaceCursor(cell);
-            session.SetZoom(1);
+            session.SetZoom(game.Settlement!.Walls.Any(w => w.Cell == cell) ? 0 : 1);
             host.Map.RefreshCells();
             session.CenterOn(cell);
             await Frames(host);
             var view = host.Map.Perspective!;
             var wall = game.Settlement!.Walls.FirstOrDefault(w => w.Cell == cell);
+            if (wall is null)
+            {
+                while (view.Elevation != 50) view.Tilt();
+                await Frames(host);
+            }
             Vector2 Point() => view.ScreenPoint(wall is null
                 ? new(cell.X + 0.5f, TerrainSprite.Elevation(game.Map, cell.X, cell.Y), cell.Y + 0.5f)
                 : view.WallTop(wall) - Vector3.Up * 0.2f);
@@ -156,10 +163,19 @@ internal static class ConstructionKeyboardSmoke
             "Keypad Enter must Add a valid defense immediately to the right-clicked tower.");
 
         var woodlot = game.Map.Content.Buildings.Get("Woodlot");
-        var cramped = game.Settlement.Bounds.Cells().First(cell => game.Settlement.ContainsInterior(cell) &&
+        var crampedCandidates = game.Settlement.Bounds.Cells().Where(cell => game.Settlement.ContainsInterior(cell) &&
             game.Map.BuildingAt(cell.X, cell.Y) is null && game.BuildingPlacementError(well, cell.X, cell.Y) is null &&
-            game.BuildingPlacementError(woodlot, cell.X, cell.Y) is not null);
-        await RightClick(cramped);
+            game.BuildingPlacementError(woodlot, cell.X, cell.Y) is not null)
+            .OrderBy(cell => Math.Abs(cell.X - target.X) + Math.Abs(cell.Y - target.Y)).ToArray();
+        Pos cramped = default;
+        foreach (var candidate in crampedCandidates)
+        {
+            session.ClosePrompt();
+            await RightClick(candidate);
+            if (session.Prompt?.Title != "Area menu") continue;
+            cramped = candidate;
+            break;
+        }
         Require(session.Prompt?.Title == "Area menu", "The cramped test point must be an empty cell.");
         Choice("Services");
         await Frames(host);
@@ -167,7 +183,9 @@ internal static class ConstructionKeyboardSmoke
         Choice("Woodlot");
         Require(session.Preview?.Building == woodlot && session.BuildingPlacementError is not null &&
             game.Money == before && session.MessageKind == MessageKind.Error,
-            "A building that does not fit must remain an unpaid movable preview with an explicit placement error.");
+            $"A building that does not fit must remain an unpaid movable preview with an explicit placement error: " +
+            $"preview={session.Preview?.Building?.Name}, error={session.BuildingPlacementError}, " +
+            $"money={game.Money}/{before}, kind={session.MessageKind}, cursor={session.Cursor}, cramped={cramped}, message={session.Message}.");
         session.CancelPreview();
         session.ClosePrompt();
         await RightClick(Spot(well));

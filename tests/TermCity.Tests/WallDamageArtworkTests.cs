@@ -68,6 +68,59 @@ public class WallDamageArtworkTests
     }
 
     [Fact]
+    public void DeckCapsDoNotShareExposedTopFacesWithTheWallBody()
+    {
+        foreach (bool tower in new[] { false, true })
+            foreach (double health in new[] { 1, 0.875, 0.75, 0.5, 0.33, 0.125, 0.001 })
+            {
+                var wall = Wall(health, tower);
+                var parts = WallDamageLayout.Fragments(wall);
+                foreach (var cap in parts.Where(p => p.Kind == WallFragmentKind.Trim))
+                    Assert.DoesNotContain(parts, body => body.Kind == WallFragmentKind.Body &&
+                        Math.Abs(body.Center.Y + body.Size.Y / 2 - cap.Center.Y - cap.Size.Y / 2) < 0.00001f &&
+                        Math.Abs(body.Center.X - cap.Center.X) < (body.Size.X + cap.Size.X) / 2 - 0.00001f &&
+                        Math.Abs(body.Center.Z - cap.Center.Z) < (body.Size.Z + cap.Size.Z) / 2 - 0.00001f);
+            }
+    }
+
+    [Fact]
+    public void WallsStayVisuallyIntactUntilEightyFivePercent()
+    {
+        foreach (bool tower in new[] { false, true })
+            foreach (bool gate in new[] { false, true })
+            {
+                var wall = Wall(1, tower, gate);
+                var intact = WallDamageLayout.Fragments(wall);
+                foreach (double health in new[] { 0.99999, 0.95, 0.90, 0.850001 })
+                {
+                    Set(wall, nameof(wall.Health), wall.MaxHealth * health);
+                    Assert.Equal(0, WallDamageLayout.DamageBand(wall));
+                    Assert.Equal(intact, WallDamageLayout.Fragments(wall));
+                }
+                Set(wall, nameof(wall.Health), wall.MaxHealth * 0.85);
+                Assert.True(WallDamageLayout.DamageBand(wall) > 0);
+                Assert.NotEqual(intact, WallDamageLayout.Fragments(wall));
+            }
+    }
+
+    [Fact]
+    public void GateLeavesHaveRaisedCrossbarsAndFastenersOnBothFaces()
+    {
+        var wall = Wall(1, gate: true);
+        var parts = WallDamageLayout.Fragments(wall);
+        var braces = parts.Where(p => p.Kind == WallFragmentKind.DoorBrace).ToArray();
+        Assert.Equal(18, braces.Length);
+        Assert.Equal(36, parts.Count(p => p.Kind == WallFragmentKind.DoorStud));
+        Assert.Equal(9, braces.Count(p => p.Center.Z > 0));
+        Assert.Equal(9, braces.Count(p => p.Center.Z < 0));
+        Assert.All(braces, part =>
+        {
+            Assert.True(Math.Abs(part.Center.Z) - part.Size.Z / 2 >= .07999f);
+            Assert.True(part.Center.Y + part.Size.Y / 2 < WallDamageLayout.WalkHeight(wall));
+        });
+    }
+
+    [Fact]
     public void RepairRestoresOriginalShapeAndExtinguishesFlames()
     {
         var wall = Wall(1, tower: true);

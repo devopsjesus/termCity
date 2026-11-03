@@ -56,7 +56,7 @@ public class GodotPresentationTests
         Assert.True(options.PerspectivePerformanceTest);
         Assert.False(options.PerspectiveSmokeTest);
         Assert.Equal(640, options.Config.MapWidth);
-        Assert.Equal(384, options.Config.MapHeight);
+        Assert.Equal(640, options.Config.MapHeight);
     }
     [Fact(Skip = "Legacy road glyphs and painted overlay roads are superseded by mesh surfaces.")]
     public void EveryOverlayRetainsRenderedRoads()
@@ -282,7 +282,7 @@ public class GodotPresentationTests
         var options = GodotOptions.Parse(["--seed", "-42", "--size", "large", "--smoke-test"]);
         Assert.Equal(-42, options.Config.Seed);
         Assert.Equal(640, options.Config.MapWidth);
-        Assert.Equal(384, options.Config.MapHeight);
+        Assert.Equal(640, options.Config.MapHeight);
         Assert.True(options.SmokeTest);
         Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--size", "79x24"]));
         Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--seed", "2147483648"]));
@@ -319,7 +319,19 @@ public class GodotPresentationTests
         Assert.True(options.Load);
         Assert.Null(options.LoadPath);
         Assert.Equal(42, options.Config.Seed);
-        Assert.Equal(30, options.FramesPerSecond);
+        Assert.Equal(60, options.FramesPerSecond);
+    }
+
+    [Fact]
+    public void WallNetworkSmokeIsIsolatedAndUsesTheResponsiveDefaultFrameCap()
+    {
+        var options = GodotOptions.Parse(["--wall-network-smoke-test"]);
+        Assert.True(options.SmokeTest);
+        Assert.True(options.WallNetworkSmokeTest);
+        Assert.Equal(60, options.FramesPerSecond);
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--wall-network-smoke-test", "--load"]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--wall-network-smoke-test", "--settlement-smoke-test"]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--wall-network-smoke-test", "--size", "SF"]));
     }
 
     [Theory(Skip = "Legacy glyph-terrain animation is superseded by meshes and flow shaders.")]

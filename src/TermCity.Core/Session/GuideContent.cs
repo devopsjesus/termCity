@@ -83,9 +83,13 @@ public static class GuideContent
         "At Hamlet (100 souls), goblins approach and attack individual wall components.\n" +
         "Arrow towers fire automatically in range. Inspect wall health with right-click.\n" +
         "Garrison mounts oil cauldrons, rocks, ballistae and trebuchets on intact wall tops.\n" +
-        "Each weapon has a range, reload time and splash radius; siege engines have blind spots.\n" +
+        "Drops hit local station footprints at ground contact; missiles need clear trajectories.\n" +
+        "Reach rings are maximum range, not guaranteed coverage; siege engines have blind spots.\n" +
         "Later milestones unlock stronger weapons and stone, then iron-reinforced stone walls.\n" +
-        "Repair breaches for gold. Goblin waves strengthen as permanent milestones increase.",
+        "Civilians repair even during combat; gold pays for immediate repairs.\n" +
+        "At 100 souls, Archer Barracks and Guard Posts recruit defenders. Click/Shift-click to\n" +
+        "select; right-click to move or attack. Troops return to automatic defense afterward.\n" +
+        "Orcs join from 250 souls; only their first approach has a wall-sector warning.",
         "LEGACY SANDBOX\nManual zoning, roads and existing city scenarios remain available.");
 
     private static string Milestones(CityGame game)

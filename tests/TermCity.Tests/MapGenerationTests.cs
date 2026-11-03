@@ -20,6 +20,26 @@ public class MapGenerationTests
     }
 
     [Fact]
+    public void NaturalTreePlacementKeepsVisibleGapsWithoutGridRows()
+    {
+        var map = Generate(42);
+        var tree = map.Content.Features.Get("Tree");
+        var positions = Enumerable.Range(0, map.Width * map.Height)
+            .Where(i => map.FeatureLayer[i] == tree.Id).Select(map.PosOf).ToArray();
+        int radius = (int)Math.Ceiling(WorldScale.NaturalTreeSpacing);
+        Assert.True(positions.Length > 100, $"The map must retain woodland: trees={positions.Length}");
+        foreach (var p in positions)
+            for (int y = Math.Max(0, p.Y - radius); y <= Math.Min(map.Height - 1, p.Y + radius); y++)
+                for (int x = Math.Max(0, p.X - radius); x <= Math.Min(map.Width - 1, p.X + radius); x++)
+                    if ((x != p.X || y != p.Y) && map.FeatureAt(x, y) == tree)
+                        Assert.True((x - p.X) * (double)(x - p.X) + (y - p.Y) * (double)(y - p.Y) >=
+                            WorldScale.NaturalTreeSpacing * WorldScale.NaturalTreeSpacing,
+                            $"Crowded trunks at {p} and ({x},{y}).");
+        Assert.True(positions.Select(p => p.X % 4).Distinct().Count() >= 3);
+        Assert.True(positions.Select(p => p.Y % 4).Distinct().Count() >= 3);
+    }
+
+    [Fact]
     public void DifferentSeedsProduceDifferentMaps()
     {
         Assert.NotEqual(Generate(1).TerrainLayer, Generate(2).TerrainLayer);
@@ -46,11 +66,11 @@ public class MapGenerationTests
     }
 
     [Fact]
-    public void DefaultMapIsTwoByFourScreens()
+    public void DefaultMapIsTheSquareSmallPreset()
     {
         var map = Generate(1);
-        Assert.Equal(160, map.Width);
-        Assert.Equal(96, map.Height);
+        Assert.Equal(320, map.Width);
+        Assert.Equal(320, map.Height);
     }
 
     [Theory]

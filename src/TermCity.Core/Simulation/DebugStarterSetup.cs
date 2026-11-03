@@ -19,29 +19,34 @@ public sealed record DebugStarterSetup(Pos Spur, CellRect Residential, CellRect 
             throw new InvalidOperationException("The Debug starter preset requires a generated starting spur.");
         var well = map.Content.Buildings.Get("Town Well");
         var woodlot = map.Content.Buildings.Get("Woodlot");
-        var nearby = new CellRect(spur.X - 16, spur.Y - 16, 33, 33).Cells()
+        var nearby = new CellRect(spur.X - 48, spur.Y - 48, 97, 97).Cells()
             .Where(map.InBounds).OrderBy(p => Distance(p, spur)).ThenBy(p => p.Y).ThenBy(p => p.X).ToArray();
-        var wells = nearby.Where(p => Distance(p, spur) <= 8 && game.CanPlaceBuilding(well, p.X, p.Y))
+        var wells = nearby.Where(p => Distance(p, spur) <= 32 && game.CanPlaceBuilding(well, p.X, p.Y))
             .Select(p => well.FootprintAt(p.X, p.Y)).ToArray();
-        var woodlots = nearby.Where(p => Distance(p, spur) <= 8 && game.CanPlaceBuilding(woodlot, p.X, p.Y))
+        var woodlots = nearby.Where(p => Distance(p, spur) <= 32 && game.CanPlaceBuilding(woodlot, p.X, p.Y))
             .Select(p => woodlot.FootprintAt(p.X, p.Y)).ToArray();
         DebugStarterSetup? setup = null;
-        foreach (var origin in nearby)
+        var home = map.Content.Buildings.ForZone(ZoneType.Residential)!;
+        foreach (var (columns, rows) in new[] { (3, 6), (6, 3), (4, 5), (5, 4) })
         {
-            var residential = new CellRect(origin.X, origin.Y, 4, 10);
-            if (!residential.Cells().All(p => game.CanBuildOn(p.X, p.Y))) continue;
-            foreach (var lot in woodlots)
+            foreach (var origin in nearby)
             {
-                if (Overlaps(lot, residential)) continue;
-                var water = wells.FirstOrDefault(area => !Overlaps(area, residential) && !Overlaps(area, lot));
-                if (water.Width == 0) continue;
-                setup = new(spur, residential, water, lot);
-                break;
+                var residential = new CellRect(origin.X, origin.Y, columns * home.Width, rows * home.Height);
+                if (!residential.Cells().All(p => game.CanBuildOn(p.X, p.Y))) continue;
+                foreach (var lot in woodlots)
+                {
+                    if (Overlaps(lot, residential)) continue;
+                    var water = wells.FirstOrDefault(area => !Overlaps(area, residential) && !Overlaps(area, lot));
+                    if (water.Width == 0) continue;
+                    setup = new(spur, residential, water, lot);
+                    break;
+                }
+                if (setup is not null) break;
             }
             if (setup is not null) break;
         }
         if (setup is null)
-            throw new InvalidOperationException("No complete 4x10 starter settlement fits beside this map's starting spur.");
+            throw new InvalidOperationException("No complete realistic starter plots and supplies fit beside this map's starting spur.");
         int cost = game.QuoteBuilding(well, setup.Well).Cost + game.QuoteBuilding(woodlot, setup.Woodlot).Cost;
         if (game.Money < cost)
             throw new InvalidOperationException($"The Debug starter preset needs {cost} gold for its well and woodlot.");
@@ -50,8 +55,8 @@ public sealed record DebugStarterSetup(Pos Spur, CellRect Residential, CellRect 
         Require(game.PlaceBuilding(woodlot, setup.Woodlot));
         var zoning = game.Designate(setup.Residential, ZoneType.Residential);
         Require(zoning);
-        if (zoning.Cells != 40)
-            throw new InvalidOperationException("The Debug starter preset failed to designate all 40 residential cells.");
+        if (zoning.Cells != setup.Residential.Area)
+            throw new InvalidOperationException("The Debug starter preset failed to designate every complete residential plot.");
         game.Paused = false;
         return setup;
     }

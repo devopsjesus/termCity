@@ -6,6 +6,60 @@ namespace TermCity.Tests;
 
 public class CompactBuildingArtworkTests
 {
+    [Fact]
+    public void StoneBasesDoNotShareTopFacesWithBuriedTimberBeams()
+    {
+        for (int variant = 0; variant < 64; variant++)
+        {
+            var look = HouseAppearance.At(variant % 8, variant / 8, 2);
+            foreach (var plinth in look.BaseParts(2, 2, 2))
+                foreach (var block in look.BlocksOnPlot(2, 2, 2))
+                    Assert.DoesNotContain(look.Parts(block), part => !part.Roof &&
+                        Math.Abs(part.Center.Y + part.Size.Y / 2 - plinth.Center.Y - plinth.Size.Y / 2) < 0.00001f &&
+                        Math.Abs(block.X + part.Center.X - plinth.Center.X) <
+                            (part.Size.X + plinth.Size.X) / 2 - 0.00001f &&
+                        Math.Abs(block.Z + part.Center.Z - plinth.Center.Z) <
+                            (part.Size.Z + plinth.Size.Z) / 2 - 0.00001f);
+        }
+    }
+
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(2, 2)]
+    [InlineData(2, 3)]
+    public void HouseBasesAndStepsFormADisjointUnion(int width, int depth)
+    {
+        for (int variant = 0; variant < 64; variant++)
+        {
+            var look = HouseAppearance.At(variant % 8, variant / 8, 2);
+            var parts = look.BaseParts(width, depth, 2);
+            Assert.NotEmpty(parts);
+            for (int a = 0; a < parts.Count; a++)
+            {
+                Assert.InRange(parts[a].Center.Y + parts[a].Size.Y / 2, 0.07999f, 0.08001f);
+                Assert.True(parts[a].Size.X > 0 && parts[a].Size.Z > 0);
+                for (int b = a + 1; b < parts.Count; b++)
+                    Assert.False(Math.Abs(parts[a].Center.X - parts[b].Center.X) <
+                            (parts[a].Size.X + parts[b].Size.X) / 2 - 0.00001f &&
+                        Math.Abs(parts[a].Center.Z - parts[b].Center.Z) <
+                            (parts[a].Size.Z + parts[b].Size.Z) / 2 - 0.00001f);
+            }
+            var rectangles = look.BlocksOnPlot(width, depth, 2)
+                .Select(block => (X: block.X, Z: block.Z, Width: block.Width + 0.04f, Depth: block.Depth + 0.04f))
+                .Append((X: 0f, Z: look.OnPlot(width, depth, 2).Depth / 2 + 0.04f, Width: 0.2f, Depth: 0.12f))
+                .ToArray();
+            var xs = rectangles.SelectMany(r => new[] { r.X - r.Width / 2, r.X + r.Width / 2 }).Distinct().Order().ToArray();
+            var zs = rectangles.SelectMany(r => new[] { r.Z - r.Depth / 2, r.Z + r.Depth / 2 }).Distinct().Order().ToArray();
+            double area = 0;
+            for (int x = 1; x < xs.Length; x++)
+                for (int z = 1; z < zs.Length; z++)
+                    if (rectangles.Any(r => Math.Abs((xs[x] + xs[x - 1]) / 2 - r.X) < r.Width / 2 &&
+                        Math.Abs((zs[z] + zs[z - 1]) / 2 - r.Z) < r.Depth / 2))
+                        area += (xs[x] - xs[x - 1]) * (zs[z] - zs[z - 1]);
+            Assert.InRange(Math.Abs(parts.Sum(p => (double)p.Size.X * p.Size.Z) - area), 0, 0.00001);
+        }
+    }
+
     [Theory]
     [InlineData(1, 1)]
     [InlineData(1, 2)]
@@ -23,7 +77,7 @@ public class CompactBuildingArtworkTests
                 Assert.InRange(dimensions.Depth, depth * 0.6f, depth * 0.8f);
                 Assert.True(dimensions.Width + 0.08f < width);
                 Assert.True(dimensions.Depth + 0.08f < depth);
-                Assert.InRange(dimensions.Height + dimensions.RoofRise, 0.6f, 1.05f);
+                Assert.InRange(dimensions.Height + dimensions.RoofRise, 0.6f, 1.4f);
                 Assert.Equal(appearance.Height, dimensions.Height);
                 Assert.Equal(appearance.RoofRise, dimensions.RoofRise);
                 Assert.Equal(level > 1 ? 2 : 1, dimensions.Stories);
@@ -169,7 +223,7 @@ public class CompactBuildingArtworkTests
                     Assert.True(Math.Abs(block.Z) + block.Depth / 2 + 0.04f < depth / 2f);
                     Assert.InRange(block.RoofSteps, 3, 4);
                     Assert.Equal(block.RoofRise, block.RoofSteps * HouseBlock.RoofStepHeight, 5);
-                    Assert.InRange(block.Height, 0.44f, 0.72f);
+                    Assert.InRange(block.Height, 0.48f, 1.00f);
                 }
                 if (blocks.Count == 2)
                 {
@@ -240,7 +294,7 @@ public class CompactBuildingArtworkTests
                     for (int floor = 0; floor < block.Stories; floor++)
                     {
                         var panel = block.WallPanel(floor);
-                        Assert.InRange(panel.Height, 0.199f, 0.321f);
+                        Assert.InRange(panel.Height, 0.319f, 0.381f);
                     }
                     for (int step = 0; step < block.RoofSteps; step++)
                     {

@@ -15,7 +15,7 @@ public class BuildingReportTests
         var game = TestCity.Flat(rules: CityRules.Full);
         game.HighestMilestone = 500;
         var granary = game.Map.Content.Buildings.Get("Granary");
-        var position = connected ? new Pos(80, 18) : new Pos(30, 5);
+        var position = connected ? new Pos(80, 15) : new Pos(30, 5);
         Assert.True(game.PlaceBuilding(granary, new(position.X, position.Y, 1, 1)).Success);
         var secondCell = position.Offset(1, 0);
         var session = new GameSession(game);

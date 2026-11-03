@@ -18,16 +18,16 @@ public class SettlementTests
             game.EventOccurred += events.Add;
         }
 
-        foreach (int y in new[] { 18, 21 })
+        foreach (int y in new[] { 10, 21 })
         {
-            Assert.True(game.Designate(new CellRect(10, y, 50, 2), ZoneType.Residential).Success);
+            Assert.True(game.Designate(new CellRect(10, y, 50, 10), ZoneType.Residential).Success);
         }
 
-        Assert.True(game.Designate(new CellRect(60, 18, 10, 2), ZoneType.Commercial).Success);
-        Assert.True(game.Designate(new CellRect(60, 21, 10, 2), ZoneType.Industrial).Success);
-        foreach (var (name, x) in new[] { ("Charcoal Burners", 80), ("Town Well", 82), ("Town Well", 84) })
+        Assert.True(game.Designate(new CellRect(60, 10, 10, 10), ZoneType.Commercial).Success);
+        Assert.True(game.Designate(new CellRect(60, 21, 10, 10), ZoneType.Industrial).Success);
+        foreach (var (name, x) in new[] { ("Charcoal Burners", 80), ("Town Well", 92), ("Town Well", 98) })
         {
-            Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get(name), new CellRect(x, 19, 1, 1)).Success);
+            Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get(name), new CellRect(x, 10, 1, 1)).Success);
         }
 
         TestCity.Advance(game, weeks);

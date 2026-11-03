@@ -1,4 +1,5 @@
 using Godot;
+using TermCity.Core.Simulation;
 using TermCity.Core.Rendering;
 using TermCity.Core.Session;
 using TermCity.Core.Util;
@@ -108,14 +109,30 @@ public partial class CityMinimap : Control
             [Colors.White], [Vector2.Zero, Vector2.Right, Vector2.One, Vector2.Down], _texture);
         if (game.Settlement is { } settlement)
         {
-            var bounds = settlement.Bounds;
-            var walls = new Vector2[] { MapPointToScreen(new(bounds.X, bounds.Y)),
-                MapPointToScreen(new(bounds.Right + 1, bounds.Y)), MapPointToScreen(new(bounds.Right + 1, bounds.Bottom + 1)),
-                MapPointToScreen(new(bounds.X, bounds.Bottom + 1)), MapPointToScreen(new(bounds.X, bounds.Y)) };
-            DrawPolyline(walls, new Color("#d2bea0"), 1.5f);
-            foreach (var goblin in settlement.Goblins)
+            foreach (var group in settlement.NetworkSpans().Where(s => s.Intact).GroupBy(s => s.IsGate))
+                DrawMultiline(group.SelectMany(span => new[] { MapPointToScreen(new(span.A.X, span.A.Y)),
+                    MapPointToScreen(new(span.B.X, span.B.Y)) }).ToArray(),
+                    group.Key ? new Color("#88bb99") : new Color("#d2bea0"), 1.5f);
+            foreach (var goblin in settlement.Enemies)
                 DrawRect(new(MapPointToScreen(new((float)goblin.X, (float)goblin.Y)) - Vector2.One, Vector2.One * 2),
-                    new Color("#ef7777"));
+                    goblin.Definition.IsTroll ? new Color("#c59bff") :
+                    goblin.Kind == SiegeEnemyKind.Orc ? new Color("#ffb347") : new Color("#ef7777"));
+            foreach (var unit in settlement.Defenders)
+                DrawRect(new(MapPointToScreen(new((float)unit.X, (float)unit.Y)) - Vector2.One, Vector2.One * 2),
+                    new Color("#8fc7d4"));
+            if (settlement.FirstOrcApproach is { } side)
+            {
+                var bounds = settlement.WallBounds;
+                var walls = new Vector2[] { MapPointToScreen(new(bounds.X, bounds.Y)),
+                    MapPointToScreen(new(bounds.Right + 1, bounds.Y)), MapPointToScreen(new(bounds.Right + 1, bounds.Bottom + 1)),
+                    MapPointToScreen(new(bounds.X, bounds.Bottom + 1)), MapPointToScreen(new(bounds.X, bounds.Y)) };
+                int start = side switch
+                {
+                    BaileyGateSide.Top => 0, BaileyGateSide.Right => 1,
+                    BaileyGateSide.Bottom => 2, _ => 3,
+                };
+                DrawLine(walls[start], walls[start + 1], new Color("#ffcc50"), 3);
+            }
         }
         var outline = ViewOutline;
         for (int corner = 0; corner < outline.Length; corner++)

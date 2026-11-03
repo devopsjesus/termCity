@@ -294,11 +294,24 @@ public sealed record BuildingSprite(int Width, int Height, int Lift, byte[] Pixe
             Rect(2, lift + 8, 3, 2, timber);
             Rect(width - 5, lift + 10, 3, 2, tile);
         }
+        else if (type.Name is "Archer Barracks" or "Guard Post")
+        {
+            Yard(1, lotTop, width - 3, lotDepth, paving);
+            House(2, bodyY, bodyWidth, bodyDepth - 2, 7,
+                type.Name == "Archer Barracks" ? plaster : stone, slate, framed: true);
+            Rect(bodyWidth - 1, bodyY - 5, 1, 10, timber);
+            Rect(bodyWidth, bodyY - 5, 4, 3, Rgb.Hex(type.Name == "Archer Barracks" ? 0x59777d : 0x996454));
+            for (int x = 3; x < bodyWidth; x += 5)
+            {
+                Rect(x, bottom - 5, 3, 4, timber);
+                Rect(x + 1, bottom - 4, 1, 2, type.Name == "Archer Barracks" ? thatch : slate);
+            }
+        }
         else if (type.Service == ServiceKind.Defence || type.Name == "Gaol")
         {
             bool palisade = type.Name == "Motte and Bailey";
             int wallTop = lift + 10, wallBottom = bottom - 4;
-            var material = palisade ? timber : stone;
+            var material = palisade ? Rgb.Hex(PalisadeArtwork.BarkColor) : stone;
             Yard(2, wallTop, width - 4, wallBottom - wallTop, paving.Scale(0.85));
             Rect(2, wallTop - 3, width - 4, 5, material.Scale(0.9));
             Rect(2, wallTop, 3, wallBottom - wallTop, material);
@@ -308,10 +321,30 @@ public sealed record BuildingSprite(int Width, int Height, int Lift, byte[] Pixe
             else
                 FlatRoof(7, wallTop + 3, Math.Max(8, width - 14), Math.Max(7, lotDepth / 3), 8, material);
             Rect(2, wallBottom - 4, width - 4, 5, material);
+            if (palisade)
+                for (int x = 3; x < width - 3; x += 3)
+                {
+                    var bark = Rgb.Hex(PalisadeArtwork.BarkAt(x, 1, variant));
+                    Rect(x, wallTop - 3, 2, 5, bark.Scale(0.9));
+                    Rect(x, wallBottom - 4, 2, 5, bark);
+                }
             for (int x = 3; x < width - 3; x += 3)
             {
-                Rect(x, wallTop - 5, 2, 2, material.Scale(1.15));
-                Rect(x, wallBottom - 6, 2, 2, material.Scale(1.15));
+                if (palisade)
+                {
+                    int rise = CellHash.Pick(x + 7, variant, 3);
+                    var cap = Rgb.Hex(CellHash.Pick(x, variant, 3) == 0
+                        ? PalisadeArtwork.CutColor : PalisadeArtwork.CutShadeColor);
+                    Rect(x, wallTop - 4 - rise, 2, 1 + rise, Rgb.Hex(PalisadeArtwork.BarkAt(x, -1, variant)));
+                    Rect(x, wallBottom - 5 - rise, 2, 1 + rise, Rgb.Hex(PalisadeArtwork.BarkAt(x, 1, variant)));
+                    Rect(x, wallTop - 4 - rise, 1, 1, cap);
+                    Rect(x, wallBottom - 5 - rise, 1, 1, cap);
+                }
+                else
+                {
+                    Rect(x, wallTop - 5, 2, 2, material.Scale(1.15));
+                    Rect(x, wallBottom - 6, 2, 2, material.Scale(1.15));
+                }
             }
             Rect(width / 2 - 2, wallBottom - 2, 4, 4, ink);
             Line(width / 2 - 2, wallBottom - 3, width / 2 + 1, wallBottom - 3, plaster);

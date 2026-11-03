@@ -1,5 +1,6 @@
 using TermCity.Core.Util;
 using TermCity.Core.World;
+using System.Numerics;
 
 namespace TermCity.Core.Simulation;
 
@@ -12,81 +13,157 @@ public sealed record WallDefenseDefinition(string Name, double Damage, double Ra
 
 public static class WallDefenses
 {
+    public static double MaximumReload => Enum.GetValues<WallDefenseKind>().Max(kind => Get(kind).ReloadSeconds);
     public static WallDefenseDefinition Get(WallDefenseKind kind) => kind switch
     {
-        WallDefenseKind.None => new("Tower arrows", 12, 10, 0, 0, 1.2, 0, 0),
-        WallDefenseKind.OilCauldron => new("Oil cauldron", 18, 2.5, 0, 2, 5, 600, 100),
-        WallDefenseKind.Rocks => new("Dropped rocks", 42, 3.5, 0, 1.5, 6, 350, 100),
-        WallDefenseKind.Ballista => new("Ballista", 65, 18, 3, 0, 4, 1_800, 250),
-        WallDefenseKind.Trebuchet => new("Trebuchet", 110, 28, 8, 3, 8, 4_000, 1_000),
+        WallDefenseKind.None => new("Tower arrows", 24, 10, 0, 0, 2, 0, 0),
+        WallDefenseKind.OilCauldron => new("Oil cauldron", 180, 2.5, 0, 0, 10, 600, 100),
+        WallDefenseKind.Rocks => new("Dropped rocks", 140, 3.5, 0, 0, 7, 350, 100),
+        WallDefenseKind.Ballista => new("Ballista", 240, 18, 3, 0, 6, 1_800, 250),
+        WallDefenseKind.Trebuchet => new("Trebuchet", 360, 28, 8, 2.5, 14, 4_000, 1_000),
         _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };
 }
 
 public sealed class WallComponent
 {
+    public const double RepairAnimationThreshold = 0.80;
+    internal SettlementState? Settlement;
+    public WallMaterial Material => Settlement?.MaterialFor(this) ?? BuiltMaterial ?? WallMaterial.Wood;
     private double _health, _maxHealth;
+    private bool _repairAnimationActive;
     internal WallComponent? SharedSection;
+    public int Id { get; internal set; }
+    public Vector2? Start { get; internal set; }
+    public Vector2? End { get; internal set; }
+    public WallMaterial? BuiltMaterial { get; internal set; }
+    public bool BelongsToFoundingWall { get; internal set; }
+    public bool IsOriginal => Start is null;
+    public Vector2 Center => Start is { } a && End is { } b ? (a + b) / 2 : new(Cell.X + .5f, Cell.Y + .5f);
+    public Vector2 Tangent => Start is { } a && End is { } b ? Vector2.Normalize(b - a) :
+        Settlement is { } settlement && Cell.Y != settlement.Bounds.Y && Cell.Y != settlement.Bounds.Bottom
+            ? -Vector2.UnitY : Vector2.UnitX;
+    public float Length => Start is { } a && End is { } b ? Vector2.Distance(a, b) : 1;
+    public double HealthUnits => IsTower ? 1 : Start is null ? SectionLength : Length;
+    public bool JunctionTower { get; internal set; }
     public Pos Cell { get; internal set; }
-    public double Health { get => SharedSection?.Health ?? _health; internal set { if (SharedSection is { } section) section.Health = value; else _health = value; } }
-    public double MaxHealth { get => SharedSection?.MaxHealth ?? _maxHealth; internal set { if (SharedSection is { } section) section.MaxHealth = value; else _maxHealth = value; } }
+    public double Health
+    {
+        get => SharedSection?.Health ?? _health;
+        internal set
+        {
+            if (SharedSection is { } section) section.Health = value;
+            else
+            {
+                bool blocked = BlocksEnclosure;
+                _health = value;
+                UpdateRepairAnimation();
+                if (blocked != BlocksEnclosure) Settlement?.InvalidateWallTopology(structureChanged: false);
+            }
+        }
+    }
+    public double MaxHealth
+    {
+        get => SharedSection?.MaxHealth ?? _maxHealth;
+        internal set
+        {
+            if (SharedSection is { } section) section.MaxHealth = value;
+            else
+            {
+                bool initializing = _maxHealth <= 0;
+                _maxHealth = value;
+                UpdateRepairAnimation(initializing);
+            }
+        }
+    }
+    public bool RepairAnimationActive
+    {
+        get => SharedSection?.RepairAnimationActive ?? _repairAnimationActive;
+        internal set
+        {
+            if (SharedSection is { } section) section.RepairAnimationActive = value;
+            else _repairAnimationActive = value;
+        }
+    }
+    private void UpdateRepairAnimation(bool allowStart = true)
+    {
+        if (_maxHealth <= 0) return;
+        if (_health >= _maxHealth) _repairAnimationActive = false;
+        else if (allowStart && _health <= _maxHealth * RepairAnimationThreshold) _repairAnimationActive = true;
+    }
     public Pos SectionAnchor => SharedSection?.Cell ?? Cell;
+    public int SectionId => SharedSection?.Id ?? Id;
     public CellRect SectionBounds { get; internal set; }
     public int SectionLength => Math.Max(1, SectionBounds.Area);
     public bool IsTower { get; internal set; }
     public bool IsGate { get; internal set; }
+    public bool IsGateWing { get; internal set; }
+    public bool BlocksEnclosure => Health > 0 && (!IsGate || MaxHealth <= 0 || Health / MaxHealth > .5);
     public WallDefenseKind Defense { get; internal set; }
+    public int DefenseFacing { get; internal set; } = 1;
     internal double ArrowCooldown, DefenseCooldown;
-}
-
-public sealed class Goblin
-{
-    public int Id { get; internal set; }
-    public double X { get; internal set; }
-    public double Y { get; internal set; }
-    public double Health { get; internal set; }
-    public double MaxHealth { get; internal set; }
-    public int Tier { get; internal set; }
-    public double BodyScale => 0.65 + Math.Min(5, Tier) * 0.1;
-    public double CollisionRadius => RadiusForTier(Tier);
-    internal static double RadiusForTier(int tier) => (0.65 + Math.Min(5, tier) * 0.1) * 0.62;
-    internal double PreviousX, PreviousY, WalkDistance, PreviousWalkDistance;
-    internal bool MotionInitialized;
-    internal List<Pos> Route = [];
-    internal int RouteIndex;
-    internal double AttackCooldown, BlockedSeconds;
 }
 
 public sealed class SiegeProjectile
 {
+    public int Id { get; internal set; }
+    public int SourceDefenderId { get; internal set; }
+    public int? TargetId { get; internal set; }
+    public bool Melee { get; internal set; }
+    public double Damage { get; internal set; }
+    public double Elapsed { get; internal set; }
+    public double Windup { get; internal set; }
+    public double TravelSeconds { get; internal set; }
+    public float ArcHeight { get; internal set; }
+    public bool Applied { get; internal set; }
+    public float WorldStartHeight { get; internal set; }
+    public float WorldEndHeight { get; internal set; }
+    public Vector2 FootprintCenter { get; internal set; }
+    public Vector2 CoverageOrigin { get; internal set; }
+    public Vector2 FootprintForward { get; internal set; }
+    public int StationIndex { get; internal set; } = -1;
+    public double ContactSeconds => Windup + TravelSeconds;
+    public int SourceWallId { get; internal set; }
+    public float DropHeight { get; internal set; }
+    public float StartHeight { get; internal set; } = 2.9f;
     public double StartX { get; internal set; }
     public double StartY { get; internal set; }
     public double EndX { get; internal set; }
     public double EndY { get; internal set; }
+    public float EndHeight { get; internal set; } = 0.5f;
     public double Progress { get; internal set; }
     public WallDefenseKind Kind { get; internal set; }
-    public double FlightSeconds => Kind is WallDefenseKind.None or WallDefenseKind.Ballista
-        ? Math.Clamp(Math.Sqrt(Math.Pow(EndX - StartX, 2) + Math.Pow(EndY - StartY, 2)) / 55, 0.08, 0.28)
-        : 0.65;
+    public double FlightSeconds => Id > 0 ? ContactSeconds +
+        (Kind == WallDefenseKind.OilCauldron ? Rendering.TowerDefenseArtwork.PourSeconds : .4) : Kind switch
+    {
+        WallDefenseKind.None or WallDefenseKind.Ballista =>
+            Math.Clamp(Math.Sqrt(Math.Pow(EndX - StartX, 2) + Math.Pow(EndY - StartY, 2)) / 55, 0.08, 0.28),
+        WallDefenseKind.OilCauldron or WallDefenseKind.Rocks =>
+            Rendering.TowerDefenseArtwork.WindupSeconds +
+            Rendering.TowerDefenseArtwork.FallSeconds(DropHeight > 0 ? DropHeight : StartHeight - EndHeight) +
+            (Kind == WallDefenseKind.OilCauldron ? Rendering.TowerDefenseArtwork.PourSeconds : 0) +
+            Rendering.TowerDefenseArtwork.ImpactSeconds,
+        _ => .65,
+    };
 }
 
 public sealed partial class SettlementState
 {
-    public const int MaximumGoblinSwarm = 120;
+    public const int MaximumEnemySwarm = 120;
     internal const int MaximumRouteLength = 64;
     public const int MinimumEnclosureSize = 12;
     public const int MaximumEnclosureSize = 160;
     internal const double StepSeconds = 0.1;
     internal readonly List<WallComponent> WallList = [];
-    internal readonly List<Goblin> GoblinList = [];
+    internal readonly List<SiegeEnemy> EnemyList = [];
     internal readonly List<SiegeProjectile> ProjectileList = [];
     internal double Accumulator;
-    internal int NextGoblinId = 1;
+    internal int NextEnemyId = 1;
     private readonly Dictionary<Pos, WallComponent> _wallAt = [];
     public CellRect Bounds { get; }
     public BaileyGateSide GateSide { get; }
     public IReadOnlyList<WallComponent> Walls { get; }
-    public IReadOnlyList<Goblin> Goblins { get; }
+    public IReadOnlyList<SiegeEnemy> Enemies { get; }
     public IReadOnlyList<SiegeProjectile> Projectiles { get; }
     public WallMaterial Material { get; internal set; }
     public int WaveNumber { get; internal set; }
@@ -96,12 +173,13 @@ public sealed partial class SettlementState
     public int Revision { get; internal set; }
     public double InterpolationFraction => Math.Clamp(Accumulator / StepSeconds, 0, 1);
 
-    internal SettlementState(CellRect bounds, BaileyGateSide gateSide = BaileyGateSide.Right, bool groupWallSections = true)
+    internal SettlementState(CellRect bounds, BaileyGateSide gateSide = BaileyGateSide.Right, bool groupWallSections = true,
+        GameMap? terrain = null)
     {
         Bounds = bounds;
         GateSide = gateSide;
         Walls = WallList.AsReadOnly();
-        Goblins = GoblinList.AsReadOnly();
+        Enemies = EnemyList.AsReadOnly();
         Projectiles = ProjectileList.AsReadOnly();
         var gate = gateSide switch
         {
@@ -115,22 +193,40 @@ public sealed partial class SettlementState
             if (p.X != bounds.X && p.X != bounds.Right && p.Y != bounds.Y && p.Y != bounds.Bottom) continue;
             bool corner = (p.X == bounds.X || p.X == bounds.Right) && (p.Y == bounds.Y || p.Y == bounds.Bottom);
             bool tower = corner ||
-                (p.Y == bounds.Y || p.Y == bounds.Bottom) && (p.X - bounds.X) % 15 == 0 ||
-                (p.X == bounds.X || p.X == bounds.Right) && (p.Y - bounds.Y) % 15 == 0;
-            var wall = new WallComponent { Cell = p, Health = 200, MaxHealth = 200,
-                IsGate = p == gate, IsTower = tower, SectionBounds = CellRect.Single(p) };
+                (p.Y == bounds.Y || p.Y == bounds.Bottom) && WorldScale.TowerPosition(p.X, bounds.X, bounds.Right) ||
+                (p.X == bounds.X || p.X == bounds.Right) && WorldScale.TowerPosition(p.Y, bounds.Y, bounds.Bottom);
+            bool gateSideCell = gateSide is BaileyGateSide.Right or BaileyGateSide.Left
+                ? p.X == gate.X : p.Y == gate.Y;
+            if (!corner && gateSideCell)
+            {
+                var location = gateSide is BaileyGateSide.Right or BaileyGateSide.Left
+                    ? WorldScale.GateTower(bounds.Y, bounds.Bottom) : WorldScale.GateTower(bounds.X, bounds.Right);
+                int along = gateSide is BaileyGateSide.Right or BaileyGateSide.Left ? p.Y : p.X;
+                if (location.Original != location.Adjusted)
+                {
+                    if (along == location.Original) tower = false;
+                    if (along == location.Adjusted) tower = true;
+                }
+            }
+            bool wing = Math.Abs(p.X - gate.X) + Math.Abs(p.Y - gate.Y) == 1 &&
+                (gateSide is BaileyGateSide.Right or BaileyGateSide.Left ? p.X == gate.X : p.Y == gate.Y);
+            var wall = new WallComponent { Settlement = this, Id = WallList.Count + 1, BelongsToFoundingWall = true,
+                Cell = p, Health = 200, MaxHealth = 200,
+                IsGate = p == gate, IsGateWing = wing, IsTower = tower && !wing && p != gate &&
+                    (terrain is null || WorldScale.HasDryTowerFootprint(terrain, new(p.X + .5f, p.Y + .5f))),
+                SectionBounds = CellRect.Single(p) };
             WallList.Add(wall);
             _wallAt.Add(p, wall);
         }
         if (groupWallSections) GroupWallSections();
+        NextWallId = WallList.Count + 1;
     }
 
-    public bool ContainsInterior(Pos p) => p.X > Bounds.X && p.X < Bounds.Right &&
-        p.Y > Bounds.Y && p.Y < Bounds.Bottom;
-    internal WallComponent? WallAt(Pos p) => _wallAt.GetValueOrDefault(p);
-
-    internal static double GoblinMaxHealth(int tier, int waveNumber) =>
-        96 + 36 * (tier - 1) + 6 * Math.Min(30, waveNumber - 1);
+    public bool ContainsInterior(Pos p) => WallNetwork.Contains(new(p.X + .5f, p.Y + .5f));
+    internal WallComponent? WallAt(Pos p) => _wallAt.GetValueOrDefault(p) ??
+        WallList.Where(w => !w.IsOriginal && Vector2.Distance(w.Center, new(p.X + .5f, p.Y + .5f)) <= 2)
+            .OrderBy(w => Vector2.DistanceSquared(w.Center, new(p.X + .5f, p.Y + .5f)))
+            .FirstOrDefault(w => Rendering.WallDamageLayout.ContainsFootprint(w, p.X + .5, p.Y + .5));
 
     internal void EnsureFirstWave(CityGame game)
     {
@@ -139,6 +235,8 @@ public sealed partial class SettlementState
 
     internal void Advance(CityGame game, double seconds)
     {
+        PlanFirstOrcApproach(game);
+        PlanFirstTrollApproach(game);
         var initialSpeed = game.Speed;
         EnsureFirstWave(game);
         if (game.Speed != initialSpeed)
@@ -161,29 +259,104 @@ public sealed partial class SettlementState
         int tier = 1 + (game.HighestPopulation >= 250 ? 1 : 0) + (game.HighestPopulation >= 500 ? 1 : 0) +
             (game.HighestPopulation >= 1_000 ? 1 : 0) + (game.HighestPopulation >= 2_500 ? 1 : 0);
         var (spawns, previous) = BuildCrowdRoutes(game);
-        int count = requestedCount ?? Math.Min(MaximumGoblinSwarm, 20 + (WaveNumber + 1) * 4 + (tier - 1) * 8);
-        var selected = ChooseCrowdSpawns(spawns, count, tier, WaveNumber + 1);
+        spawns = spawns.Where(p => EnemySpawnClear(game, p.X + 0.5, p.Y + 0.5,
+            SiegeEnemies.Goblin.CollisionRadius(tier))).ToList();
+        int count = requestedCount ?? Math.Min(MaximumEnemySwarm, 20 + (WaveNumber + 1) * 4 + (tier - 1) * 8);
+        bool mixed = requestedCount is null && game.HighestPopulation >= 250 &&
+            (OrcsIntroduced || PlannedOrcWave > 0 && WaveNumber + 1 >= PlannedOrcWave);
+        var orcs = new List<Pos>();
+        var orcRoutes = previous;
+        if (mixed)
+        {
+            var accessible = BuildCrowdRoutes(game, SiegeEnemies.Orc.CollisionRadius(tier));
+            orcRoutes = accessible.Previous;
+            var side = PlannedOrcSide ?? ChooseOrcSide(accessible.Spawns, orcRoutes);
+            var approach = accessible.Spawns.Where(p => SideOf(CrowdRoute(p, orcRoutes)[^1]) == side &&
+                EnemySpawnClear(game, p.X + 0.5, p.Y + 0.5, SiegeEnemies.Orc.CollisionRadius(tier))).ToList();
+            orcs = ChooseCrowdSpawns(approach, Math.Min(8, 3 + WaveNumber / 4), tier,
+                WaveNumber + 1, SiegeEnemyKind.Orc);
+            double separation = SiegeEnemies.Orc.CollisionRadius(tier) + SiegeEnemies.Goblin.CollisionRadius(tier);
+            spawns = spawns.Where(p => orcs.All(o =>
+                Math.Pow(p.X - o.X, 2) + Math.Pow(p.Y - o.Y, 2) >= separation * separation)).ToList();
+        }
+        var trolls = new List<(Pos Spawn, SiegeEnemyKind Kind, int Seed)>();
+        var trollRoutes = new Dictionary<SiegeEnemyKind, Dictionary<Pos, Pos>>();
+        if (requestedCount is null && game.HighestPopulation >= 1_000 &&
+            (TrollsIntroduced || PlannedTrollWave > 0 && WaveNumber + 1 >= PlannedTrollWave))
+        {
+            foreach (var kind in new[] { SiegeEnemyKind.StoneTroll, SiegeEnemyKind.MudTroll, SiegeEnemyKind.TreeTroll })
+            {
+                int seed = (int)(((long)(WaveNumber + 1) * 193 + (int)kind * 97) % 1_000_000);
+                double radius = SiegeEnemies.Get(kind).CollisionRadius(tier) * (1 + (seed % 301) / 800d);
+                var accessible = BuildCrowdRoutes(game, radius);
+                var candidates = accessible.Spawns.Where(p => orcs.All(o =>
+                        Math.Pow(p.X - o.X, 2) + Math.Pow(p.Y - o.Y, 2) >=
+                        Math.Pow(radius + SiegeEnemies.Orc.CollisionRadius(tier), 2)) &&
+                    trolls.All(t => Math.Pow(p.X - t.Spawn.X, 2) + Math.Pow(p.Y - t.Spawn.Y, 2) >=
+                        Math.Pow(radius + SiegeEnemies.Get(t.Kind).CollisionRadius(tier) *
+                            (1 + (t.Seed % 301) / 800d), 2)) &&
+                    EnemySpawnClear(game, p.X + 0.5, p.Y + 0.5, radius)).ToList();
+                if (candidates.Count == 0) continue;
+                var spawn = candidates[seed % candidates.Count];
+                trolls.Add((spawn, kind, seed));
+                trollRoutes.Add(kind, accessible.Previous);
+                spawns = spawns.Where(p => Math.Pow(p.X - spawn.X, 2) + Math.Pow(p.Y - spawn.Y, 2) >=
+                    Math.Pow(radius + SiegeEnemies.Goblin.CollisionRadius(tier), 2)).ToList();
+            }
+        }
+        var selected = ChooseCrowdSpawns(spawns, Math.Max(0, count - orcs.Count - trolls.Count), tier, WaveNumber + 1);
         if (requestedCount is not null && selected.Count != count) return false;
         if (requestedCount is not null)
         {
-            GoblinList.Clear();
+            EnemyList.Clear();
             ProjectileList.Clear();
             Accumulator = 0;
         }
         WaveNumber++;
+        if (requestedCount is not null && !OrcsIntroduced && PlannedOrcWave > 0)
+            PlannedOrcWave = Math.Max(PlannedOrcWave, WaveNumber + 1);
+        if (requestedCount is not null && !TrollsIntroduced && PlannedTrollWave > 0)
+            PlannedTrollWave = Math.Max(PlannedTrollWave, WaveNumber + 1);
+        if (requestedCount is null && orcs.Count == 0 && !OrcsIntroduced &&
+            PlannedOrcWave > 0 && PlannedOrcWave <= WaveNumber)
+        {
+            PlannedOrcWave = WaveNumber + 1;
+            game.Report(new CityEvent(game.Week, EventKind.Raid,
+                "The first Orcs were delayed by a blocked approach; scouts remain on watch.", [], Bad: false));
+        }
+        if (requestedCount is null && trolls.Count == 0 && !TrollsIntroduced &&
+            PlannedTrollWave > 0 && PlannedTrollWave <= WaveNumber)
+        {
+            PlannedTrollWave = WaveNumber + 1;
+            game.Report(new CityEvent(game.Week, EventKind.Raid,
+                "The first trolls were delayed: no approach fits their size. Scouts remain on watch.", [], Bad: false));
+        }
         ClearRepairCrew();
         NextWaveSeconds = NextWaveIntervalSeconds;
-        foreach (var spawn in selected)
+        foreach (var (spawn, kind) in orcs.Select(p => (p, SiegeEnemyKind.Orc))
+            .Concat(selected.Select(p => (p, SiegeEnemyKind.Goblin))))
         {
-            var route = CrowdRoute(spawn, previous);
-            double hp = GoblinMaxHealth(tier, WaveNumber);
-            GoblinList.Add(new Goblin { Id = NextGoblinId++, X = spawn.X + 0.5, Y = spawn.Y + 0.5,
+            var route = CrowdRoute(spawn, kind == SiegeEnemyKind.Orc ? orcRoutes : previous);
+            double hp = SiegeEnemies.Get(kind).MaxHealth(tier, WaveNumber);
+            EnemyList.Add(new SiegeEnemy { Id = NextEnemyId++, X = spawn.X + 0.5, Y = spawn.Y + 0.5,
                 PreviousX = spawn.X + 0.5, PreviousY = spawn.Y + 0.5, MotionInitialized = true,
-                Health = hp, MaxHealth = hp, Tier = tier, Route = route });
+                Health = hp, MaxHealth = hp, Tier = tier, Kind = kind, Route = route });
         }
+        foreach (var (spawn, kind, seed) in trolls)
+        {
+            double hp = SiegeEnemies.Get(kind).MaxHealth(tier, WaveNumber);
+            EnemyList.Add(new SiegeEnemy { Id = NextEnemyId++, X = spawn.X + 0.5, Y = spawn.Y + 0.5,
+                PreviousX = spawn.X + 0.5, PreviousY = spawn.Y + 0.5, MotionInitialized = true,
+                Health = hp, MaxHealth = hp, Tier = tier, Kind = kind, AppearanceSeed = seed,
+                Route = CrowdRoute(spawn, trollRoutes[kind]) });
+        }
+        if (trolls.Count > 0) TrollsIntroduced = true;
+        if (orcs.Count > 0) { OrcsIntroduced = true; PlannedOrcSide = null; }
         Revision++;
         game.Report(new CityEvent(game.Week, EventKind.Raid,
-            $"Goblin siege wave {WaveNumber}: {GoblinList.Count} tier-{tier} attackers approach over dry land.", [], Bad: true));
+            $"Siege wave {WaveNumber}: {selected.Count} tier-{tier} goblins" +
+            (orcs.Count > 0 ? $" and {orcs.Count} Orcs" : "") +
+            (trolls.Count > 0 ? $" and {trolls.Count} trolls" : "") + " approach over dry land.", [], Bad: true));
         game.BeginSiegeWave();
         return true;
     }
@@ -198,34 +371,50 @@ public sealed partial class SettlementState
 
     private void Tick(CityGame game)
     {
-        bool hadAttackers = GoblinList.Count > 0;
-        foreach (var shot in ProjectileList) shot.Progress += StepSeconds / shot.FlightSeconds;
+        AdvanceDeaths(StepSeconds);
+        bool breached = false;
+        AdvanceCommittedAttacks(game, StepSeconds);
+        AdvanceDefenders(game, StepSeconds);
+        foreach (var shot in ProjectileList.Where(s => s.Id == 0)) shot.Progress += StepSeconds / shot.FlightSeconds;
         ProjectileList.RemoveAll(shot => shot.Progress >= 1);
         foreach (var wall in WallList)
         {
             wall.ArrowCooldown = Math.Max(0, wall.ArrowCooldown - StepSeconds);
             wall.DefenseCooldown = Math.Max(0, wall.DefenseCooldown - StepSeconds);
             if (wall.Health <= 0) continue;
-            if (wall.IsTower && wall.ArrowCooldown <= 0 && Fire(wall, WallDefenseKind.None))
+            if (wall.IsTower && wall.ArrowCooldown <= 0 && Fire(game, wall, WallDefenseKind.None))
                 wall.ArrowCooldown = WallDefenses.Get(WallDefenseKind.None).ReloadSeconds;
-            if (wall.Defense != WallDefenseKind.None && wall.DefenseCooldown <= 0 && Fire(wall, wall.Defense))
+            if (wall.Defense != WallDefenseKind.None && wall.DefenseCooldown <= 0 && Fire(game, wall, wall.Defense))
                 wall.DefenseCooldown = WallDefenses.Get(wall.Defense).ReloadSeconds;
         }
-        GoblinList.RemoveAll(g => g.Health <= 0);
+        EnemyList.RemoveAll(g => g.Health <= 0);
         PrepareCrowdMovement();
         foreach (var goblin in _movementOrder)
         {
+            if (goblin.Health <= 0) continue;
+            double attackDamage = goblin.Definition.AttackDamage(goblin.Tier);
+            if (IsDefenderEngaged(goblin))
+            {
+                goblin.AttackCooldown = Math.Max(0, goblin.AttackCooldown - StepSeconds);
+                if (goblin.AttackCooldown <= 1e-8)
+                {
+                    DefenderIntercepts(goblin, attackDamage);
+                    goblin.AttackCooldown = goblin.Definition.AttackIntervalSeconds;
+                }
+                continue;
+            }
             if (AttackableWall(goblin) is { } wall)
             {
                 goblin.BlockedSeconds = 0;
                 goblin.AttackCooldown = Math.Max(0, goblin.AttackCooldown - StepSeconds);
                 if (goblin.AttackCooldown <= 1e-8)
                 {
-                    wall.Health = Math.Max(0, wall.Health - (4 + 2 * goblin.Tier));
-                    goblin.AttackCooldown = 1;
+                    wall.Health = Math.Max(0, wall.Health - attackDamage);
+                    goblin.AttackCooldown = goblin.Definition.AttackIntervalSeconds;
                     if (wall.Health <= 0)
                     {
                         Breach(game, wall);
+                        breached = true;
                         break;
                     }
                 }
@@ -234,11 +423,12 @@ public sealed partial class SettlementState
             {
                 var next = goblin.Route[goblin.RouteIndex];
                 double dx = next.X + 0.5 - goblin.X, dy = next.Y + 0.5 - goblin.Y;
-                double length = Math.Sqrt(dx * dx + dy * dy), movement = (1.4 + 0.1 * goblin.Tier) * StepSeconds;
+                double length = Math.Sqrt(dx * dx + dy * dy),
+                    movement = goblin.Definition.MovementSpeed(goblin.Tier) * StepSeconds;
                 double travel = Math.Min(length, movement);
                 double previousX = goblin.X, previousY = goblin.Y;
                 if (length > 1e-12)
-                    MoveCrowdMember(goblin, goblin.X + dx / length * travel, goblin.Y + dy / length * travel);
+                    MoveCrowdMember(game, goblin, goblin.X + dx / length * travel, goblin.Y + dy / length * travel);
                 if (Math.Abs(goblin.X - previousX) + Math.Abs(goblin.Y - previousY) < travel * 0.1)
                 {
                     goblin.BlockedSeconds = Math.Min(0.6, goblin.BlockedSeconds + StepSeconds);
@@ -254,36 +444,36 @@ public sealed partial class SettlementState
             }
         }
         NextWaveSeconds = Math.Max(0, NextWaveSeconds - StepSeconds);
-        if (NextWaveSeconds <= 1e-8 && GoblinList.Count == 0) SpawnWave(game);
-        if (!hadAttackers || GoblinList.Count > 0) AdvanceRepairs(game, StepSeconds);
+        if (NextWaveSeconds <= 1e-8 && EnemyList.Count == 0 && !ProjectileList.Any(s => s.Id > 0 && !s.Applied)) SpawnWave(game);
+        if (!breached) AdvanceRepairs(game, StepSeconds);
         Revision++;
     }
 
-    private bool Fire(WallComponent wall, WallDefenseKind kind)
+    private bool Fire(CityGame game, WallComponent wall, WallDefenseKind kind)
     {
-        var definition = WallDefenses.Get(kind);
-        double x = wall.Cell.X + 0.5, y = wall.Cell.Y + 0.5;
-        var target = GoblinList.Where(g => g.Health > 0)
-            .Select(g => (Goblin: g, Distance: Math.Sqrt(Math.Pow(g.X - x, 2) + Math.Pow(g.Y - y, 2))))
-            .Where(t => t.Distance >= definition.MinimumRange && t.Distance <= definition.Range)
-            .OrderBy(t => t.Distance).ThenBy(t => t.Goblin.Id).Select(t => t.Goblin).FirstOrDefault();
-        if (target is null) return false;
-        // Damage is resolved on firing; projectiles are transient visual traces, not unsaved pending impacts.
-        foreach (var goblin in GoblinList)
-            if (goblin == target || definition.SplashRadius > 0 &&
-                Math.Pow(goblin.X - target.X, 2) + Math.Pow(goblin.Y - target.Y, 2) <=
-                definition.SplashRadius * definition.SplashRadius)
-                goblin.Health = Math.Max(0, goblin.Health - definition.Damage);
-        ProjectileList.Add(new SiegeProjectile { StartX = x, StartY = y, EndX = target.X, EndY = target.Y, Kind = kind });
-        return true;
+        return ReleaseMountedAttack(game, wall, kind);
     }
 
     private void Breach(CityGame game, WallComponent wall)
     {
+        var exposed = game.Map.ZoneCells(ZoneType.Residential).Where(index =>
+        {
+            var p = game.Map.PosOf(index);
+            return EstablishedAt(p) && !ContainsInterior(p);
+        }).Order().ToArray();
+        if (exposed.Length == 0)
+        {
+            EnemyList.Clear();
+            game.Report(new CityEvent(game.Week, EventKind.Raid,
+                "A wall was breached, but the inhabited districts remain enclosed. The raiders withdrew.",
+                [game.Map.Index(wall.Cell.X, wall.Cell.Y)], Bad: false));
+            game.NotifyStateChanged();
+            return;
+        }
         int lost = Math.Min(Math.Max(0, game.Money), 500 + WaveNumber * 100);
         game.Money -= lost;
         int casualties = 0, remaining = Math.Max(1, game.Stats.Population / 20);
-        foreach (int index in game.Map.ZoneCells(ZoneType.Residential).Order())
+        foreach (int index in exposed)
         {
             var h = game.Map.HouseholdLayer[index];
             int n = Math.Min(h.Total, remaining);
@@ -295,7 +485,7 @@ public sealed partial class SettlementState
             casualties += n;
         }
         game.Tally.Deaths += casualties;
-        GoblinList.Clear();
+        EnemyList.Clear();
         game.Report(new CityEvent(game.Week, EventKind.Raid,
             $"The settlement wall at ({wall.Cell.X},{wall.Cell.Y}) was breached: {casualties} residents slain and {lost} gold looted. The raiders withdrew; repair the breach.",
             [game.Map.Index(wall.Cell.X, wall.Cell.Y)]));

@@ -20,16 +20,7 @@ public class SettlementUpgradeTests
 
     private static CityGame Founded()
     {
-        var game = TestCity.Flat(config: new GameConfig
-        {
-            MapWidth = 80, MapHeight = 72, StartingMoney = 500_000,
-            FireIgnitionPerBuildingWeek = 0, RaidChancePerWeek = 0,
-            FloodChancePerWeek = 0, OutbreakChancePerWeek = 0,
-        }, rules: CityRules.Full);
-        foreach (int i in game.Map.RoadCells.ToArray())
-            game.Map.SetRoad(i % game.Map.Width, i / game.Map.Width, false);
-        game.Touch();
-        Assert.True(game.FoundSettlement(new(15, 25, 16, 16)).Success);
+        var game = WorldScaleTests.Founded(0);
         game.Paused = false;
         game.Speed = GameSpeed.Medium;
         return game;
@@ -181,7 +172,7 @@ public class SettlementUpgradeTests
     }
 
     [Fact]
-    public void OldUngroupedSaveLoadsAndInvalidUpgradeProgressIsRejected()
+    public void RetiredWallSaveAndInvalidUpgradeProgressAreRejected()
     {
         var game = Founded();
         var root = JsonNode.Parse(SaveGameStore.Serialize(game))!;
@@ -193,9 +184,8 @@ public class SettlementUpgradeTests
         }
         foreach (string field in new[] { "GroupedWallSections", "UpgradeTargetMaterial", "UpgradedSections", "UpgradeSectionSeconds" })
             settlement.AsObject().Remove(field);
-        var copy = SaveGameStore.Deserialize(root.ToJsonString());
-        Assert.Null(copy.Settlement!.UpgradeTargetMaterial);
-        Assert.All(copy.Settlement.Walls, w => Assert.Equal(WallMaterial.Wood, copy.Settlement.MaterialFor(w)));
+        settlement.AsObject().Remove("WallNetworkVersion");
+        Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(root.ToJsonString()));
         Set(game, "HighestPopulation", 250);
         game.Update(.1);
         Assert.True(game.UpgradeSettlementWalls().Success);

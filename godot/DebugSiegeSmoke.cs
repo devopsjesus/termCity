@@ -47,22 +47,23 @@ internal static class DebugSiegeSmoke
         game.Speed = GameSpeed.Fast;
         start.EmitSignal(Godot.Button.SignalName.Pressed);
         await Frames(host);
-        Require(game.Settlement!.Goblins.Count == 17 && host.Map.Perspective.GoblinsDrawn == 17 &&
+        Require(game.Settlement!.Enemies.Count == 17 && host.Map.Perspective.EnemiesDrawn == 17 &&
             game.MapVersion == mapVersion && host.Map.Perspective.GeometryBuilds == builds && game.Money == gold,
             "Start wave must use the exact requested size without spending gold or rebuilding city geometry.");
         Require(game.Speed == GameSpeed.Slow && host.BattleHornPlayCount == horns + 1,
             "Starting a debug wave must switch to 1x and play one battle horn.");
+        var repairVisibilityAttacker = game.Settlement.Enemies[0];
         clear.EmitSignal(Godot.Button.SignalName.Pressed);
         await Frames(host);
-        Require(game.Settlement.Goblins.Count == 0 && game.Settlement.Projectiles.Count == 0 &&
-            game.Settlement.NextWaveFraction == 1 && host.Map.Perspective.GoblinsDrawn == 0,
+        Require(game.Settlement.Enemies.Count == 0 && game.Settlement.Projectiles.Count == 0 &&
+            game.Settlement.NextWaveFraction == 1 && host.Map.Perspective.EnemiesDrawn == 0,
             "Remove goblins must clear every attacker/projectile and refresh the countdown and renderer.");
-        await SiegeAnimationSmoke.VerifyRepairCrew(host, capturePath);
-        size.Text = SettlementState.MaximumGoblinSwarm.ToString();
+        await SiegeAnimationSmoke.VerifyRepairCrew(host, capturePath, repairVisibilityAttacker);
+        size.Text = SettlementState.MaximumEnemySwarm.ToString();
         size.EmitSignal(LineEdit.SignalName.TextSubmitted, size.Text);
         await Frames(host);
-        Require(game.Settlement.Goblins.Count == SettlementState.MaximumGoblinSwarm &&
-            host.Map.Perspective.GoblinsDrawn == SettlementState.MaximumGoblinSwarm,
+        Require(game.Settlement.Enemies.Count == SettlementState.MaximumEnemySwarm &&
+            host.Map.Perspective.EnemiesDrawn == SettlementState.MaximumEnemySwarm,
             "Submitting the size field must support the full saved-game swarm limit.");
         await SiegeAnimationSmoke.VerifyActiveSwarmBudget(host);
         Require(game.WallRepairCost > 0, "The played siege fixture must contain actual wall damage.");
@@ -71,7 +72,7 @@ internal static class DebugSiegeSmoke
             "Repair all must restore every damaged structure for free.");
         await SiegeAnimationSmoke.VerifyWallAttack(host, capturePath);
         Require(host.BattleHornPlayCount == horns + 2, "Clearing and repairing must not replay wave-start horns.");
-        wallHeight.Text = "20";
+        wallHeight.Text = "48";
         foreach (string invalid in new[] { "", "0", "161", "abc" })
         {
             wallWidth.Text = invalid;
@@ -81,7 +82,7 @@ internal static class DebugSiegeSmoke
                 SaveGameStore.Serialize(game) == saved,
                 "Invalid wall dimensions must report an error before offering to discard the current game.");
         }
-        wallWidth.Text = "24";
+        wallWidth.Text = "48";
         bool headless = DisplayServer.GetName() == "headless";
         var window = host.GetWindow();
         var originalSize = headless ? window.ContentScaleSize : window.Size;
@@ -113,8 +114,8 @@ internal static class DebugSiegeSmoke
         session.SelectPrompt(1);
         Require(!ReferenceEquals(game, session.Game) && session.Game.Config.Seed == game.Config.Seed &&
             session.Game.Stats.Population == 100 && session.Game.Settlement is { WaveNumber: 1 } fresh &&
-            fresh.Bounds.Width == 24 && fresh.Bounds.Height == 20 &&
-            fresh.Goblins.Count == 24 && fresh.Walls.All(wall => wall.Health == wall.MaxHealth) &&
+            fresh.Bounds.Width == 48 && fresh.Bounds.Height == 48 &&
+            fresh.Enemies.Count == 24 && fresh.Walls.All(wall => wall.Health == wall.MaxHealth) &&
             session.DebugSiegeMode && session.UndoCount == 0 && session.Game.Speed == GameSpeed.Slow &&
             host.BattleHornPlayCount == horns + 3,
             "Restart must apply the selected wall rectangle and start the same-seed siege at 1x with one horn.");
@@ -122,7 +123,7 @@ internal static class DebugSiegeSmoke
         await Frames(host);
         await Capture(host, capturePath is null ? null : Path.ChangeExtension(capturePath, ".resized-walls.png"));
         await VerifyHornSoundSettings(host);
-        GD.Print("TERMCITY_DEBUG_SIEGE_CONTROLS_OK sizes=1-120 walls=24x20 start=exact clear=all repair=free restart=same-seed horns=once speed=1x widths=960,640");
+        GD.Print("TERMCITY_DEBUG_SIEGE_CONTROLS_OK sizes=1-120 walls=48x48 start=exact clear=all repair=free restart=same-seed horns=once speed=1x widths=960,640");
     }
 
     private static async Task VerifyHornSoundSettings(Main host)

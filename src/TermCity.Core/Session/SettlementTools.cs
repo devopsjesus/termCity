@@ -7,7 +7,22 @@ namespace TermCity.Core.Session;
 public sealed partial class GameSession
 {
     private Pos? _settlementAnchor;
+    private bool _defenseFacingChosen;
+    private int _defenseFacing = 1;
     public BaileyGateSide SettlementGateSide { get; set; } = BaileyGateSide.Right;
+    public (Pos Cell, WallDefenseKind Kind)? ActiveWallDefenseGuide
+    {
+        get
+        {
+            if (!HasCursor || Game.Settlement is not { } siege || SelectedWallComponent is not { } wall) return null;
+            if (Preview is { Kind: PlacementKind.WallDefense } preview) return (wall.Cell, preview.Defense);
+            if (FixedPlacementToolActive || Selection is null || Selection != BlockAt(Cursor) || Anchor is not null)
+                return null;
+            var owner = wall.IsGateWing ? siege.Walls.First(part => part.Id == wall.SectionId) : wall;
+            return owner.Health > 0 && (owner.Defense != WallDefenseKind.None || owner.IsTower)
+                ? (owner.Cell, owner.Defense) : null;
+        }
+    }
 
     public void BeginSettlementPlacement()
     {
@@ -47,8 +62,8 @@ public sealed partial class GameSession
         var bounds = CellRect.FromCorners(_settlementAnchor ?? Cursor, Cursor);
         var walls = bounds.Cells().Where(p =>
             p.X == bounds.X || p.X == bounds.Right || p.Y == bounds.Y || p.Y == bounds.Bottom).ToHashSet();
-        bool valid = _settlementAnchor is not null && Game.SettlementPlacementError(bounds) is null;
-        Preview = new(PlacementKind.Settlement, bounds, Game.QuoteSettlement(bounds), "Motte and Bailey enclosure",
+        bool valid = _settlementAnchor is not null && Game.SettlementPlacementError(bounds, SettlementGateSide) is null;
+        Preview = new(PlacementKind.Settlement, bounds, Game.QuoteSettlement(bounds, SettlementGateSide), "Motte and Bailey enclosure",
             Cells: walls, ValidCells: valid ? walls : []);
         Changed?.Invoke();
     }
@@ -67,6 +82,7 @@ public sealed partial class GameSession
 
     public void PreviewWallDefense(WallDefenseKind kind)
     {
+        _defenseFacingChosen = false;
         if (WallDefensePurchaseError(kind) is { } error)
         {
             SetMessage(error, MessageKind.Error);
@@ -88,23 +104,40 @@ public sealed partial class GameSession
 
     private void RefreshWallDefensePlacement(WallDefenseKind kind)
     {
+        if (!_defenseFacingChosen && SelectedWallComponent is { Start: not null } wall)
+        {
+            var normal = new System.Numerics.Vector2(-wall.Tangent.Y, wall.Tangent.X);
+            _defenseFacing = Game.Settlement!.WallNetwork.Contains(wall.Center + normal) ? -1 : 1;
+        }
         var definition = WallDefenses.Get(kind);
         var cells = new HashSet<Pos> { Cursor };
-        bool valid = Game.WallDefensePlacementError(Cursor, kind) is null;
+        bool valid = Game.WallDefensePlacementError(Cursor, kind, SelectedWallComponent?.Id) is null;
         Preview = new(PlacementKind.WallDefense, CellRect.Single(Cursor),
             new(valid ? 1 : 0, definition.Cost, valid ? 0 : 1), definition.Name,
-            Cells: cells, ValidCells: valid ? cells : [], Defense: kind);
+            Cells: cells, ValidCells: valid ? cells : [], Defense: kind, Rotation: _defenseFacing < 0 ? 2 : 0);
         Changed?.Invoke();
+    }
+
+    public void FlipWallDefenseFacing()
+    {
+        if (!WallDefenseToolActive || SelectedWallComponent?.Start is null) return;
+        _defenseFacingChosen = true;
+        _defenseFacing = -_defenseFacing;
+        RefreshWallDefensePlacement(Preview!.Defense);
     }
 
     public string? WallStatus(Pos cell)
     {
-        var wall = Game.Settlement?.Walls.FirstOrDefault(w => w.Cell == cell);
+        var wall = cell == Cursor ? SelectedWallComponent : Game.Settlement?.Walls.FirstOrDefault(w => w.Cell == cell);
         if (wall is null) return null;
-        string name = wall.IsGate ? "Gate" : wall.IsTower ? "Arrow tower" : $"Wall ({wall.SectionLength} cells)";
+        string name = wall.IsGate ? "Gate" : wall.IsTower ? "Arrow tower" :
+            wall.Start is not null ? $"Wall ({wall.Length:0.##} cells)" : $"Wall ({wall.SectionLength} cells)";
         return $"{name}: {wall.Health:0}/{wall.MaxHealth:0} health; {Game.Settlement!.MaterialFor(wall)}" +
             (Game.Settlement.UpgradeTargetMaterial is { } target ? $"; upgrading to {target}: {Game.Settlement.OverallUpgradeProgress:P0}" : "") +
-            (wall.Defense == WallDefenseKind.None ? "" : $"; {WallDefenses.Get(wall.Defense).Name}");
+            (wall.Defense == WallDefenseKind.None ? wall.IsTower ? "; arrows 24 damage / 2s; maximum reach 10, obstruction applies" : "" :
+                $"; {WallDefenses.Get(wall.Defense).Name}: {WallDefenses.Get(wall.Defense).Damage} damage / " +
+                $"{WallDefenses.Get(wall.Defense).ReloadSeconds}s; " +
+                (wall.Defense is WallDefenseKind.OilCauldron or WallDefenseKind.Rocks ? "station footprint" : "maximum reach; obstruction applies"));
     }
 
     public void ShowGarrisonMenu()
@@ -117,6 +150,12 @@ public sealed partial class GameSession
                 if (SettlementToolActive) ClosePrompt();
             }, ["Found", "Two corners; automatic walls, towers, gate, homes and jobs"]),
         };
+        choices.Add(new("Extend walls", () => { BeginWallPlacement(); if (WallToolActive) ClosePrompt(); },
+            ["Draw", "Connected straight runs at any angle; closed, connected districts can attract settlers"]));
+        choices.Add(new("Insert gate", () => { BeginWallPlacement(PlacementKind.Gate); if (WallToolActive) ClosePrompt(); },
+            ["Gate", "Explicit road crossing; rotate to match the wall direction"]));
+        choices.Add(new("Remove wall section", () => { BeginWallPlacement(PlacementKind.RemoveWall); if (WallToolActive) ClosePrompt(); },
+            ["Remove", "Preview and confirm; existing residents remain"]));
         foreach (var kind in Enum.GetValues<WallDefenseKind>().Where(k => k != WallDefenseKind.None))
         {
             var definition = WallDefenses.Get(kind);
@@ -126,7 +165,7 @@ public sealed partial class GameSession
                 PreviewWallDefense(kind);
                 if (WallDefenseToolActive) ClosePrompt();
             }, [Fmt.Money(definition.Cost), unlocked
-                ? $"Damage {definition.Damage}; splash {definition.SplashRadius}; range {definition.MinimumRange}-{definition.Range}"
+                ? $"Damage {definition.Damage}; reload {definition.ReloadSeconds}s; maximum reach {definition.MinimumRange}-{definition.Range}"
                 : $"LOCKED: {definition.RequiredPopulation:N0} souls"],
                 ChoiceHelpContent.WallDefense(kind)));
         }
@@ -140,14 +179,19 @@ public sealed partial class GameSession
             {
                 PreviewBuilding(building);
                 if (BuildingToolActive) ClosePrompt();
-            }, [Fmt.Money(building.Cost), $"Lord's seat; unlock {CityProgression.RequiredPopulation(building):N0} souls"]));
+            }, [Fmt.Money(building.Cost), SettlementState.RosterCapacity(building) > 0
+                ? $"{SettlementState.RosterCapacity(building)} defenders; unlock {CityProgression.RequiredPopulation(building):N0} souls"
+                : $"Lord's seat; unlock {CityProgression.RequiredPopulation(building):N0} souls"]));
         choices.Add(new("Back", CancelPrompt, ["", "Return"]));
         var settlement = Game.Settlement;
         string status = settlement is null ? "Found a rectangular bailey on open land. No roads or manual zoning are required."
             : $"{settlement.Material} walls; {settlement.WallSections.Count(w => w.Health > 0)}/{settlement.WallSections.Count()} sections intact. " +
                 (settlement.UpgradeTargetMaterial is { } target ? $"Upgrading to {target}: {settlement.OverallUpgradeProgress:P0}. " : "") +
-                $"Wave {settlement.WaveNumber}; {settlement.Goblins.Count} goblins; next wave in {settlement.NextWaveSeconds:0}s.";
-        ShowPrompt("Garrison", status + "\nTowers fire arrows automatically. Goblin attacks begin at Hamlet (100 souls).",
+                $"Wave {settlement.WaveNumber}; {settlement.Enemies.Count(g => g.Kind == SiegeEnemyKind.Goblin)} goblins, " +
+                $"{settlement.Enemies.Count(g => g.Kind == SiegeEnemyKind.Orc)} Orcs; {settlement.Defenders.Count} defenders; " +
+                $"next wave in {settlement.NextWaveSeconds:0}s.";
+        ShowPrompt("Garrison", status + "\nTowers and troops fight automatically. Repairs continue during combat; gold repairs are immediate. " +
+            "Recruit at 100 souls; Orcs appear from 250. Click/Shift-click defenders, right-click to command.",
             choices, columns: ["COMPONENT", "COST / ACTION", "CAPABILITY"]);
     }
 

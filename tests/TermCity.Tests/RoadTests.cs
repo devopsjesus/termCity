@@ -15,15 +15,15 @@ public class RoadTypeTests
     private static RoadType Type(CityGame g, string name) => g.Map.Content.Roads.Get(name);
 
     [Fact]
-    public void CobblestoneCarriesMoreTrafficWithoutTakingMoreLandThanDirt()
+    public void RoadWidthsAndCapacityIncreaseTogetherWithoutChangingPerCenterlineAccounting()
     {
         var game = TestCity.Flat();
         var dirt = Type(game, DefaultRoads.TrackName);
         var cobbled = Type(game, DefaultRoads.CobbledName);
         var highway = Type(game, DefaultRoads.KingsRoadName);
         Assert.Equal(1, dirt.WidthCells);
-        Assert.Equal(dirt.WidthCells, cobbled.WidthCells);
-        Assert.Equal(2, highway.WidthCells);
+        Assert.Equal(2, cobbled.WidthCells);
+        Assert.Equal(4, highway.WidthCells);
         Assert.Equal(6, dirt.TrafficCapacity);
         Assert.Equal(20, cobbled.TrafficCapacity);
         Assert.Equal(60, highway.TrafficCapacity);
@@ -62,9 +62,10 @@ public class RoadTypeTests
         Assert.True(game.BuildRoad(area).Success);
         Assert.True(game.CanBuildOn(12, 9));
         Assert.True(game.BuildRoad(area, Type(game, DefaultRoads.KingsRoadName)).Success);
-        Assert.True(game.CanBuildOn(12, 9));
+        Assert.False(game.CanBuildOn(12, 9));
         Assert.False(game.CanBuildOn(12, 11));
         Assert.True(game.CanBuildOn(12, 8));
+        Assert.True(game.CanBuildOn(12, 13));
     }
 
     [Fact]
@@ -339,6 +340,28 @@ public class RoadSideBySideTests
             Assert.Contains("alongside", result.Message);
             Assert.Equal(before, SaveGameStore.Serialize(game));
         }
+    }
+
+    [Theory]
+    [InlineData(DefaultRoads.TrackName)]
+    [InlineData(DefaultRoads.CobbledName)]
+    [InlineData(DefaultRoads.KingsRoadName)]
+    public void AdjacentStrokeOutsideTheEntireCommittedRoadWidthIsRejected(string name)
+    {
+        var game = TestCity.Flat(config: new GameConfig
+        {
+            MapWidth = 160, MapHeight = 96, StartingMoney = 200_000,
+        });
+        var type = game.Map.Content.Roads.Get(name);
+        var built = game.BuildRoad(CellLines.Between(new(10, 5), new(30, 5)), type);
+        Assert.True(built.Success, built.Message);
+        int adjacentY = 5 + (int)Math.Ceiling(type.WidthCells);
+        var stroke = CellLines.Between(new(12, adjacentY), new(28, adjacentY));
+        string before = SaveGameStore.Serialize(game);
+        var rejected = game.BuildRoad(stroke, type);
+        Assert.False(rejected.Success);
+        Assert.Contains("alongside", rejected.Message);
+        Assert.Equal(before, SaveGameStore.Serialize(game));
     }
 
     [Fact]

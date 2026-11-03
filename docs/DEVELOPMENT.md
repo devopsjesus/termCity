@@ -24,6 +24,356 @@ dotnet build TermCity.slnx -c Release
 dotnet test TermCity.slnx -c Release --no-build
 ```
 
+### Building depth rendering and comparison
+
+The combined depth treatment is the default in gameplay, placement previews and
+rendered model thumbnails: directional shadows on lit terrain, recessed house
+openings, deeper stepped eaves, log-built timber defenses and projecting stone-wall details. Logical building
+footprints, wall openings, gameplay and saved layouts are unchanged. The shared
+default is `DepthStudyArtwork.DefaultTreatment`; original rendering is retained
+only as an explicit comparison/benchmark control.
+
+The Debug-only comparison is a private, paused staging scene, not a loaded city.
+It does not save or change footprints:
+
+```bash
+dotnet build TermCity.slnx
+godot --path godot -- --depth-comparison
+godot --path godot -- --depth-comparison --capture /tmp/depth-study.png
+godot --path godot -- --depth-comparison-smoke-test --capture /tmp/depth-study.png
+```
+
+Compare a timber home, stone home, stone wall/tower/gate assembly, wooden
+wall/tower/gate assembly and the canonical Motte and Bailey palisade artwork.
+Keys **1–4** switch between original rendering,
+lighting only, architectural relief only and their combination (the game default).
+The scene starts with the combined treatment. Only one live
+3D viewport exists. Switching treatments retains the camera, zoom and deterministic
+model variation; changing subjects chooses an appropriate starting zoom.
+
+Use **Q/E** or right-drag to rotate, **T** to cycle tilt, **-/+** or the wheel to
+zoom, **R** to reset the camera and **[ / ]** to change subjects. Left-click tests
+model picking without editing gameplay. **C** writes four matched, labeled PNGs
+for the current subject, named `<prefix>-subject-<1–5>-<treatment>.png`.
+The default prefix is `user://depth-comparison/study.png`; `--capture` overrides it.
+**Esc** exits the study. Capture controls are temporarily disabled so input cannot
+change the camera between images. Capture errors are reported in the footer and
+Godot log.
+The graphical smoke also writes `-close-subject-4-<treatment>.png` comparisons
+of real wooden settlement defenses at normal zoom.
+
+Lighting variants reduce ambient fill, change the sun angle and enable directional
+shadows, including a lit version of the existing terrain shader so the ground can
+receive shadows. Relief variants use real window/door recesses, deeper stepped
+eaves, projecting wall-walk caps and selective stepped stone supports. The palisade
+keeps its already-dimensional post geometry as a lighting control. No SSAO,
+normal maps or renderer migration is included. Wooden settlement walls and towers
+use the same bark tones, coarse grain, shaped log shoulders and rough-cut crowns
+as the reference palisade, rather than retaining timber-colored slabs.
+Pixel palettes, filtering, antialiasing and the terminal interface are retained.
+
+The comparison smoke checks all subjects/treatments, rotation and zoom picking,
+cached camera movement, narrow-window controls, and graphical captures. Run it
+graphically to validate images; headless execution cannot validate shadows.
+For original-versus-default city-scale measurements, use the existing performance
+smoke, adding the explicit Debug baseline flag for the original treatment.
+The older `--depth-performance-comparison` flag remains accepted as an explicit
+request for the combined default:
+
+```bash
+godot --path godot -- --size large --seed 42 --perspective-performance-test --depth-performance-baseline
+godot --path godot -- --size large --seed 42 --perspective-performance-test
+godot --path godot -- --size SF --seed 42 --perspective-performance-test --depth-performance-baseline
+godot --path godot -- --size SF --seed 42 --perspective-performance-test
+```
+
+Keep window dimensions and display scaling identical between runs. This measures
+the candidate with the same frame, selection, buffered-pan, road-preview and actual
+minimap click-to-render budgets as the baseline, rather than benchmarking four
+simultaneous comparison viewports.
+
+Pre-promotion prototype measurements on Apple M2 / GL Compatibility, with the performance
+harness at 960x800 and canvas scale 1:
+
+| Scene / treatment | Frame p90 (60ms budget) | Minimap click-to-render (250ms budget) | Road preview (100ms budget) |
+| --- | ---: | ---: | ---: |
+| Large random / current | 15.9ms | 250.3ms | 18.1ms |
+| Large random / combined | 16.1ms | 269.5ms | 17.2ms |
+| Populated SF / current | 6.0ms | 481.6ms | 163.4ms |
+| Populated SF / combined, repeated run | 40.6ms | 412.4ms | 138.6ms |
+
+These are comparisons, not passing performance claims: minimap latency exceeded
+budget in all four runs, and both populated-city road-preview runs exceeded
+budget. The initial populated combined run reached 843.5ms minimap latency before
+the repeat above; retain that first-run finding rather than treating the repeat
+as a guarantee. Populated baseline cold rebuild was 2044.2ms against 1500ms;
+the repeated combined run was 1237.8ms. No budgets were relaxed.
+The isolated graphical study passed all 16 subject/treatment combinations,
+rotation/tilt/zoom picking, placement ghosts, visible ground-shadow pixel
+comparisons and 640x780 layout. Broader baseline smoke runs separately reported
+waterfront-starter placement and Ballista release-timing failures; these are
+outside the opt-in art study and are not represented as passing checks.
+
+After promotion, the normal (no comparison flag) performance runs measured:
+
+| Default scene | Frame p90 (60ms budget) | Minimap click-to-render (250ms budget) | Road preview (100ms budget) |
+| --- | ---: | ---: | ---: |
+| Large random | 16.3ms | 258.9ms | 16.1ms |
+| Populated SF | 36.0ms | 428.5ms | 131.9ms |
+
+Frame, selection, picking, buffered-pan and cold-rebuild budgets passed. Minimap
+latency remained over budget, as did populated road previews; these findings are
+retained rather than weakening the benchmark. Default building rendering, actual
+cached submenu thumbnails, graphical depth comparisons and freeform wall-network
+checks passed. Promoting relief also exposed reversed clipped wall-cap triangles;
+the renderer now normalizes their winding before emission. Original timber walls
+resolve their effective material before choosing stone-only supports.
+The supplemental woodlot-art smoke still reports a part-count mismatch: its
+fixture compares world-sized plots to authored-size artwork. It is not counted as
+a passing check.
+
+### Terrain relief, artwork and comparison
+
+The selected production treatment uses balanced materials/terrain-edge relief
+everywhere and **3x hills in newly generated random maps** (approximately eighteen
+feet maximum). `CityGame.New` assigns the new random-map profile; populated
+scenarios retain the original scale. Saves contain an optional `ElevationProfile`;
+missing profiles load as `Current`, preserving existing save heights. New 3x
+maps retain their profile across save/load and undo. Invalid profiles are rejected
+explicitly. This is additive version-two save data, not a rewrite of old maps.
+
+The shared artwork pass also supplies clustered, stepped foliage and trunk
+forks/roots, textured rock facets, coarse dressed-timber and masonry materials,
+stronger bridge rails/caps/piers/underbeams, recessed workplace/civic facades,
+hollow wells and aqueduct troughs, and real forge openings. Roof overhangs remain
+pickable. Attached tower projections and disjoint masonry runs avoid coincident
+wall/tower faces; canonical model parts are shared by gameplay, ghosts and thumbnails.
+Already-dimensional statues, weapon/actor models and completed palisades retain
+their established forms. Tree positions/spacing, road widths/centerlines/grades,
+logical building footprints, simulation output and terminal UI are unchanged.
+
+Structure picking uses a cached per-owner broad phase followed by the same exact
+box/roof tests. Trees and rocks use their actual model boxes and frontmost
+occlusion. Feature inspection is separate from terrain-based placement and planar
+panning, so leafy crowns do not redirect road/building previews to a trunk cell.
+Complete footbridge picking uses actual plank, rail and support triangles.
+
+The Debug-only comparison controls do not change another game or its saved data.
+Current building, palisade and natural-feature artwork is present in every candidate:
+
+1. Original terrain and original hill heights.
+2. Lighting consistency for roads, bridge decks, cliffs and banks.
+3. Balanced broad grass grouping, turf caps and recessed earth strata at current heights.
+4. Balanced treatment with 2x hills (approximately twelve-foot maximum hills).
+5. Selected balanced treatment with 3x hills (approximately eighteen-foot maximum hills).
+
+```bash
+godot --path godot -- --terrain-comparison
+godot --path godot -- --terrain-comparison-smoke-test --capture /tmp/terrain-study.png
+godot --path godot -- --size large --seed 42 --perspective-performance-test --terrain-performance-treatment DoubleHills
+godot --path godot -- --size SF --seed 42 --perspective-performance-test --terrain-performance-treatment DoubleHills
+```
+
+The performance flag accepts `Current`, `Lighting`, `Balanced`, `DoubleHills` and
+`TripleHills`. It requires an isolated Debug performance smoke and rejects loaded
+cities and other comparison modes.
+
+Use **1–5** to select treatments, subject buttons or **[ / ]** for the three
+fixtures, **Q/E** or right-drag to rotate, **T** for tilt, **O** for overhead,
+**-/+** or the wheel to zoom, middle-drag for planar fractional panning, **R** to
+reset and **C** for five matched captures.
+The default capture prefix is `user://terrain-comparison/study.png`, separate from
+the building comparison. The graphical smoke writes normal and `-close` captures
+for terrain/river, village/infrastructure, woodland/outcrop and a nine-model
+structures/props gallery, plus a 640x780 narrow-window capture.
+
+Height profiles are per-map `TerrainElevationProfile` values. Debug candidates
+can override them with `GameMap.SetPreviewElevationProfile`; the method invalidates
+terrain/travel caches and never mutates global constants. Terrain elevation,
+maximum picking heights, hill thresholds, bank margins, road grading, foundations
+and bridges consume that profile. Fixtures are deterministic private maps.
+River/sea levels and logical cell layouts are unchanged. Production profiles
+are persisted; private comparison controls do not save or alter normal games.
+
+Lit roads and banks have explicit clockwise-compatible normals. Balanced strata
+are inset into existing terrace/shore faces, with turf caps below the unchanged
+top planes. Neighboring recessed bands continue across cell seams without internal
+fin walls. End-cap continuity uses the same strict inset eligibility as the adjacent
+band and its actual land/graded shoulder heights; a cut or a band ending at a
+terrace top must close rather than expose the background. Road cut geometry, centerline offsets, widths and grade rules are not
+replaced by texture tricks. Actual bank faces participate in candidate terrain
+picking. All geometry remains chunked and batched.
+
+The graphical study checks all twenty subject/treatment combinations, visible
+terrain picking over rotations/tilts/zooms, overhead, both bridge types, reference
+building/feature picking, placement ghosts, cache reuse, profile/save isolation and real
+road shadow reception using shadowed/unshadowed pixel comparisons.
+
+The initial fifteen-case prototype measured 16.7-21.2ms
+frame p90 against 60ms, at most 0.5ms terrain picking against 50ms, and at most
+54 render nodes against 512. The road-shadow pixel comparison found nineteen
+darkened road samples outside the reference models' silhouettes.
+With the `DoubleHills` candidate, the large random-map performance smoke passed
+(237.9ms minimap click-to-render against 250ms; 16.1ms frame p90 against 60ms).
+Populated SF remained over budget for minimap clicks (443.0ms against 250ms)
+and road previews (151.0ms against 100ms), while its 37.8ms frame p90 passed.
+These are disclosed comparison results, not passing claims for the populated
+interaction budgets; no thresholds were relaxed.
+
+After the full artwork rollout, the default large-map smoke passed at 16.3ms frame
+p90 (60ms budget), 0.9ms picking (50ms), 319 nodes (512) and 229.7ms minimap
+click-to-render (250ms). Populated SF retained its original heights and measured
+40.7ms frame p90, 4.2ms picking and 353 nodes. Its minimap clicks (430.7ms/250ms)
+and road previews (126.7ms/100ms) still exceeded budget. The owner-level picking
+index avoids testing every small facade/foliage box for every interaction; no
+budgets were weakened.
+
+The full map-art pass passed 147 focused artwork/terrain/road/shoreline tests and
+the twenty-case graphical comparison, including the structures gallery, natural
+feature picking and smooth panning. A broader persistence/placement/world-scale
+selection passed 217 tests with one legacy skip, but retained two world-scale
+failures: the old gate-deck assertion requires a centered deck instead of its
+actual inward walkway offset, and the large-settlement troll-introduction timing
+assertion fails. These checks are disclosed, not counted as passing, and their
+unrelated simulation/fortification behavior was not changed by the artwork pass.
+
+### Physical world scale
+
+`WorldScale` fixes one foot at **0.225 scene units**. The unchanged tier-one goblin's
+1.0125-unit anatomical crown represents **4.5 feet**; Orc anatomy is 6 feet.
+Combat tiers retain existing goblin/Orc health, damage, speed and one-second attack
+formulas but no longer enlarge their bodies. `SiegeEnemy` remains neutral attacker
+state; `SiegeEnemyDefinition`/`SiegeEnemies` centralize species rules. Wave orchestration
+stays in the siege subsystem; there is no generic movable hierarchy.
+
+Building models use their original authored coordinate system at
+`WorldScale.ArchitectureScale` (five world units per authored unit). The registry exposes
+actual occupied `Width`/`Height` and separate authored `ModelWidth`/`ModelDepth`.
+The renderer applies the same conversion to complete models, roofs, openings, props
+and picking transforms; foundations use the converted footprint. Floors are authored
+independently of population level so stacked homes retain human-usable clear openings.
+Do not apply the conversion twice to natural trees embedded in building models.
+
+Material-aware wall barriers are **20/26/30 feet**, with **30/36/40-foot towers**.
+`WallDamageLayout` supplies physical widths/depths, damage fragments, wall-walk height
+and horizontal bounds to drawing, collision and garrison movement. Main gates use
+three shared-health opening cells, a 13.3-foot clear passage and overlapping structural
+posts; the passage accommodates grid-aligned human lanes without shrinking bodies.
+Gate leaves have raised crossbars and metal fasteners on both faces. They share
+damage-aware fragments with rendering and picking and remain below the access deck.
+Two-cell corridors reserve future wall thickness, with extra inner access around
+towers. Nearby towers shift clear of the gateway rather than leaving a gap in
+automatic arrow coverage. Founding validates clear exterior corridors, allowing
+grated wall crossings over water while keeping starter sites dry and gate-reachable.
+Periodic towers are omitted when their full meshes would overlap a fixed corner
+tower; construction reservations use the same placement rule. Pre-fix saves whose
+tower flags encode overlapping layouts are rejected explicitly, not silently moved
+or rewritten. New or restarted settlements use the corrected spacing.
+Archers stand on actual deck fragments, including neighboring tower platforms, not
+parapet tops. Guards wait inside gates and corners, leaving ladder approaches clear.
+Projectile origins, mounted weapons and placement ghosts share the supported deck
+height; actor interpolation includes the previous and current terrain levels.
+Deck caps replace the upper body layer instead of sharing its exposed top face.
+House plinths and doorsteps use disjoint stone pieces, and hillside supports stop
+at the plinth underside. Keep these surfaces nonoverlapping: coincident textured
+faces cause striped depth artifacts when the camera scrolls. Settlement smoke checks
+foundation overlap, tower-deck picking and cached geometry during fractional pans.
+Ground-level timber beams are omitted where the stone plinth already occupies the
+same top plane. Checks include differently colored faces, not just stone-on-stone
+overlaps, and exercise all four corner towers over 48 fractional pan/rotation cases.
+Opaque 3D textures use linear mipmapped anisotropic filtering, retaining their
+original palettes and broad patterns without nearest-sampled pixel steps. Closed cuboids cull back faces;
+open roof/path meshes remain double-sided. Tree dimensions vary at fine deterministic
+precision within the same bounds, rather than repeating five canopy heights that
+produce coplanar foliage where neighboring crowns overlap.
+Motte and Bailey palisades use individually shaded dark timber posts and interior
+braces instead of flat wall slabs. `PalisadeArtwork` varies log girth, depth, inset,
+height and five rough-cut crown profiles using a stable building-position seed.
+Chamfered shoulders, occasional recessed chinks and notched/broken crowns are real
+disjoint volumes, not decals or repeating stacked caps. Thin exposed end grain replaces
+the top bark layer; no tip is pasted over a coincident body face. Five bark tones,
+coarse elongated scars and broad knots break up repeated wood patterns.
+Texture color is applied once, retaining mipmapped filtering and cached material batches.
+Models, picking and construction thumbnails share these parts; overhead sprites use
+the same darker palette. Wooden settlement walls, towers and gate posts share this log generator. Their
+visual parts are clipped to canonical damage fragments; tower skins follow the
+outer perimeter instead of creating solid or nested interior slabs. Supporting
+log tops remain level below the existing decks, while exposed crenellation crowns
+are rough-cut. Decks, gate fittings and water grates retain their physical
+positions; inner braces and end grain use the darker shared timber palette.
+Drawing, exact picking, selection, wall/founding ghosts and construction thumbnails
+consume the same visual parts. Fire surfaces are selected from exposed log tops,
+and burned timber retains coarse charred grain. Stone and reinforced-stone walls
+keep their masonry treatment. Logical wall footprints, walkway support, heights,
+health, damage bands and upgrade rules are unchanged.
+The wall-network smoke verifies this path on actual settlement walls, freeform
+joins, water crossings, gates, mounted weapons and canonical construction
+thumbnails. Its graphical palisade fixture measured 13,987 timber parts in 114
+cached render nodes, 0.1ms camera sync, 7.1ms picking and 16.8ms frame p90
+(budgets: 512 nodes, 50ms sync/picking, 60ms frames). The current large-map
+performance smoke passed, including 205.0ms minimap click-to-render against
+250ms. Populated SF still exceeded the existing minimap and road-preview
+budgets: 437.1ms against 250ms and 129.3ms against 100ms, respectively; its
+35.0ms frame p90 passed the 60ms budget.
+New random maps space natural trunks at least 18 feet apart using seeded,
+non-row-ordered placement priorities. Woodland clusters remain, but full-sized
+crowns no longer grow from adjacent 4.4-foot cells. These are actual feature
+placements, not hidden render-only trees; clearing and inspection match what is
+drawn. Existing saves and hand-authored scenario woodland are not rewritten.
+
+Tree, stone and mud trolls append species IDs. Deterministic `AppearanceSeed` controls
+stable 8-11-foot individual stature; `TrollArtwork` emits distinct original silhouettes.
+Species profiles vary durability, damage, movement and attack cadence without adding
+special powers. Body-aware exterior movement checks terrain, buildings, wall bounds
+and swept mixed-species collision; route floods account for each large species'
+actual radius. Spawn positions also avoid ground defenders. Only front-rank attackers
+can reach a wall. Blocked first approaches and forced goblin-only waves defer pending
+monster introductions without producing invalid saves. Troll arm strikes pivot at the
+shoulder and match their physical contact distance.
+The permanent 1,000-person introduction uses a saved one-time warning/forecast.
+Neutral save members retain JSON names **`Goblins`** and **`NextGoblinId`**.
+New-layout round trips and undo are supported; pre-scale random-world layout migration
+is out of scope. Prepopulated scenarios retain their original building/road definitions
+through `GameContent.ForScenario`, without moving or enlarging their placed objects.
+Cross-scenario loads copy the definitions rather than mutating the live registry.
+
+Dirt/cobbled/King's Road surfaces are **1/2/4 cells** wide. Canonical offset edges still
+drive reservations, cut/fill walls, shoulders, bridges and picking. Mature trees are
+roughly 20-34 feet tall, and bridge rails are human-height. The sidebar retains a
+visible minimap and scrolls overflowing reports instead of collapsing navigation
+to zero height in populated settlements.
+
+Historical examples, not a universal medieval standard: original eastern sections
+at [Conwy](https://en.wikipedia.org/wiki/Conwy_town_walls#Architecture) were about
+**12 feet**, [York](https://en.wikipedia.org/wiki/York_city_walls) generally has
+**13-foot masonry on earth ramparts**, and
+[Avila](https://en.wikipedia.org/wiki/Walls_of_%C3%81vila) averages **39-foot walls**
+with principal gate towers about **66 feet** high. That example range supports a
+20-foot fantasy barrier as plausible scale; it does not prove an 11-foot creature
+cannot climb. The explicit game rule requires trolls to breach intact walls.
+
+```bash
+dotnet test tests/TermCity.Tests/TermCity.Tests.csproj --filter 'FullyQualifiedName~WorldScaleTests|FullyQualifiedName~SiegeEnemyDefinitionTests'
+godot --headless --path godot -- --seed 42 --size medium --world-scale-smoke-test
+godot --path godot -- --seed 42 --size medium --world-scale-smoke-test --capture /tmp/termcity-world-scale.png
+godot --path godot -- --seed 42 --size medium --settlement-smoke-test --capture /tmp/termcity-settlement.png
+```
+
+The world-scale smoke authors a new 1,000-person populated fixture on a large map,
+measures the existing perspective/minimap budgets and a 120-attacker mixed swarm,
+then verifies five-species picking over four rotations and three zooms. The ordinary
+large random-map performance smoke remains a separate check. Smoke audio is silent.
+Paid 10,000-population playthroughs use regional layouts of 480x288, 560x336 and
+640x384 cells: small pre-scale maps do not contain enough physical land for that goal.
+They retain the original population target, paid purchases, positive-treasury and
+no-loan requirements. The guide searches beyond crowded local neighborhoods for
+replacement civic sites and restores full service funding when a wealthy mature city
+stalls on happiness. It tries smaller service buildings when larger upgrades do not
+fit, and retains existing providers instead of removing capacity before distant
+replacements have arrived. No population, treasury or unlock values are injected.
+Use Release outputs for these long simulation runs. Set `TERMCITY_PLAYTEST_OUTPUT`
+to retain progress/complaint logs and final worlds, including failed attempts for diagnosis.
+
 ### Settlement and siege validation
 
 The new settlement route is **G > Motte and Bailey enclosure**. Its first click anchors
@@ -32,6 +382,31 @@ click/Enter purchases the complete enclosure atomically. Garrison uses the share
 construction catalog, canonical model thumbnails, statistics and Add/Cancel actions,
 with the same terminal framing, tooltips and narrow-window scrolling. Manual zoning
 and the existing city scenarios retain their legacy behavior.
+
+The siege debug preset preplaces one Guard Post and one Archer Barracks, using
+normal paid placement after establishing its 100 residents and before filling
+workplaces. Both have valid interior sites clear of gate approaches and recruit
+their ordinary four-person rosters. Their footprints are reserved before spreading
+homes; an undersized enclosure fails explicitly rather than omitting a garrison
+or reducing the 100-resident population. Plain settlement debugging remains unchanged;
+same-seed siege restarts recreate both garrisons.
+
+Desktop `--debug-settlement` and `--debug-siege` launches request exactly 64x64
+walls through `SettlementDebugSetup.DefaultWallSize`. `SettlementDebugSetup.Create`
+discards unsuitable maps and regenerates with consecutive seeds until the complete
+preset fits, rather than reporting a terrain placement error or shrinking the walls.
+Starter-site and housing-capacity checks use the same gate facing. Only placement
+failures trigger retries; invalid dimensions, insufficient starting funds and presets
+that cannot fit even on clear land still report configuration errors. The clear-land
+feasibility check uses a disposable map, never the played terrain.
+Desktop generation runs off the UI thread and can be cancelled by closing the window.
+The accepted seed is stored in the game and saves; regenerated starts log
+`TERMCITY_DEBUG_SETTLEMENT_REGENERATED` and show the seed and retry count in the UI.
+Explicit siege dimensions and restarts retain their requested/current dimensions.
+Restarts use the same regeneration factory and only replace the existing game after
+the entire preset succeeds. Normal map creation, loaded saves and manual founding
+do not regenerate.
+Internal integration fixtures may still use the capacity-checked size search.
 
 ```bash
 godot --path godot -- --seed 42 --size small --debug-settlement
@@ -42,7 +417,7 @@ dotnet test tests/TermCity.Tests/TermCity.Tests.csproj --filter 'FullyQualifiedN
 ```
 
 Settlement state and siege rules live in the UI-independent core. Save version 2 has
-an optional settlement section; old city saves remain valid. Combat advances on the
+an optional settlement section; pre-scale footprints are not migrated. Combat advances on the
 simulation clock and respects pause, focus suspension and game speed. Drawing and
 picking never advance combat RNG. Wall/goblin meshes have their own batched scene
 roots; combat and health updates must not invalidate terrain or rebuild the city.
@@ -51,13 +426,60 @@ weapons, goblins and projectiles; `TerminalMap.Siege.cs` handles health bars, we
 circles and the overhead representation. Minimap combat markers do not rebuild its
 terrain texture.
 
+`TowerDefenseArtwork.cs` owns shared oil/stone station geometry, front-hinged
+cauldron poses and gravity-driven drops. Towers keep two stations per primary
+exterior face and append one station in the forward outer gap of each available
+adjacent face. Already occupied faces and the ladder-access face are excluded.
+Straight towers have four stations; original corner towers have five. Existing
+station indices remain stable, and the saved-attack validator accepts the expanded
+bounded index range, including orphaned releases. Each release still uses one
+station and the existing damage/reload, not simultaneous extra attacks.
+Stations sit between the merlons, with a four-step access flight and connected raised
+platforms; ordinary walls retain a single position. Previews, picking and selection
+bounds use the same parts as the city renderer.
+Generated corner/junction towers use their full tower platform for weapon placement;
+their short logical anchor spans are not subject to ordinary wall-span length checks.
+Health, unlock, gold and existing-defense checks still apply.
+Cauldrons tip over the outside edge and pour a connected sheet that reaches a
+ground-level station footprint. `DropAttackLayout` defines oil's 1.5 x 1.5-cell
+strip and rocks' 1 x 1-cell area. Stone racks release staggered tumbling stones;
+Drop acquisition measures the unchanged reach from the actual station, not the
+tower center: full-scale attackers stop at body-aware contact beyond a center-based
+2.5-cell radius, which otherwise prevents oil from defending its own tower base.
+Footprint membership and obstruction still constrain every candidate and victim.
+each attack applies damage once at the first ground contact, not once per stone.
+Oil uses a single connected folded-sheet mesh with shared cross-sections, animated
+width/edge undulation and a thinning stream. A dark amber, partially translucent
+non-emissive material replaces the gold cuboid chain that read as a laser beam.
+Three coarse teardrop splashes lift from ground contact while oil is arriving;
+they are bounded visual droplets, not projectile hits or extra damage ticks.
+The mesh updates with siege actors, not static city/fortification geometry.
+Its ground artwork
+spreads over 0.18 siege seconds through five connected, disjoint broad bands,
+clipping the corners inside the fixed damage footprint instead of popping into
+a square decal. Both map views share this pool layout; reduced motion uses its
+full static pose. This cosmetic growth does not add damage ticks or change reloads.
+`CombatProfiles` and `WallDefenses` centralize fighter/mounted damage and intervals.
+`SettlementAttacks` handles fixed drop snapshots, direct swept first-hit projectiles,
+arcing trebuchet impacts with 360-to-90 radial falloff and guard contact revalidation.
+`SettlementAttackSave` preserves stable attack IDs, world release/landing geometry,
+age and applied flags. Source removal retains released attacks; debug reset clears
+them. Current network saves without the new list load it empty; old cosmetic traces
+are not reconstructed as damage. Save cooldown validation accommodates the new
+10/14-second reloads, and fighter windups share the persisted attack lifecycle.
+Moving pot parts update cached MultiMesh slots and their pick volumes; attacks
+must not rebuild the city or static fortifications. Pause freezes the motion;
+reduced motion uses static ground impact guides. `TowerDefenseSmoke` exercises
+real attacks, access geometry, connected oil, delayed contact, stone drops and exact footprint sizes.
+
 `CityGame.Development.cs` replaces bailey zoning with demand-driven site scoring.
 All trades compete for shared interior land; only constructed footprints receive
 internal R/C/I classifications for the existing simulation indexes. Site selection
 preserves worn paths, an inner repair alley, gate clearance and flood-reachable access
 to every interior building. Land value and crowding choose broad courtyard homes,
-compact houses, stacked shanties or inner-wall housing. Weekly redevelopment preserves
-households instead of manufacturing population. New building registry entries are
+compact houses, stacked shanties or inner-wall housing. Shanties are new infill only:
+crowding must not automatically replace existing homes with shanty towers. Wealthy
+weekly redevelopment preserves households instead of manufacturing population. New building registry entries are
 appended, preserving existing save IDs; load migration clears only vacant bailey zones.
 `SettlementDevelopmentTests` covers sites, trade mix, wealth, crowding, wall preservation,
 artwork and deterministic persistence.
@@ -84,7 +506,7 @@ The settlement integration smoke covers button actions, keyboard isolation and
 and restart semantics.
 
 Debug wall width/height inputs are applied through the guarded same-seed restart.
-Explicit dimensions use exact rectangular placement, not the default 32/24/20/16/12
+Explicit dimensions use exact rectangular placement, not the default 64/56/48/40/36
 fallback search. Validation happens before replacement, so rejected dimensions or a
 failed dry-land/cost search preserve the live city. Ordinary restarts retain the
 current debug enclosure dimensions.
@@ -97,21 +519,249 @@ on load or undo; startup and debug restart announce their newly created first wa
 volume and focus behavior with placement sounds, and smoke-test audio remains silent.
 
 Siege simulation remains fixed-step (0.1 siege seconds); at Slow/1x that is five
-combat updates per real second. `SiegeMotion` interpolates transient previous/current
+combat updates per real second. `SiegeEnemy.cs` defines the mutable attacker instance
+for both goblins and orcs; `SiegeEnemyDefinition.cs` owns their explicit health,
+damage, attack interval, movement speed, body scale and collision-radius rules.
+`SiegeEnemies.Get(kind)` provides shared immutable definitions. `SettlementState.Enemies`
+owns the live instances; settlement siege code still schedules waves and resolves
+combat, while crowd and garrison code retain their distinct movement rules.
+Save JSON deliberately retains `Goblins` and `NextGoblinId` through explicit property
+names. Founded settlements now require the explicit wall-network schema described
+below; the old rectangular settlement representation is not migrated.
+There is no general movable base class.
+
+### Editable wall networks and arrival eligibility
+
+Garrison walkways reserve a 1.3-unit inward catwalk with offset actor
+positions behind the parapet. Only intact towers have access ladders; gates and
+gate wings never do. Ground-to-wall routes use tower ladders, while gate passages
+remain walkable at ground level and their decks remain connected wall walkways.
+Garrison travel uses 3.5 units/sec
+and ladder ascent 2.4 units/sec, with nearest-enemy facing and distinct patrol posts.
+Shared ladder/rung and climber offsets keep bodies on the exposed side, facing
+the rungs. Ground-to-wall and wall-to-ground routes use the same ladder face.
+Descent first moves to the ladder at deck height, then lowers vertically before
+walking away; ascent uses the same exposed anchor. World-height preservation and
+foundation-relative ladder tops handle terrace differences. Climbing limbs reach
+toward the rungs, and archers must finish stepping onto supported deck space before
+firing. Existing saved paths need no new traversal fields.
+Automatic archers distinguish threat acquisition from immediate shot availability:
+failure to find a clear in-range shot must not discard a live assigned threat.
+Changing threats interrupts stale automatic routes, while explicit player orders
+remain authoritative. A screened in-range shot falls through to movement rather
+than freezing the archer at its current post. Transient route-target tracking is
+recomputed on load without changing save fields. Ladder height steps reserve body
+clearance, and already-overlapping saved allies can separate at normal movement
+speed rather than mutually blocking forever. Saved archer path validation accepts
+fortification-supported walkway cells over water but still rejects open-water
+swimming and ground soldiers without an actual bridge.
+Automatic bow assignments first minimize the number of other archers assigned to
+each live enemy, then retain an existing balanced assignment, then prefer distance
+and stable IDs. Explicit attack orders are never reassigned but count toward an
+enemy's coverage; move-ordered units do not. New assignments require an in-range
+shot or a reachable supported bow post. Shared post ranking and trajectory helpers
+keep targeting and movement consistent. Assignments naturally rebalance after kills
+and converge when fewer enemies remain, without save-format changes.
+Ground ladder faces and landings are chosen from the structural enclosed interior,
+with lateral offsets at corners and no exterior-ground fallback. Short tower-side
+ladders start at connected walkway height and finish at the tower deck; matching
+parapet openings, route anchors and climb poses share their geometry. Tower support
+takes priority over overlapping wall cells when routing height changes.
+Walkway/parapet sides for added walls follow closed structural faces, independently
+of drawing direction and mounted-weapon facing. Open runs and internal partitions
+prefer the founding town's side; collinear ties use a stable world-axis direction.
+Artwork topology and side lookups are cached until walls are added, removed or
+structurally changed, so breaches do not flip surviving catwalks. Placement previews
+include proposed enclosures. Collision fragments are invalidated with structural
+changes, and actor routes use the same inward offset as the rendered decks.
+Gate routing distinguishes the ground passage from its upper walkway; only tower
+transitions can change between ground and wall travel.
+Arrow projectiles include crossed fletching. Transient `SiegeDeath` records capture
+arrow, blade, crushing, oil and fall deaths immediately when damage resolves; their
+visual playback does not delay combat or become a selectable living actor.
+Patrol post IDs survive saves; blocked routes replan without losing body separation.
+Corner/junction towers are generated in the atomic run preview and validated before
+purchase, with center snapping inside the tower's visible footprint.
+The interactive wall tool snaps endpoints to the nearest 0/30/45/60/90-degree
+direction in each quadrant, projecting the pointer onto that direction. Nearby
+tower centers take precedence for exact connections. Preview and chained purchases
+use the same snapped endpoint; low-level construction and saved spans retain
+arbitrary-angle support, and gate rotation remains unchanged.
+Ladders are part of cached fortification batches rather than per-frame actor work.
+Tower parapets/merlons leave a 0.9-unit clear ladder opening. Actor attack poses reuse
+`SiegeMotion.AttackSwing` for guards. `ArcherArtwork` instead drives an articulated
+bow pose from the unchanged 0.3-second windup and 1.5-second interval: raise/draw,
+cheek anchor, release, follow-through, lower and nock. Two-link arm solves preserve
+upper/forearm lengths, bow tips keep a constant-length two-segment string taut,
+and the held fletched arrow disappears at committed release. Archers use
+a side-on shooting stance; ready/reload hand paths stay outside the coat.
+Regression checks test the actual oriented arm/hand box volumes against the
+rotated torso and head through 1,501 poses, permitting only the shoulder socket
+attachment. Limb thickness, hand and torso sizes are shared with the renderer.
+The bow is stowed
+while climbing; reduced motion uses static ready/aim poses. Actor batches and
+correctly oriented pick boxes update without rebuilding fortifications or changing
+damage, target assignment or projectile snapshots. Native close-ups cover all
+phases at two camera angles and zooms. Death rendering reuses enemy
+species artwork and preserves troll appearance seeds; slain actors are removed from
+picking immediately while the bounded transient death list animates. Both map views
+draw these effects. Clipped extension top faces use Godot's front-facing winding,
+covered by native checks and inspected deck captures.
+
+`World/WallNetwork.cs` derives a canonical planar graph from actual straight spans:
+T/X intersections split connectivity, collinear overlap is deduplicated and bounded
+faces determine enclosure. The road tool's anchor/preview/confirm/re-anchor workflow
+is reused, but roads' logical staircases, smoothing, partial placement, bridges and
+terrain grading are not reused as wall simulation.
+
+`SettlementNetwork.cs` owns stable wall IDs, spatial and traversal caches, founding
+wall affiliation, established territory and gate-accessible arrival eligibility.
+The original `Bounds` records founding provenance; `WallBounds` is only a spatial
+envelope. Growth does not use either rectangle as membership. Whole plots must fit
+eligible land and actual clearance. Separate retained territory keeps existing
+households and paths alive after a breach. Both new development and vacancy refilling
+are gated; births and ordinary non-settlement scenarios are unchanged.
+`SettlementState.ReachableLand` supplies the shared physical flood for both
+territory discovery and construction access: traversable gates and nearby dry
+land are included, but only connected closed interior cells become arrival plots.
+`SettlementAccessError` keeps proposed construction from stranding existing buildings
+and identifies the blocked building/coordinates. Its baseline graph, per-plot
+checks and inspection results are cached against city and wall-topology revisions.
+The production candidate scoring is unchanged. Diagnostics reuse its type, footprint,
+land-value and clearance rules without sorting every world candidate on each hover.
+`GrowthDiagnostics.ForSettlementCell` describes empty unzoned land, and zone/report
+vacancies are nonoverlapping, access-checked sites rather than merely geometric fits.
+Eligible-site text explicitly leaves final selection to normal demand/site value.
+The settlement native smoke checks real extension households and the existing status
+tooltip and Growth report at 960- and 640-pixel window widths.
+
+`CityGame.WallConstruction.cs` validates whole purchases before editing anything,
+quotes net new Euclidean length and builds bounded-length health sections.
+New runs cost 20/80/200 gold per unit at wood/stone/reinforced tiers, matching the
+base cost plus existing material upgrades. New sections during a purchased upgrade
+use its target tier and do not reorder the stable upgrade queue. Gate cutting and
+removal are temporarily rejected during that upgrade. Explicit gates fit actual road
+widths/angles; road gates remain explicit and water-wall crossings use shallow
+arched bases with submerged iron grates rather than road bridges.
+Corner and non-collinear junction towers are automatic, previewed and checked for
+clearance before placement. The one-unit rendered span cadence matches established walls.
+Removal and insertion preserve surviving damage percentages rather than healing
+neighbors. Undo and new-format saves preserve IDs, geometry, material, health groups,
+repair latches and established land. Unsupported old rectangular settlement saves
+fail explicitly and are left unchanged.
+
+`WallDamageLayout` supplies oriented collision, fragments and terrace foundations.
+`WorldScale.HasDryTowerFootprint` checks the complete tower base, not only its
+anchor cell. Terrain-aware founding and junction previews/purchases omit wet tower
+sites while retaining ordinary walls and their closed network spans. New saves
+preserve these terrain-dependent founding flags; existing saved water towers remain
+loadable and are not silently removed or refunded.
+`WallWaterLayout` trims only wet body columns to a shared shallow watercourse arch
+(0.3-unit clearance plus up to 0.55-unit rise), preserving dry artwork. Iron bars
+extend 0.65 units beneath logical water level and use the same rendered/pickable
+fragments as collision. Dry-bank foundations must not fill these openings.
+Founding previews, purchases and debug searches use the selected gate side and
+dry physical flood when choosing starter footprints; no starter may seal the
+others' sole route. Water-wall saves retain logical terrain, without new save fields.
+These crossings do not add traversable water, erase terrain, change flow, add roads
+or bypass bridges; gate placement remains land-only. Territory and construction
+reachability seed their physical flood from actual usable gates, not an arbitrary
+central island that can become separated by a river.
+`SettlementFootbridges.Advance` runs through `TravelRoutes.WearPaths`, with a
+resident requirement and one construction project at a time. It searches from
+gate-reachable dry land to another bank in the same connected closed region,
+limits cardinal crossings to eight water cells and checks every segment against
+actual fortifications. The four-increment project preserves water and requires no
+gold or RNG. Completed spans integrate with pedestrian/service routes, garrison
+ground travel, path wear/links and arrival reachability without becoming roads.
+Optional `Footbridges` save records validate alignment, length, terrain and progress;
+older saves load with none. Perspective and overhead render planked decks, railings
+and supports, with a workman at the unfinished edge. Actual elevated deck triangles
+provide perspective ground picking. Inspection reports progress or blocked work.
+Rendering, full-surface ray picking, selection, previews, overhead view and minimap
+use that geometry. New coplanar top faces use disjoint convex subtraction through
+the existing zone/footpath polygon helper; they do not overlap at T/X joins.
+Selection uses the picked stable section ID, including intersecting spans sharing
+a map cell. Mounted oil/stone stations follow the actual span tangent; R flips a
+new span's defended face. Route/spatial caches invalidate on structural passability
+changes, not camera movement, selection or cosmetic repair animation.
+
+```bash
+dotnet test tests/TermCity.Tests/TermCity.Tests.csproj --filter 'FullyQualifiedName~WallNetworkTests|FullyQualifiedName~WallConstructionTests'
+godot --headless --path godot -- --seed 42 --size medium --wall-network-smoke-test
+godot --path godot -- --seed 42 --size medium --wall-network-smoke-test --capture /tmp/termcity-walls.png
+```
+
+The native check exercises on-screen diagonal picking across four rotations and
+three zooms, selection without geometry rebuilds, actual angled gates, connected
+enclosure eligibility, atomic chained purchases and save/undo round trips.
+The default render cap is 60 FPS. On this workstation the 30-FPS cap produced
+large presentation stalls despite actor/simulation work remaining within budget;
+raising the cap avoids those stalls without reducing 2x supersampling or 8x MSAA.
+Explicit `--fps` values are still honored. Untextured static box colors share
+lit/unlit instance-color batches; textured materials keep their existing sampling.
+`SiegeMotion` interpolates transient previous/current
 goblin positions and gait per rendered frame. Projectile traces extrapolate their
 known flight between ticks and orient to the trajectory. Rendering neither advances
-simulation RNG nor changes travel speed/damage. Actor transform lists and MultiMesh
+simulation RNG nor changes travel speed/damage. Committed arrows, ballista bolts and trebuchet shots
+use a shared visual elapsed clock for windup release and travel in both map views.
+Flight progress excludes windup and post-contact retention and clamps at contact;
+damage and cancellation remain authoritative fixed-tick simulation decisions.
+Legacy projectile lifetime progress and oil/rock drop animation remain separate.
+Actor transform lists and MultiMesh
 instance buffers are reused; motion does not rebuild city or wall geometry.
 Reduced-motion settings retain location/facing but suppress bob, sway and hammer
 animation.
 
-`SettlementRepairs.cs` owns deterministic between-wave civilian repairs. The rate in
-health per siege second is `1 + 0.02 * population + 0.75 * occupied industrial buildings
-+ 0.25 * active service buildings`, or zero without residents. Breaches precede
-lowest-health-percentage sections, and each target is completed before moving on.
+`SettlementRepairs.cs` owns deterministic continuous civilian repairs, including during
+combat. Health per siege second is `12 + 0.24 * population + 9 * occupied industrial
+buildings + 3 * active service buildings`, or zero without residents. Breaches precede
+lowest-health-percentage sections; combat may redirect the crew when another section
+is at least ten percentage points more urgent. Otherwise targets are completed.
 Combat-ending ticks do not immediately heal a fresh breach. Optional saved repair
 target/phase fields preserve old version-2 compatibility; fractional wall health
 stores work already done. Paid/debug repairs clear stale crew targets.
+Walls remain visually intact above 85% health. Civilian repair animations begin at
+80% health and stay enabled for that shared section until it reaches 100%, even
+after it recovers above 80%. Repair, bucket-water and masonry crew visuals are
+suppressed in both map views until the enemy list is empty; health recovery,
+repair priorities, paid upgrades and their progress still advance during combat.
+After battle, the saved latch shows the crew until the wall is fully repaired.
+This visual latch is saved; older saves infer it from
+current health. Actual damage, repair speed, priorities and costs are unchanged.
+Both perspective and overhead views use `VisibleRepairingWall`; `RepairingWall`
+continues to report actual repair work, including invisible minor repairs.
+
+`SettlementGarrison.cs` owns finite building rosters, gate-based ground/wall routes,
+automatic combat and temporary move/attack orders. Both recruiting buildings unlock
+at 100 souls and have four-person rosters (global limit 64), two-second recruitment
+and eighteen-second casualty replacement cooldowns. Troops never teleport to walls;
+archers climb tower access ladders and soldiers defend inside gate/corner posts.
+Recruitment uses perimeter cells connected to the gate, not isolated pockets beside
+large barracks. Soldiers wait outside the opening so archers retain ladder access.
+`GarrisonCommands.cs` keeps transient selection separate from persisted simulation
+orders. `PerspectiveCity.Garrison.cs` batches troops and uses actual model-volume
+picking with building/roof occlusion. Selecting actors never invalidates city geometry.
+Selected goblins, Orcs and all troll species show their live species name and health
+in the bottom-left inspection status. Selection is transient and clears on map
+selection, Escape, death or replacement of the city; defenders retain their ordinary
+move/attack commands.
+Perspective wall/tower selection frames enclose their rendered geometry rather than
+logical anchor cells. Equipped towers frame and tint the mounted weapon itself;
+its frame sits at the model's actual base, not above the tower crest. Placement
+ghosts share these bounds and mounting origins. Building/yard and road outlines
+retain their existing footprint behavior; changing selection does not rebuild city
+or fortification meshes.
+
+`SettlementOrcs.cs` plans one deterministic, reachable first-Orc approach from the
+250-person milestone. A useful warning requires at least twenty siege seconds;
+late unlocks defer the introduction by a wave. Only that first approach is forecast.
+Explicit species control health, body radius, movement and attack damage independently
+of population tier; mixed swarms remain under the existing 120-attacker cap.
+`SettlementGarrisonSave.cs` and optional fields in `SettlementSave.cs` validate
+unit ownership, rosters, commands and species and retain legacy version-2 defaults.
+`SettlementGarrisonTests` proves three-seed early recovery, directional Orc defense,
+rosters, walking/climbing, orders, warnings and exact persistence.
 `SettlementUpgrades.cs` purchases the whole next material atomically, then upgrades
 one shared wall section every three siege seconds. Stone unlocks permanently at 250
 souls and reinforcement at 1,000; another purchase is rejected until the current pass
@@ -152,10 +802,10 @@ and service/weapon guides consistently in perspective, overhead and the minimap.
 Simulation zoning and independently selected map tints are unchanged. Smoke fixtures
 that inspect area geometry explicitly opt in.
 
-Debug Siege now starts with an exact 24x24 enclosure unless dimensions are explicitly
-requested; it fails explicitly rather than silently choosing a smaller preset.
+Debug Siege searches capacity-checked 64/56/48/40/36-cell enclosures unless dimensions
+are explicitly requested; explicit dimensions never silently fall back.
 `WallSections` enumerates shared-health anchors; `Walls` retains per-cell geometry,
-picking, reservations and weapon slots. Ordinary runs split at three cells and at every
+picking, reservations and weapon slots. Original ordinary runs share health across three cells and stop at every
 tower/gate. Shared pools preserve the combined per-cell strength. New saves validate
 matching member health; legacy saves preserve the lowest member health fraction so an
 existing breach never disappears. Repair/upgrading work converts shared pools once.
@@ -190,8 +840,8 @@ rotate the building and Shift+brackets rotate the camera. Middle-drag takes prec
 over pointer-following placement, so panning cannot move or accidentally place the ghost.
 
 `--debug-starter` is an opt-in Debug-only preset for a new random map. It places one
-Town Well and one Woodlot within eight cells of the generated starting spur, designates
-exactly a 4x10 residential rectangle nearby, suppresses the initial guide, and starts
+Town Well and one Woodlot within 32 cells of the generated starting spur, designates
+18-20 complete realistic residential plots nearby, suppresses the initial guide, and starts
 unpaused. The initial camera is centered on the residential rectangle and retains that
 focus through startup viewport/layout changes without adding a selection highlight.
 User camera navigation releases the startup target. It uses normal placement checks and
@@ -434,10 +1084,10 @@ line colors, including the smooth-min fillet and antialiased outer edge. This pr
 patch along its highway host; equal-ranked overlaps still use the nearest path.
 `Rendering/RoadGeometry` is built once per `RoadNetwork` revision from shared `DrawnPaths`, also reused
 by `RoadVectorLayer`. It reserves whole cells intersecting the actual `RoadMeshLayout` surface
-polygons, for every road type including disconnected roads. `RoadType.WidthCells` is one for dirt
-and cobblestone and two for King's Roads; shoulders, cut/fill edges, bridges and picking derive
+polygons, for every road type including disconnected roads. `RoadType.WidthCells` is one for dirt,
+two for cobblestone and four for King's Roads; shoulders, cut/fill edges, bridges and picking derive
 from those same offsets. Width is measured in square world-cell space, not terminal pixels.
-King's Roads use tangent circular arcs with a six-cell radius in world space for broad highway bends; minor-road
+King's Roads use tangent circular arcs with an eight-cell target radius in world space for broad highway bends; minor-road
 curves use a compact one-cell radius so right-angle local roads retain straight, grid-aligned legs.
 Mesh simplification pins transitions into and out of cardinal straight sections; it cannot
 replace a straight leg with a slightly diagonal chord that blocks neighboring plots.
@@ -522,7 +1172,7 @@ line. Secondary intercity corridors enter from varying edges, select scattered l
 and end on an existing trunk; they do not all cross every primary route into a Cartesian
 lattice. Crossing and terminal approaches share the ordinary road rules. Diagonal approaches
 to water are adjusted into straight bridge reaches and then resume their intended corridor.
-Standard small/medium/large maps normally use 2/3/5 corridors.
+Standard square small/medium/large maps normally use 3/4/6 corridors.
 The explicit coverage target is at most 96 logical cells of unobstructed Manhattan distance
 from every buildable cell to the nearest highway centerline. This fixed two-screen reference
 does not depend on the user's current viewport, zoom or monitor, and does not create a
@@ -559,9 +1209,14 @@ canyon without raising the water or creating repeated waterfalls. Ordinary lake 
 shores retain their existing hill-boundary treatment. Canyon terrain and river flags persist
 through the existing map layers; named-city layouts are not rewritten.
 
-`MapSize` accepts small 160x96, medium 320x192, large 640x384, custom 80x24 through 640x384,
+`MapSize` accepts square random presets small 320x320, medium 480x480, large 640x640,
+and rectangular or square custom maps from 80x24 through 640x640,
 and case-insensitive city presets **SF/LA/SD/CHI/STL** (San Francisco, Los Angeles, San Diego, Chicago, St. Louis).
-Named presets set `GameConfig.Scenario`, normalize new maps to 640x384 and use `CityScenarioMap`.
+City presets set `GameConfig.Scenario`, normalize new maps to the independent
+`MapSize.ScenarioWidth`/`ScenarioHeight` dimensions (640x384) and use `CityScenarioMap`.
+The default `GameConfig` matches square Small. Existing saves keep their serialized
+dimensions, including older rectangular maps. Session New city and Restart copy
+the current configuration rather than applying the new default dimensions.
 San Francisco delegates to `SanFranciscoMap`; shared `CityMapGeometry` handles polygons, ellipses and
 orthogonally connected road paths.
 
@@ -1094,6 +1749,13 @@ large checker triangle underneath a neighboring hilltop; lower and upper terrace
 separate and cliff faces remain unpainted. Flat cached chunks retain their flat-plane
 fast path. Opt-in diagnostics verify complete top-surface coverage and emitted heights
 beside all road types at multiple zooms and rotations; terrain and logical zoning are unchanged.
+Clipping intersections use double-precision arithmetic before storing float vertices.
+Float-rounded outside intersections are kept on the outside of the cutter, including
+at large square-map coordinates; exact aligned road-edge area checks remain unchanged.
+Graphical gap checks temporarily use a magenta scene background to distinguish actual
+holes from legitimate dark shadows, restoring the normal background afterward.
+Ground-only color/picking fixtures temporarily remove and restore natural-feature
+occluders, and artwork fixtures convert authored dimensions through each model's scale.
 keyboard users get the identical formatter through F7, F8 and the full-rules health report.
 City body text targets 16 logical pixels (three larger than the previous body setting); section
 headers stay at 18. Constrained layouts adapt the body size without changing the header font.
@@ -1259,8 +1921,10 @@ chunk, stride and water phase; roads do not inherit terrain motion.
 Open and closed `RoadCurves` drafts share straightening before smoothing, so loops
 do not turn their diagonal grid staircases into ripples.
 
-`PerspectiveCity` supplies the default tilted orthographic 3D view in a native-panel-resolution
-`SubViewport` with 2x MSAA, drawn into `TerminalMap`. Pixel materials retain nearest filtering.
+`PerspectiveCity` supplies the default tilted orthographic 3D view in a supersampled
+`SubViewport` with 8x MSAA, linearly downsampled into `TerminalMap`. Each render axis is
+twice the native physical panel extent: four shaded pixels per displayed pixel before
+MSAA coverage. Objects and roads use linear mipmapped anisotropic textures.
 TURN LEFT/RIGHT rotate in 45-degree
 steps; TILT alternates 35/50-degree elevations. OVERHEAD retains the sprite renderer.
 The initial azimuth is 325 degrees (mirrored from the former 35-degree angle), so the
@@ -1288,8 +1952,44 @@ loads, with a 512-node ceiling, 50ms CPU interaction budget and 60ms frame-p90 b
 view. Normal is eased back 5% from the previous 2.0 scale, while the close view stays
 at 3.2. New desktop games and restarted/new sessions start at zoom level 1 (the nominal
 2x control); loaded games retain saved camera/zoom state. The visual step is about 1.68. Overview zoom levels retain the 1.8 baseline divided by stride.
-The nominal 1x/2x controls, UI scaling, legacy overhead grid, native render resolution,
-cell selection strides and camera-aware picking remain unchanged.
+The nominal 1x/2x controls, UI scaling, legacy overhead grid, cell selection strides
+and camera-aware picking remain unchanged. The supersampling factor changes image
+quality, not world magnification.
+Render sizing uses the effective canvas-to-framebuffer transform and rounds physical
+extents up before supersampling. Do not multiply the OS Retina scale into an already
+physical framebuffer a second time. Targets exceeding the 16384-pixel texture limit
+fail explicitly rather than silently dropping below native resolution.
+`ScreenPoint` and input remain in logical map coordinates. `CaptureDisplayImage`
+returns a downsampled image in those coordinates for renderer probes; thumbnail
+captures use `DisplayRegionToRender` to crop the high-resolution source without
+clipping roofs or overhangs. Only the 3D map composite uses linear sampling; terminal
+fonts, double borders and the legacy overhead renderer keep their existing treatment.
+Model-preview controls fit and clip their textures to the allotted rectangle.
+Construction-list thumbnails occupy a fixed inset square above capacity text,
+not the full button height; row clipping and the compact rail inset keep cached
+high-resolution screenshots from painting over borders, labels or adjacent rows.
+Selecting or placing a mounted drop defense shades its exterior station footprints,
+independently of AREAS. `DropCoverage` excludes screened/out-of-range patches using
+the same eligibility rules, and perspective patches follow the rendered ground.
+Each patch is clipped against the actual cached terrain-top triangles and lifted
+0.035 units above that triangle's plane. Terrace discontinuities split the overlay
+instead of stretching a triangle between corner samples; vertical cliff faces are
+excluded. The native defense check measures exact covered area across two levels.
+Other weapons show maximum-reach perimeter rings/minimum-range holes, not a filled
+promise of unobstructed coverage. The map labels maximum reach without drawing
+target-connecting aim lines; actual projectiles remain visible in both map views.
+Facing/topology are included in coverage cache keys.
+Overhead uses matching drop polygons and maximum-reach rings,
+and service-response guides remain screen-space circles.
+Selecting one fighter also displays a maximum bow/contact-reach outline and an
+explicit clear-shot/contact-validation label, without a target-connecting line; guard reach uses the same
+body-aware helper as combat.
+The terrain shader filters visual colors independently of nearest-sampled categorical
+color data and flow vectors, preserving water, shore and travel semantics.
+`RenderingQualitySmoke` compares actual final-output edge coverage against the old
+native-resolution/2x-MSAA baseline, checks canvas-scale changes without rebuilding
+geometry and saves matched silhouette captures. Existing large-map performance
+limits are unchanged; quality-first GPU costs and overruns must be reported.
 Perspective range rings draw as antialiased screen-space circles anchored at their projected
 source and scaled by camera magnification. They do not inherit camera foreshortening or
 terminal-cell 12/22 compensation, and remain approximate timely-response guides.
@@ -1346,7 +2046,7 @@ cannot stretch a summit transition into a long shallow trench. Stable terrace
 samples within 0.06 units settle back onto the terrace; uniform straight
 stretches then coalesce up to six cells. Smoothed centerline heights define the shared
 road grade, including raised water crossings. Offset edges define a one-cell local
-carriageway or two-cell King's Road, with a 0.12-cell shoulder on either side; joins
+carriageway or four-cell King's Road, with a 0.12-cell shoulder on either side; joins
 share their edge vertices. Grade lookup buckets cover the full miter-support reach,
 including exact map/cell boundaries. Uniform-height shortcuts cannot report support
 outside that reach.

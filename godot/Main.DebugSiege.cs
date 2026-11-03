@@ -49,7 +49,7 @@ public partial class Main
         var size = new HBoxContainer();
         size.AddChild(new Label { Text = "Swarm", VerticalAlignment = VerticalAlignment.Center });
         _debugSwarmSize = CreateDebugSiegeNumberInput("DebugSwarmSize", 24,
-            $"Size of the next manual swarm: 1-{SettlementState.MaximumGoblinSwarm}. Enter starts a replacement wave.",
+            $"Size of the next manual swarm: 1-{SettlementState.MaximumEnemySwarm}. Enter starts a replacement wave.",
             StartDebugSiegeWave);
         size.AddChild(_debugSwarmSize);
         row.AddChild(size);
@@ -134,7 +134,7 @@ public partial class Main
 
     private void StartDebugSiegeWave()
     {
-        if (!ReadDebugSiegeNumber(_debugSwarmSize!, "Swarm size", 1, SettlementState.MaximumGoblinSwarm, out int size))
+        if (!ReadDebugSiegeNumber(_debugSwarmSize!, "Swarm size", 1, SettlementState.MaximumEnemySwarm, out int size))
             return;
         RunDebugSiegeAction(() => Session.DebugStartWave(size));
     }
@@ -170,6 +170,8 @@ public partial class Main
         _debugSwarmSize!.Editable = !blocked && Session.Game.Settlement is not null;
         _debugWallWidth!.Editable = _debugWallHeight!.Editable = !blocked;
         _debugSiegeStatus!.Text = Session.Game.Settlement is { } siege
-            ? $"{siege.Bounds.Width}x{siege.Bounds.Height} | {siege.Goblins.Count} goblins" : "No bailey";
+            ? $"{siege.Bounds.Width}x{siege.Bounds.Height} | " +
+                $"{siege.Enemies.Count(g => g.Kind == SiegeEnemyKind.Goblin)} goblins, " +
+                $"{siege.Enemies.Count(g => g.Kind == SiegeEnemyKind.Orc)} Orcs" : "No bailey";
     }
 }

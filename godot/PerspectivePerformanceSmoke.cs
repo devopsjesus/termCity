@@ -4,14 +4,24 @@ using TermCity.Core.Util;
 
 namespace TermCity.GodotApp;
 
+internal sealed class PerformanceBudgetExceededException(string message) : InvalidOperationException(message) { }
+
 internal static class PerspectivePerformanceSmoke
 {
     public static async Task Run(Main host)
     {
+        var budgetFailures = new List<string>();
+        void Budget(bool condition, string message) { if (!condition) budgetFailures.Add(message); }
         var session = host.Session;
         session.Game.Paused = true;
         host.Map.SetPerspective(true);
         var view = host.Map.Perspective!;
+        var window = host.GetWindow();
+        GD.Print($"TERMCITY_DISPLAY_BASELINE window={window.Size} content={window.ContentScaleSize} " +
+            $"content-factor={window.ContentScaleFactor} canvas-scale={host.Map.GetScreenTransform().Scale} " +
+            $"viewport={host.GetViewport().GetVisibleRect().Size} " +
+            $"framebuffer={host.GetViewport().GetTexture().GetSize()} " +
+            $"screen-scale={DisplayServer.ScreenGetScale(window.CurrentScreen)}");
         var center = new Pos(session.Game.Map.Width / 2, session.Game.Map.Height / 2);
         var watch = new Stopwatch();
         double worstCold = 0, worstSelection = 0, worstPan = 0, worstPick = 0;
@@ -30,12 +40,17 @@ internal static class PerspectivePerformanceSmoke
             float expectedSpan = Math.Max(4, host.Map.Size.Y / (22 * PerspectiveCity.Magnification(zoom)));
             Require(Math.Abs(view.CameraSpan - expectedSpan) < 0.0001f,
                 "Perspective views must use the tuned normal/close scale and unchanged overview zoom scales.");
-            Require(view.RenderSize == new Vector2I((int)host.Map.Size.X, (int)host.Map.Size.Y),
-                "The scene must render at native map-panel resolution, not upscale half-resolution details.");
+            var native = PerspectiveCity.NativePixelSize(host.Map.Size, host.Map.GetScreenTransform().Scale.Abs());
+            Require(view.NativeRenderSize == native &&
+                view.RenderSize == native * PerspectiveCity.SupersampleScale &&
+                view.EdgeAntialiasing == Viewport.Msaa.Msaa8X,
+                "The scene must use exact physical-panel sizing, 2x supersampling and 8x MSAA.");
             worstCold = Math.Max(worstCold, watch.Elapsed.TotalMilliseconds);
             worstNodes = Math.Max(worstNodes, view.SceneObjectCount);
             await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
             await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            Require(view.Texture.GetSize() == view.RenderSize,
+                "The driver must allocate the requested high-quality target rather than silently reduce its size.");
             int builds = view.GeometryBuilds;
             for (int n = 0; n < 12; n++)
             {
@@ -65,14 +80,14 @@ internal static class PerspectivePerformanceSmoke
             worstCold = Math.Max(worstCold, watch.Elapsed.TotalMilliseconds);
             Require(view.GeometryBuilds > builds, "Crossing the buffered view must load newly visible geometry.");
         }
-        Require(worstNodes < 512, $"Perspective scene has {worstNodes} separate render nodes; geometry must be batched.");
-        Require(worstCold < 1500, $"A cold scene rebuild took {worstCold:0.0}ms.");
-        Require(worstSelection < 50, $"A selection took {worstSelection:0.0}ms; budget is 50ms.");
-        Require(worstPan < 50, $"A buffered camera pan took {worstPan:0.0}ms; budget is 50ms.");
-        Require(worstPick < 50, $"Building picking took {worstPick:0.0}ms; budget is 50ms.");
+        Budget(worstNodes < 512, $"Perspective scene has {worstNodes} separate render nodes; geometry must be batched.");
+        Budget(worstCold < 1500, $"A cold scene rebuild took {worstCold:0.0}ms.");
+        Budget(worstSelection < 50, $"A selection took {worstSelection:0.0}ms; budget is 50ms.");
+        Budget(worstPan < 50, $"A buffered camera pan took {worstPan:0.0}ms; budget is 50ms.");
+        Budget(worstPick < 50, $"Building picking took {worstPick:0.0}ms; budget is 50ms.");
         frames.Sort();
         double p90 = frames[(int)(frames.Count * 0.9)];
-        Require(p90 < 60, $"Large-map interactive frame p90 was {p90:0.0}ms; budget is 60ms.");
+        Budget(p90 < 60, $"Large-map interactive frame p90 was {p90:0.0}ms; budget is 60ms.");
         session.SetZoom(0);
         host.Map.RefreshCells();
         double minimapWorst = 0;
@@ -107,7 +122,9 @@ internal static class PerspectivePerformanceSmoke
                 $"road-borders={view.RoadBorderMilliseconds:0.0}ms");
             var projected = view.ScreenPoint(new(target.X + 0.5f, 0, target.Y + 0.5f));
             Require(projected.DistanceTo(host.Map.Size / 2) < host.Map.Grid.PixelHeight * 2,
-                "A real minimap click must center the requested destination.");
+                $"A real minimap click must center the requested destination: target={target}, screen={projected}, " +
+                $"center={host.Map.Size / 2}, navigation={session.MapNavigationAllowed}, prompt={session.Prompt?.Title}, " +
+                $"minimap={host.Minimap.Size}, picture={host.Minimap.Picture}.");
         }
         var previewStart = Enumerable.Range(0, session.Game.Map.Width * session.Game.Map.Height)
             .Select(session.Game.Map.PosOf).Where(p => p.X < session.Game.Map.Width - 12 &&
@@ -132,11 +149,17 @@ internal static class PerspectivePerformanceSmoke
         }
         session.CancelPreview();
         GD.Print($"TERMCITY_ROAD_PREVIEW_PERFORMANCE worst={worstRoadPreview:0.0}ms existing-city-rebuilds=0");
-        Require(worstRoadPreview < 100, $"Road preview updates took {worstRoadPreview:0.0}ms; budget is 100ms.");
-        Require(minimapWorst < 250, $"Minimap click-to-render took {minimapWorst:0.0}ms; budget is 250ms.");
-        GD.Print($"TERMCITY_PERSPECTIVE_PERFORMANCE_OK nodes={worstNodes} cold={worstCold:0.0}ms " +
+        long estimatedTarget = (long)view.RenderSize.X * view.RenderSize.Y * (8 * 8 + 4);
+        GD.Print($"TERMCITY_RENDER_QUALITY native={view.NativeRenderSize} render={view.RenderSize} msaa=8x " +
+            $"estimated-target-bytes={estimatedTarget} " +
+            $"driver-video-bytes={RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.VideoMemUsed)} " +
+            $"driver-texture-bytes={RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.TextureMemUsed)}");
+        Budget(worstRoadPreview < 100, $"Road preview updates took {worstRoadPreview:0.0}ms; budget is 100ms.");
+        Budget(minimapWorst < 250, $"Minimap click-to-render took {minimapWorst:0.0}ms; budget is 250ms.");
+        GD.Print($"TERMCITY_PERSPECTIVE_PERFORMANCE_{(budgetFailures.Count == 0 ? "OK" : "OVER_BUDGET")} nodes={worstNodes} cold={worstCold:0.0}ms " +
             $"selection={worstSelection:0.0}ms pan={worstPan:0.0}ms pick={worstPick:0.0}ms frame-p90={p90:0.0}ms " +
             $"minimap-click-to-render={minimapWorst:0.0}ms");
+        if (budgetFailures.Count > 0) throw new PerformanceBudgetExceededException(string.Join(" ", budgetFailures));
     }
 
     private static void Require(bool condition, string message)

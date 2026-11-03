@@ -19,10 +19,10 @@ public class GrainMilestoneTests
         var type = game.Map.Content.Buildings.Get(name);
         Assert.Equal(500, CityProgression.RequiredPopulation(type));
         game.HighestMilestone = 100;
-        Assert.False(game.PlaceBuilding(type, new(30, 19, 1, 1)).Success);
-        Assert.Contains("500", game.BuildingPlacementError(type, 30, 19));
+        Assert.False(game.PlaceBuilding(type, new(30, 10, 1, 1)).Success);
+        Assert.Contains("500", game.BuildingPlacementError(type, 30, 10));
         game.HighestMilestone = 500;
-        Assert.True(game.PlaceBuilding(type, new(30, 19, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(type, new(30, 10, 1, 1)).Success);
     }
 
     [Fact]

@@ -6,13 +6,40 @@ namespace TermCity.Core.Simulation;
 
 public sealed partial class CityGame
 {
-    public bool InsideSettlement(Pos p) => Settlement is { } settlement &&
-        p.X > settlement.Bounds.X && p.X < settlement.Bounds.Right &&
-        p.Y > settlement.Bounds.Y && p.Y < settlement.Bounds.Bottom;
+    private (int Version, int Topology) _settlementGrowthVersion = (-1, -1);
+    private readonly Dictionary<ZoneType, List<(BuildingType Type, CellRect Area, double Score)>> _settlementCandidates = [];
+    private readonly Dictionary<(CellRect Area, int Owner), string?> _settlementAccessErrors = [];
+    private readonly Dictionary<ZoneType, IReadOnlyList<CellRect>> _settlementGrowthSites = [];
+    private readonly Dictionary<(Pos? Cell, ZoneType Zone), (bool Candidate, string? Error)> _settlementSiteChecks = [];
+    private HashSet<Pos>? _settlementReachable;
+    private Dictionary<Pos, Pos[]>? _settlementAccessLinks;
 
-    private static int WallDistance(CellRect bounds, CellRect area) =>
-        Math.Min(Math.Min(area.X - bounds.X, bounds.Right - area.Right),
-            Math.Min(area.Y - bounds.Y, bounds.Bottom - area.Bottom));
+    private void RefreshSettlementGrowthCache()
+    {
+        var version = (_version, Settlement?.TopologyRevision ?? -1);
+        if (_settlementGrowthVersion == version) return;
+        _settlementGrowthVersion = version;
+        _settlementCandidates.Clear();
+        _settlementAccessErrors.Clear();
+        _settlementGrowthSites.Clear();
+        _settlementSiteChecks.Clear();
+        _settlementReachable = null;
+        _settlementAccessLinks = null;
+    }
+
+    public bool InsideSettlement(Pos p) => Settlement?.EstablishedAt(p) == true;
+
+    private int WallDistance(CellRect bounds, CellRect area)
+    {
+        if (Settlement is not { } state || state.UsesFoundingLayout)
+        {
+            bounds = Settlement?.Bounds ?? bounds;
+            return Math.Min(Math.Min(area.X - bounds.X, bounds.Right - area.Right),
+                Math.Min(area.Y - bounds.Y, bounds.Bottom - area.Bottom));
+        }
+        if (state.Walls.Count == 0) return int.MaxValue;
+        return (int)Math.Floor(area.Cells().Min(state.DistanceToWall));
+    }
 
     public double SettlementLandValue(Pos p)
     {
@@ -29,28 +56,32 @@ public sealed partial class CityGame
         int owner = -1, CellRect[]? reserved = null)
     {
         int wallDistance = WallDistance(bounds, area);
-        if (wallDistance < 1 || area.X <= bounds.X || area.Y <= bounds.Y ||
-            area.Right >= bounds.Right || area.Bottom >= bounds.Bottom) return false;
+        if (Settlement?.UsesFoundingLayout != false && (wallDistance < 1 || area.X <= bounds.X || area.Y <= bounds.Y ||
+            area.Right >= bounds.Right || area.Bottom >= bounds.Bottom)) return false;
         // The inner repair alley stays open even when lean-tos occupy the wall face.
-        if (wallHousing ? wallDistance != 1 : wallDistance < 3) return false;
+        if (wallHousing ? wallDistance != 3 : wallDistance < 3) return false;
+        if (area.Cells().Any(p => Settlement?.FortificationReserved(p) ?? WorldScale.FortificationReserved(bounds, p))) return false;
         if (reserved is not null && reserved.Any(other => area.Cells().Any(p => other.Contains(p.X, p.Y))))
             return false;
         if (Settlement is { } settlement)
         {
-            var gate = settlement.Walls.Single(w => w.IsGate).Cell;
-            if (area.Cells().Any(p => Math.Abs(p.X - gate.X) + Math.Abs(p.Y - gate.Y) <= 3))
+            if (settlement.Walls.Where(w => w.IsGate).Any(gate =>
+                area.Cells().Any(p => Math.Abs(p.X - gate.Cell.X) + Math.Abs(p.Y - gate.Cell.Y) <= 3)))
                 return false;
             if (wallHousing && settlement.Walls.Any(w => (w.IsTower || w.IsGate) &&
                 area.Cells().Any(p => Math.Abs(p.X - w.Cell.X) + Math.Abs(p.Y - w.Cell.Y) <= 1)))
                 return false;
         }
         return area.Cells().All(p => Map.InBounds(p) && Map.TerrainAt(p.X, p.Y).Buildable &&
+            !Map.Footbridges.Any(bridge => bridge.Cells().Contains(p)) &&
             !Map.HasRoad(p.X, p.Y) && !Network.RoadOverlapsCell(Map.Index(p.X, p.Y)) &&
             Map.PathWearAt(p.X, p.Y) < 3 &&
-            (Map.BuildingAt(p.X, p.Y) is null || Map.BuildingAnchor(Map.Index(p.X, p.Y)) == owner));
+            (Map.BuildingAt(p.X, p.Y) is null || Map.BuildingAnchor(Map.Index(p.X, p.Y)) == owner)) &&
+            (Settlement is not { } current || area.Cells().All(p => current.AcceptsArrivals(this, p)));
     }
 
-    private List<CellRect> SettlementSites(CellRect bounds, BuildingType type, CellRect[]? reserved = null, bool packed = true)
+    private List<CellRect> SettlementSites(CellRect bounds, BuildingType type, CellRect[]? reserved = null, bool packed = true,
+        IReadOnlySet<Pos>? unavailable = null)
     {
         var result = new List<CellRect>();
         var claimed = new HashSet<int>();
@@ -58,8 +89,8 @@ public sealed partial class CityGame
             for (int x = bounds.X + 1; x < bounds.Right; x++)
             {
                 var area = type.FootprintAt(x, y);
-                if (!SettlementSiteAvailable(bounds, area, type.Name == "Wall House", reserved: reserved) ||
-                    area.Cells().Any(p => claimed.Contains(Map.Index(p.X, p.Y)))) continue;
+                if (area.Cells().Any(p => claimed.Contains(Map.Index(p.X, p.Y)) || unavailable?.Contains(p) == true) ||
+                    !SettlementSiteAvailable(bounds, area, type.Name == "Wall House", reserved: reserved)) continue;
                 result.Add(area);
                 if (packed)
                     foreach (var p in area.Cells()) claimed.Add(Map.Index(p.X, p.Y));
@@ -69,7 +100,7 @@ public sealed partial class CityGame
 
     internal bool SettlementCrowded => Settlement is { } settlement &&
         Map.BuildingFootprints.Values.Sum(area => area.Cells().Count(p => InsideSettlement(p))) >=
-            (settlement.Bounds.Width - 6) * (settlement.Bounds.Height - 6) * 0.6;
+            settlement.EligibleArea(this) * 0.6;
 
     private int GrowSettlement(ZoneType zone, int count)
     {
@@ -83,7 +114,8 @@ public sealed partial class CityGame
                 // Redevelopment preserves households; arrivals use its new room, not invented residents.
                 index = Map.ZoneCells(zone).Order().Where(i => Map.IsBuildingAnchor(i) &&
                     Map.BuildingAt(i % Map.Width, i / Map.Width) is { } type &&
-                    type.Capacity - Map.HouseholdLayer[i].Total >= 3 && CityAnalysis.Operating(this, i))
+                    type.Capacity - Map.HouseholdLayer[i].Total >= 3 && CityAnalysis.Operating(this, i) &&
+                    Map.BuildingFootprintAt(i % Map.Width, i / Map.Width).Cells().All(p => Settlement!.AcceptsArrivals(this, p)))
                     .Select(i => (int?)i).FirstOrDefault();
             }
             if (index is not { } cell) break;
@@ -104,19 +136,31 @@ public sealed partial class CityGame
 
     internal int? DevelopSettlementBuilding(ZoneType zone)
     {
-        if (Settlement is not { } settlement) return null;
+        foreach (var candidate in SettlementCandidates(zone))
+        {
+            if (!SettlementAccessSurvives(candidate.Area)) continue;
+            Map.SetBuildingFootprint(candidate.Type, candidate.Area);
+            Invalidate(servicesChanged: true);
+            return Map.Index(candidate.Area.X, candidate.Area.Y);
+        }
+        return null;
+    }
+
+    private List<(BuildingType Type, CellRect Area, double Score)> SettlementCandidates(ZoneType zone)
+    {
+        RefreshSettlementGrowthCache();
+        if (_settlementCandidates.TryGetValue(zone, out var cached)) return cached;
+        if (Settlement is not { } settlement) return [];
         bool crowded = SettlementCrowded;
-        var types = Map.Content.Buildings.Where(t => t.Zone == zone &&
-            (t.SettlementOnly || t == Map.Content.Buildings.ForZone(zone)) &&
-            (crowded || t.Name is not ("Wall House" or "Shanty Tower"))).ToArray();
-        var gate = settlement.Walls.Single(w => w.IsGate).Cell;
+        var types = SettlementGrowthTypes(zone);
+        var gates = settlement.Walls.Where(w => w.IsGate).ToArray();
         var existing = Map.BuildingFootprints.Select(pair => (Area: pair.Value,
             Type: Map.BuildingAt(pair.Value.X, pair.Value.Y)!)).ToArray();
         var candidates = new List<(BuildingType Type, CellRect Area, double Score)>();
         var siteScores = new Dictionary<Pos, (double Worth, double Home, double Building)>();
         var tradeCounts = existing.GroupBy(b => b.Type.Name).ToDictionary(g => g.Key, g => g.Count());
         foreach (var type in types)
-            foreach (var area in SettlementSites(settlement.Bounds, type, packed: false))
+            foreach (var area in SettlementSites(settlement.GrowthBounds(this), type, packed: false))
             {
                 var p = new Pos(area.X, area.Y);
                 if (!siteScores.TryGetValue(p, out var site))
@@ -130,9 +174,9 @@ public sealed partial class CityGame
                     siteScores.Add(p, site);
                 }
                 double worth = site.Worth;
-                if (type.Name == "Courtyard House" && worth < 47 ||
-                    type.Name is "Shanty Tower" or "Wall House" && worth >= 47) continue;
-                double distanceToGate = Math.Abs(p.X - gate.X) + Math.Abs(p.Y - gate.Y);
+                if (!SettlementTypeAllowsValue(type, worth)) continue;
+                double distanceToGate = gates.Select(g => Math.Abs(p.X - g.Center.X) + Math.Abs(p.Y - g.Center.Y))
+                    .DefaultIfEmpty(0).Min();
                 double score = zone switch
                 {
                     ZoneType.Residential => worth - Math.Abs(site.Building - 3) * 2,
@@ -143,49 +187,132 @@ public sealed partial class CityGame
                 score -= sameTrade * 4;
                 if (type.Name == "Courtyard House") score += 12;
                 if (type.Name == "Armory") score += 8 - WallDistance(settlement.Bounds, area);
-                if (type.Name is "Wall House" or "Shanty Tower") score += crowded ? 16 : -100;
+                if (type.Name is "Wall House" or "Shanty Tower") score += crowded ? 40 : -100;
                 score += CellHash.Pick(p.X + Config.Seed + type.Id * 19, p.Y - type.Id * 7, 100) / 10.0;
                 candidates.Add((type, area, score));
             }
-        foreach (var candidate in candidates.OrderByDescending(c => c.Score).ThenBy(c => c.Area.Y)
-            .ThenBy(c => c.Area.X).ThenBy(c => c.Type.Id))
+        return _settlementCandidates[zone] = candidates.OrderByDescending(c => c.Score).ThenBy(c => c.Area.Y)
+            .ThenBy(c => c.Area.X).ThenBy(c => c.Type.Id).ToList();
+    }
+
+    private IEnumerable<BuildingType> SettlementGrowthTypes(ZoneType zone) =>
+        Map.Content.Buildings.Where(t => t.Zone == zone &&
+            (t.SettlementOnly || t == Map.Content.Buildings.ForZone(zone)) &&
+            (SettlementCrowded || t.Name is not ("Wall House" or "Shanty Tower")));
+
+    private static bool SettlementTypeAllowsValue(BuildingType type, double worth) =>
+        !(type.Name == "Courtyard House" && worth < 47 ||
+            type.Name is "Shanty Tower" or "Wall House" && worth >= 47);
+
+    private IEnumerable<CellRect> SettlementDiagnosticSites(ZoneType zone, Pos? cell, bool packed,
+        IReadOnlySet<Pos>? unavailable = null)
+    {
+        var bounds = Settlement!.GrowthBounds(this);
+        var shapes = SettlementGrowthTypes(zone).GroupBy(type =>
+            (type.Width, type.Height, WallHousing: type.Name == "Wall House",
+             Value: type.Name == "Courtyard House" ? 1 : type.Name is "Shanty Tower" or "Wall House" ? -1 : 0));
+        foreach (var shape in shapes)
         {
-            if (!SettlementAccessSurvives(candidate.Area)) continue;
-            Map.SetBuildingFootprint(candidate.Type, candidate.Area);
-            Invalidate(servicesChanged: true);
-            return Map.Index(candidate.Area.X, candidate.Area.Y);
+            var type = shape.First();
+            var areas = cell is { } p
+                ? new CellRect(p.X - type.Width + 1, p.Y - type.Height + 1, type.Width, type.Height).Cells()
+                    .Where(anchor => anchor.X > bounds.X && anchor.Y > bounds.Y &&
+                        anchor.X < bounds.Right && anchor.Y < bounds.Bottom)
+                    .Select(anchor => type.FootprintAt(anchor.X, anchor.Y))
+                    .Where(area => SettlementSiteAvailable(bounds, area, shape.Key.WallHousing))
+                : SettlementSites(bounds, type, packed: packed, unavailable: unavailable);
+            foreach (var area in areas)
+                if (shape.Key.Value == 0 || SettlementTypeAllowsValue(type, SettlementLandValue(new(area.X, area.Y))))
+                    yield return area;
         }
-        return null;
+    }
+
+    internal IReadOnlyList<CellRect> SettlementGrowthSites(ZoneType zone)
+    {
+        RefreshSettlementGrowthCache();
+        if (_settlementGrowthSites.TryGetValue(zone, out var sites)) return sites;
+        var available = new List<CellRect>();
+        var occupied = new HashSet<Pos>();
+        foreach (var area in SettlementDiagnosticSites(zone, null, packed: true, unavailable: occupied))
+        {
+            if (area.Cells().Any(occupied.Contains) || !SettlementAccessSurvives(area)) continue;
+            available.Add(area);
+            occupied.UnionWith(area.Cells());
+        }
+        if (available.Count == 0)
+            foreach (var area in SettlementDiagnosticSites(zone, null, packed: false))
+                if (SettlementAccessSurvives(area)) { available.Add(area); break; }
+        return _settlementGrowthSites[zone] = available;
+    }
+
+    internal (bool Candidate, string? Error) SettlementGrowthSite(Pos? cell, ZoneType zone)
+    {
+        RefreshSettlementGrowthCache();
+        if (_settlementSiteChecks.TryGetValue((cell, zone), out var cached)) return cached;
+        var candidates = SettlementDiagnosticSites(zone, cell, packed: false);
+        string? firstError = null;
+        bool any = false;
+        foreach (var candidate in candidates)
+        {
+            any = true;
+            var error = SettlementAccessError(candidate);
+            if (error is null) return _settlementSiteChecks[(cell, zone)] = (true, null);
+            firstError ??= error;
+        }
+        return _settlementSiteChecks[(cell, zone)] = (any, firstError);
     }
 
     private bool SettlementAccessSurvives(CellRect proposed, int owner = -1)
-    {
-        var settlement = Settlement!;
-        var gate = settlement.Walls.Single(w => w.IsGate).Cell;
-        var start = gate.Offset(gate.X == settlement.Bounds.X ? 1 : gate.X == settlement.Bounds.Right ? -1 : 0,
-            gate.Y == settlement.Bounds.Y ? 1 : gate.Y == settlement.Bounds.Bottom ? -1 : 0);
-        var reachable = new HashSet<Pos>();
-        var queue = new Queue<Pos>();
-        if (Open(start)) { reachable.Add(start); queue.Enqueue(start); }
-        while (queue.TryDequeue(out var p))
-            foreach (var (dx, dy) in RoadNetwork.Neighbors)
-            {
-                var next = p.Offset(dx, dy);
-                if (Open(next) && reachable.Add(next)) queue.Enqueue(next);
-            }
-        bool Access(CellRect area) => area.Cells().Any(p => RoadNetwork.Neighbors
-            .Any(d => reachable.Contains(p.Offset(d.Dx, d.Dy))));
-        return Access(proposed) && Map.BuildingFootprints.All(pair => pair.Key == owner ||
-            !InsideSettlement(new(pair.Value.X, pair.Value.Y)) || Access(pair.Value));
+        => SettlementAccessError(proposed, owner) is null;
 
-        bool Open(Pos p) => InsideSettlement(p) && !proposed.Contains(p.X, p.Y) &&
-            Map.TerrainAt(p.X, p.Y).Buildable && Map.BuildingAt(p.X, p.Y) is null;
+    internal string? SettlementAccessError(CellRect proposed, int owner = -1)
+    {
+        RefreshSettlementGrowthCache();
+        if (_settlementAccessErrors.TryGetValue((proposed, owner), out var cached)) return cached;
+        _settlementReachable ??= SettlementReachable(null);
+        string? ExistingError(HashSet<Pos> reached, bool alreadyBlocked) => Map.BuildingFootprints
+            .Where(pair => pair.Key != owner && InsideSettlement(new(pair.Value.X, pair.Value.Y)) &&
+                !BuildingAccess(pair.Value, reached))
+            .Select(pair => alreadyBlocked
+                ? $"{Map.BuildingAt(pair.Value.X, pair.Value.Y)!.Name} at ({pair.Value.X},{pair.Value.Y}) " +
+                    "has no walkable gate route; restore access before new development."
+                : $"Keep a walkable gate route to {Map.BuildingAt(pair.Value.X, pair.Value.Y)!.Name} " +
+                    $"at ({pair.Value.X},{pair.Value.Y}); this site would leave it unreachable.")
+            .FirstOrDefault();
+        var error = ExistingError(_settlementReachable, true);
+        if (error is null)
+        {
+            var reachable = SettlementReachable(proposed);
+            error = !BuildingAccess(proposed, reachable) ? "No walkable gate route reaches this plot." : ExistingError(reachable, false);
+        }
+        _settlementAccessErrors[(proposed, owner)] = error;
+        return error;
+    }
+
+    private static bool BuildingAccess(CellRect area, HashSet<Pos> reachable) => area.Cells().Any(p => RoadNetwork.Neighbors
+        .Any(d => reachable.Contains(p.Offset(d.Dx, d.Dy))));
+
+    private HashSet<Pos> SettlementReachable(CellRect? proposed)
+    {
+        if (proposed is null) return Settlement!.ReachableLand(this);
+        var baseline = _settlementReachable ??= Settlement!.ReachableLand(this);
+        _settlementAccessLinks ??= baseline.ToDictionary(cell => cell, cell => RoadNetwork.Neighbors
+            .Select(direction => cell.Offset(direction.Dx, direction.Dy))
+            .Where(next => baseline.Contains(next) && Settlement!.CanWalk(
+                new(cell.X + .5f, cell.Y + .5f), new(next.X + .5f, next.Y + .5f))).ToArray());
+        var starts = Settlement!.Walls.Where(w => w.IsGate && w.Health > 0).Select(w => w.Cell)
+            .Where(p => baseline.Contains(p) && !proposed.Value.Contains(p)).Distinct().ToArray();
+        var reached = new HashSet<Pos>(starts);
+        var queue = new Queue<Pos>(starts);
+        while (queue.TryDequeue(out var p))
+            foreach (var next in _settlementAccessLinks[p])
+                if (!proposed.Value.Contains(next) && reached.Add(next)) queue.Enqueue(next);
+        return reached;
     }
 
     internal void RedevelopSettlement()
     {
         if (Settlement is not { } settlement) return;
-        bool crowded = SettlementCrowded;
         foreach (int i in Map.ZoneCells(ZoneType.Residential).Where(Map.IsBuildingAnchor).Order().ToArray())
         {
             var p = Map.PosOf(i);
@@ -193,14 +320,13 @@ public sealed partial class CityGame
             if (type is null || !CityAnalysis.Operating(this, i)) continue;
             var household = Map.HouseholdLayer[i];
             var oldArea = Map.BuildingFootprintAt(p.X, p.Y);
-            bool wealthy = SettlementLandValue(p) >= 47;
-            string name = wealthy ? "Courtyard House" : "Shanty Tower";
-            if (!wealthy && (!crowded || household.Total < type.Capacity * 0.7)) continue;
+            if (SettlementLandValue(p) < 47) continue;
+            string name = "Courtyard House";
             if (type.Name == name || type.Name == "Wall House") continue;
             var next = Map.Content.Buildings.Find(name);
             if (next is null || next.Capacity < household.Total) continue;
             var area = new CellRect(p.X, p.Y, Math.Max(oldArea.Width, next.Width), Math.Max(oldArea.Height, next.Height));
-            if (!SettlementSiteAvailable(settlement.Bounds, area, owner: i) ||
+            if (!SettlementSiteAvailable(settlement.GrowthBounds(this), area, owner: i) ||
                 !SettlementAccessSurvives(area, i)) continue;
             Map.SetBuildingFootprint(next, area);
             Map.SetHousehold(p.X, p.Y, household);

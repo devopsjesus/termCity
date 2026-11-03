@@ -1,17 +1,40 @@
 using TermCity.Core.Util;
+using TermCity.Core.Rendering;
+using TermCity.Core.World;
 
 namespace TermCity.Core.Simulation;
 
 public sealed partial class SettlementState
 {
-    private readonly List<Goblin> _movementOrder = [];
+    private readonly List<SiegeEnemy> _movementOrder = [];
 
-    private (List<Pos> Spawns, Dictionary<Pos, Pos> Previous) BuildCrowdRoutes(CityGame game)
+    private bool EnemySpawnClear(CityGame game, double x, double y, double radius) =>
+        EnemyGroundClear(game, x, y, radius) && DefenderList.All(unit => unit.Elevation >= 0.3f ||
+            Math.Pow(unit.X - x, 2) + Math.Pow(unit.Y - y, 2) >= Math.Pow(radius + WorldScale.HumanRadius, 2));
+
+    private bool EnemyGroundClear(CityGame game, double x, double y, double radius, bool approachingWall = false)
+    {
+        for (int cy = (int)Math.Floor(y - radius); cy <= (int)Math.Floor(y + radius); cy++)
+            for (int cx = (int)Math.Floor(x - radius); cx <= (int)Math.Floor(x + radius); cx++)
+            {
+                double dx = Math.Max(Math.Max(cx - x, 0), x - cx - 1);
+                double dy = Math.Max(Math.Max(cy - y, 0), y - cy - 1);
+                if (dx * dx + dy * dy >= radius * radius - 1e-8) continue;
+                if (!game.Map.InBounds(cx, cy) || !game.Map.TerrainAt(cx, cy).Buildable ||
+                    game.Map.BuildingAt(cx, cy) is not null) return false;
+            }
+        // Routes end inside a wall; movement stops earlier at physical melee contact.
+        if (approachingWall) return true;
+        return !GroundBlocked(new((float)x, (float)y), radius, allowGates: false);
+    }
+
+    private (List<Pos> Spawns, Dictionary<Pos, Pos> Previous) BuildCrowdRoutes(CityGame game, double radius = 0)
     {
         var previous = new Dictionary<Pos, Pos>();
         var distance = new Dictionary<Pos, int>();
         var queue = new Queue<Pos>();
-        foreach (var wall in WallList)
+        foreach (var wall in WallList.Where(w => OuterBarrier(w) &&
+            game.Map.TerrainAt(w.Cell.X, w.Cell.Y).Buildable))
         {
             distance[wall.Cell] = 0;
             queue.Enqueue(wall.Cell);
@@ -24,8 +47,10 @@ public sealed partial class SettlementState
             if (d >= 12) continue;
             foreach (var next in Neighbors(cell))
             {
-                if (distance.ContainsKey(next) || !game.Map.InBounds(next) || Bounds.Contains(next) ||
-                    !game.Map.TerrainAt(next.X, next.Y).Buildable) continue;
+                if (distance.ContainsKey(next) || !game.Map.InBounds(next) || EstablishedAt(next) ||
+                    !game.Map.TerrainAt(next.X, next.Y).Buildable || game.Map.BuildingAt(next.X, next.Y) is not null ||
+                    radius > 0 && !EnemyGroundClear(game, next.X + 0.5, next.Y + 0.5, radius,
+                        approachingWall: true)) continue;
                 previous[next] = cell;
                 distance[next] = d + 1;
                 queue.Enqueue(next);
@@ -46,10 +71,11 @@ public sealed partial class SettlementState
         return route;
     }
 
-    private static List<Pos> ChooseCrowdSpawns(List<Pos> candidates, int count, int tier, int wave)
+    private static List<Pos> ChooseCrowdSpawns(List<Pos> candidates, int count, int tier, int wave,
+        SiegeEnemyKind kind = SiegeEnemyKind.Goblin)
     {
         var selected = new List<Pos>(count);
-        double diameter = Goblin.RadiusForTier(tier) * 2;
+        double diameter = SiegeEnemies.Get(kind).CollisionRadius(tier) * 2;
         for (int n = 0; n < count && candidates.Count > 0; n++)
         {
             int offset = (int)(((long)wave * 37 + n * 97) % candidates.Count);
@@ -76,7 +102,7 @@ public sealed partial class SettlementState
 
     private void PrepareCrowdMovement()
     {
-        foreach (var goblin in GoblinList)
+        foreach (var goblin in EnemyList)
         {
             goblin.PreviousX = goblin.X;
             goblin.PreviousY = goblin.Y;
@@ -84,7 +110,7 @@ public sealed partial class SettlementState
             goblin.MotionInitialized = true;
         }
         _movementOrder.Clear();
-        _movementOrder.AddRange(GoblinList);
+        _movementOrder.AddRange(EnemyList);
         _movementOrder.Sort(static (a, b) =>
         {
             int distance = RemainingRoute(a).CompareTo(RemainingRoute(b));
@@ -92,16 +118,16 @@ public sealed partial class SettlementState
         });
     }
 
-    private static double RemainingRoute(Goblin goblin)
+    private static double RemainingRoute(SiegeEnemy goblin)
     {
         var next = goblin.Route[goblin.RouteIndex];
         return goblin.Route.Count - goblin.RouteIndex - 1 +
             Math.Abs(goblin.X - next.X - 0.5) + Math.Abs(goblin.Y - next.Y - 0.5);
     }
 
-    private bool CrowdStepIsFree(Goblin moving, double x, double y)
+    private bool CrowdStepIsFree(SiegeEnemy moving, double x, double y)
     {
-        foreach (var other in GoblinList)
+        foreach (var other in EnemyList)
         {
             if (ReferenceEquals(moving, other)) continue;
             double radius = moving.CollisionRadius + other.CollisionRadius + 1e-6;
@@ -116,17 +142,17 @@ public sealed partial class SettlementState
         return true;
     }
 
-    private void MoveCrowdMember(Goblin goblin, double x, double y)
+    private void MoveCrowdMember(CityGame game, SiegeEnemy goblin, double x, double y)
     {
         double fraction = 1;
-        if (!CrowdStepIsFree(goblin, x, y))
+        if (!CrowdStepIsFree(goblin, x, y) || !EnemyGroundClear(game, x, y, goblin.CollisionRadius))
         {
             double low = 0, high = 1;
             for (int n = 0; n < 12; n++)
             {
                 double middle = (low + high) / 2;
-                if (CrowdStepIsFree(goblin, goblin.X + (x - goblin.X) * middle,
-                    goblin.Y + (y - goblin.Y) * middle)) low = middle;
+                double px = goblin.X + (x - goblin.X) * middle, py = goblin.Y + (y - goblin.Y) * middle;
+                if (CrowdStepIsFree(goblin, px, py) && EnemyGroundClear(game, px, py, goblin.CollisionRadius)) low = middle;
                 else high = middle;
             }
             fraction = low;
@@ -137,12 +163,12 @@ public sealed partial class SettlementState
             Math.Pow(goblin.Y - goblin.PreviousY, 2));
     }
 
-    private void RerouteBlockedGoblin(CityGame game, Goblin goblin)
+    private void RerouteBlockedGoblin(CityGame game, SiegeEnemy goblin)
     {
         bool ClearSegment(double ax, double ay, double bx, double by)
         {
             double dx = bx - ax, dy = by - ay, length = dx * dx + dy * dy;
-            foreach (var other in GoblinList)
+            foreach (var other in EnemyList)
             {
                 if (other == goblin) continue;
                 double t = length > 1e-12 ? Math.Clamp(((other.X - ax) * dx + (other.Y - ay) * dy) / length, 0, 1) : 0;
@@ -152,8 +178,8 @@ public sealed partial class SettlementState
             }
             return true;
         }
-        bool Exterior(Pos p) => game.Map.InBounds(p) && !Bounds.Contains(p) &&
-            game.Map.TerrainAt(p.X, p.Y).Buildable;
+        bool Exterior(Pos p) => game.Map.InBounds(p) && !EstablishedAt(p) &&
+            EnemyGroundClear(game, p.X + 0.5, p.Y + 0.5, goblin.CollisionRadius);
         var starts = new[] { new Pos((int)goblin.X, (int)goblin.Y), goblin.Route[goblin.RouteIndex],
             goblin.Route[Math.Max(0, goblin.RouteIndex - 1)] }.Distinct()
             .Where(p => Exterior(p) && Math.Abs(goblin.X - p.X - 0.5) + Math.Abs(goblin.Y - p.Y - 0.5) <= 1.000001 &&
@@ -189,9 +215,9 @@ public sealed partial class SettlementState
 
     internal void SeparateLoadedCrowd(CityGame game)
     {
-        var placed = new List<Goblin>(GoblinList.Count);
+        var placed = new List<SiegeEnemy>(EnemyList.Count);
         Dictionary<Pos, Pos>? routes = null;
-        foreach (var goblin in GoblinList.OrderBy(unit => unit.Id))
+        foreach (var goblin in EnemyList.OrderBy(unit => unit.Id))
         {
             bool Free(double x, double y) => placed.All(other =>
                 Math.Pow(x - other.X, 2) + Math.Pow(y - other.Y, 2) + 1e-10 >=

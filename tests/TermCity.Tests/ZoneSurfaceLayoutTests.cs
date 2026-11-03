@@ -9,6 +9,38 @@ namespace TermCity.Tests;
 public class ZoneSurfaceLayoutTests
 {
     [Theory]
+    [InlineData(160, 160)]
+    [InlineData(479, 479)]
+    [InlineData(638, 638)]
+    public void FloatRoundedDiagonalCutVerticesRemainOutsideRoadsAtLargeCoordinates(int x, int y)
+    {
+        Vector2[] source = [new(x, y), new(x + 1, y), new(x + 1, y + 1), new(x, y + 1)];
+        for (int sample = 0; sample < 64; sample++)
+        {
+            float shift = sample / 257f;
+            Vector2[] cutter =
+            [
+                new(x - 0.5f, y + 0.0713f + shift), new(x + 1.5f, y + 0.6637f + shift),
+                new(x + 1.5f, y + 0.8775f + shift), new(x - 0.5f, y + 0.2851f + shift),
+            ];
+            var remaining = new List<Vector2[]>();
+            ZoneSurfaceLayout.Subtract(source, cutter, remaining);
+            Assert.NotEmpty(remaining);
+            foreach (var point in remaining.SelectMany(polygon => polygon))
+            {
+                Assert.True(float.IsFinite(point.X) && float.IsFinite(point.Y));
+                bool inside = Enumerable.Range(0, cutter.Length).All(edge =>
+                {
+                    var a = cutter[edge]; var b = cutter[(edge + 1) % cutter.Length];
+                    return ((double)b.X - a.X) * ((double)point.Y - a.Y) -
+                        ((double)b.Y - a.Y) * ((double)point.X - a.X) > 0;
+                });
+                Assert.False(inside, $"Cut vertex {point} lies inside the road at {x},{y}, sample {sample}.");
+            }
+        }
+    }
+
+    [Theory]
     [InlineData(17, 23)]
     [InlineData(511, 307)]
     public void EveryCheckerTriangleFollowsItsOwningTerrainAndCoversItsEntireTop(int x, int y)
@@ -188,11 +220,11 @@ public class ZoneSurfaceLayoutTests
         var map = new GameMap(24, 24, new GameContent());
         var layout = new RoadMeshLayout(map,
             [Path(map.Content.Roads.Get(DefaultRoads.KingsRoadName), false, new(4, 10.25f), new(20, 10.25f))]);
-        var patches = ZoneSurfaceLayout.Patches(layout, 12, 11);
+        var patches = ZoneSurfaceLayout.Patches(layout, 12, 12);
         Assert.Equal(0.75, patches.Sum(Area), 7);
-        Assert.All(patches.SelectMany(p => p), point => Assert.True(point.Y >= 11.25f));
-        Assert.True(layout.InCorridor(new(12.5f, 11.3f)));
-        Assert.Contains(patches, patch => patch.Any(point => point.Y == 11.25f));
+        Assert.All(patches.SelectMany(p => p), point => Assert.True(point.Y >= 12.25f));
+        Assert.True(layout.InCorridor(new(12.5f, 12.3f)));
+        Assert.Contains(patches, patch => patch.Any(point => point.Y == 12.25f));
     }
 
     [Fact]

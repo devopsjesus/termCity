@@ -25,10 +25,12 @@ public sealed class TravelRoutes
     }
 
     public static bool Walkable(GameMap map, int index) =>
-        map.RoadLayer[index] || map.Content.Terrains[map.TerrainLayer[index]].Buildable;
+        map.RoadLayer[index] || map.Content.Terrains[map.TerrainLayer[index]].Buildable ||
+        map.HasFootbridge(index % map.Width, index / map.Width);
 
     public static double StepCost(GameMap map, int index)
     {
+        if (map.HasFootbridge(index % map.Width, index / map.Width)) return 2;
         if (map.RoadLayer[index])
             return 1.0 / Math.Max(1, map.Content.Roads[map.RoadTypeLayer[index]].Rank) + JunctionDelayUnits(map, index);
         return (map.PathLayer[index] >= 3 ? 2 : 6) *
@@ -37,6 +39,12 @@ public sealed class TravelRoutes
 
     internal static bool CanFootpathStep(GameMap map, int first, int last)
     {
+        if (!CanTraverse(map, first, last)) return false;
+        if (map.HasFootbridge(first % map.Width, first / map.Width) ||
+            map.HasFootbridge(last % map.Width, last / map.Width))
+            return Walkable(map, first) && Walkable(map, last) &&
+                map.FootpathsAllowedAt(first % map.Width, first / map.Width) &&
+                map.FootpathsAllowedAt(last % map.Width, last / map.Width);
         if (map.SettlementBounds is not null &&
             (!map.FootpathsAllowedAt(first % map.Width, first / map.Width) ||
                 !map.FootpathsAllowedAt(last % map.Width, last / map.Width))) return false;
@@ -74,6 +82,11 @@ public sealed class TravelRoutes
             return map.FootpathHeights[cell] = height;
         }
     }
+
+    private static bool CanTraverse(GameMap map, int first, int last) =>
+        map.Fortifications is not { } walls || walls.CanWalk(
+            new(first % map.Width + .5f, first / map.Width + .5f),
+            new(last % map.Width + .5f, last / map.Width + .5f));
 
     internal static bool IsFootpathHillCell(GameMap map, int cell) =>
         map.Content.Terrains[map.TerrainLayer[cell]].Name == DefaultTerrains.HillName;
@@ -180,7 +193,8 @@ public sealed class TravelRoutes
             {
                 if (!map.InBounds(x + dx, y + dy)) continue;
                 int next = map.Index(x + dx, y + dy);
-                if (!Walkable(map, next) || (avoidBuildings && map.BuildingLayer[next] != 0)) continue;
+                if (!Walkable(map, next) || !CanTraverse(map, index, next) ||
+                    (avoidBuildings && map.BuildingLayer[next] != 0)) continue;
                 double cost = priority.Cost + (StepCost(map, index) + StepCost(map, next)) / 2;
                 if (cost >= routes.Cost[next]) continue;
                 routes.Cost[next] = cost;
@@ -288,7 +302,7 @@ public sealed class TravelRoutes
     internal static bool WearPaths(GameMap map)
     {
         if (map.BuildingFootprints.Count == 0) return false;
-        bool changed = false;
+        bool changed = SettlementFootbridges.Advance(map);
         foreach (var path in BetweenBuildings(map))
             Wear(path);
         var routes = map.SettlementBounds is null && map.RoadCount > 0 ? NearestRoad(map) : null;

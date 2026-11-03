@@ -38,10 +38,17 @@ public static class MilestoneReport
                 Row("Footprint", $"{building.Width} x {building.Height} cells"),
             };
             if (building.Capacity > 0) rows.Add(Row("Capacity", ChoiceHelpContent.CapacityText(building)));
-            if (building.Radius > 0) rows.Add(Row("Coverage",
+            int roster = SettlementState.RosterCapacity(building);
+            if (roster > 0)
+            {
+                rows.Add(Row("Roster", $"{roster} {(building.Name == "Archer Barracks" ? "archers" : "soldiers")}"));
+                rows.Add(Row("Recruitment", "2 siege seconds per recruit; 18-second casualty replacement cooldown"));
+                rows.Add(Row("Orders", "Click/Shift-click to select; right-click moves or attacks; then resume auto-defense"));
+            }
+            if (building.Radius > 0 && roster == 0) rows.Add(Row("Coverage",
                 $"Timely range {building.Radius} walking cells; target {building.ResponseTargetDays:0.00} days; " +
                 $"strength {building.Strength}/100; no distance cutoff"));
-            if (building.StaffingCapacity > 0) rows.Add(Row("Staffing", $"{building.StaffingCapacity:N0} residents at full funding"));
+            if (building.StaffingCapacity > 0 && roster == 0) rows.Add(Row("Staffing", $"{building.StaffingCapacity:N0} residents at full funding"));
             if (building.Pollution != 0) rows.Add(Row("Air", building.Pollution > 0 ? "Produces smoke pollution" : "Reduces nearby pollution"));
             if (building.SeatRank > 0) rows.Add(Row("Seat of power", $"Rank {building.SeatRank}"));
             if (building.Pilgrims > 0) rows.Add(Row("Pilgrims", $"{building.Pilgrims} per feast"));

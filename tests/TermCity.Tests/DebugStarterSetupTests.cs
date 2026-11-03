@@ -29,9 +29,10 @@ public class DebugStarterSetupTests
         var map = game.Map;
 
         Assert.Equal(HighwayGenerator.StartingSpur(map), setup.Spur);
-        Assert.Equal(4, setup.Residential.Width);
-        Assert.Equal(10, setup.Residential.Height);
-        Assert.Equal(40, map.ZoneCells(ZoneType.Residential).Count());
+        Assert.Equal(0, setup.Residential.Width % WorldScale.ArchitectureScale);
+        Assert.Equal(0, setup.Residential.Height % WorldScale.ArchitectureScale);
+        Assert.InRange(setup.Residential.Area / 25, 18, 20);
+        Assert.Equal(setup.Residential.Area, map.ZoneCells(ZoneType.Residential).Count());
         Assert.All(setup.Residential.Cells(), cell =>
         {
             Assert.Equal(ZoneType.Residential, map.ZoneAt(cell.X, cell.Y));
@@ -42,16 +43,17 @@ public class DebugStarterSetupTests
         Assert.Equal("Woodlot", map.BuildingAt(setup.Woodlot.X, setup.Woodlot.Y)!.Name);
         Assert.Equal(2, map.BuildingFootprints.Count);
         Assert.Equal(2, map.ServiceCells.Count);
-        Assert.InRange(Math.Abs(setup.Well.X - setup.Spur.X) + Math.Abs(setup.Well.Y - setup.Spur.Y), 1, 8);
-        Assert.InRange(Math.Abs(setup.Woodlot.X - setup.Spur.X) + Math.Abs(setup.Woodlot.Y - setup.Spur.Y), 1, 8);
-        Assert.InRange(Math.Abs(setup.Residential.X - setup.Spur.X) + Math.Abs(setup.Residential.Y - setup.Spur.Y), 1, 32);
+        Assert.InRange(Math.Abs(setup.Well.X - setup.Spur.X) + Math.Abs(setup.Well.Y - setup.Spur.Y), 1, 32);
+        Assert.InRange(Math.Abs(setup.Woodlot.X - setup.Spur.X) + Math.Abs(setup.Woodlot.Y - setup.Spur.Y), 1, 32);
+        Assert.InRange(Math.Abs(setup.Residential.X - setup.Spur.X) + Math.Abs(setup.Residential.Y - setup.Spur.Y), 1, 96);
         Assert.Equal(roads, map.RoadTypeLayer);
         Assert.Equal(terrain, map.TerrainLayer);
         Assert.True(game.Money < money);
 
         var session = new GameSession(game, initialCameraTarget: setup.CameraTarget);
         session.SetCameraEdgePadding(true);
-        Assert.Equal(new(setup.Residential.X + 2, setup.Residential.Y + 5), setup.CameraTarget);
+        Assert.Equal(new(setup.Residential.X + setup.Residential.Width / 2,
+            setup.Residential.Y + setup.Residential.Height / 2), setup.CameraTarget);
         Assert.Equal(setup.CameraTarget, session.Cursor);
         foreach (var (columns, rows) in new[] { (18, 12), (42, 24), (23, 17), (18, 12) })
         {

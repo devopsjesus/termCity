@@ -218,16 +218,24 @@ public sealed class CityServices
                     result._peakWorkload[(int)kind] = Math.Max(result._peakWorkload[(int)kind], result._workloads[source]);
             }
             if (kind.IsUtility()) continue;
+            double funded = funding(kind);
+            var dispatch = sources.ToDictionary(source => source, source =>
+            {
+                var type = map.Content.Buildings[map.BuildingLayer[source]];
+                double workload = Math.Max(1, result._workloads[source]);
+                return (Age: result._ages[source], Workload: workload, Target: type.ResponseTargetDays,
+                    Strength: type.Strength * funded, Capacity: 1 / workload);
+            });
             for (int i = 0; i < count; i++)
             {
                 int source = routes.Source[i];
-                if (source < 0 || !result.HasArrived(kind, i)) continue;
-                var type = map.Content.Buildings[map.BuildingLayer[source]];
-                double timely = Math.Min(1, type.ResponseTargetDays /
-                    Math.Max(1 / TravelRoutes.UnitsPerDay, routes.Cost[i] / TravelRoutes.UnitsPerDay));
-                double capacityFactor = 1 / Math.Max(1, result._workloads[source]);
+                if (source < 0) continue;
+                var provider = dispatch[source];
+                double travel = routes.Cost[i] / TravelRoutes.UnitsPerDay;
+                if (!(provider.Age >= travel * provider.Workload)) continue;
+                double timely = Math.Min(1, provider.Target / Math.Max(1 / TravelRoutes.UnitsPerDay, travel));
                 coverage[(int)kind][i] = (byte)Math.Clamp(
-                    (int)Math.Round(type.Strength * funding(kind) * timely * capacityFactor), 1, 100);
+                    (int)Math.Round(provider.Strength * timely * provider.Capacity), 1, 100);
             }
         }
         return result;

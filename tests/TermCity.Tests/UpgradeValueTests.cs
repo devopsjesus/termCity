@@ -15,7 +15,8 @@ public class UpgradeValueTests(ITestOutputHelper output)
     public void EveryServiceUpgradeHasBetterRunningAndOneYearValue()
     {
         var content = new GameContent();
-        var tiers = content.Buildings.Where(type => type.PlayerPlaceable && type.Service != ServiceKind.None)
+        var tiers = content.Buildings.Where(type => type.PlayerPlaceable && type.Service != ServiceKind.None &&
+                SettlementState.RosterCapacity(type) == 0)
             .GroupBy(type => type.Service)
             .SelectMany(group =>
             {

@@ -1,5 +1,6 @@
 using Godot;
 using TermCity.Core.Session;
+using TermCity.Core.Simulation;
 using TermCity.Core.Util;
 
 namespace TermCity.GodotApp;
@@ -7,7 +8,8 @@ namespace TermCity.GodotApp;
 public partial class PerspectiveCity
 {
     private readonly List<(Transform3D Transform, Pos Anchor)> _structureHighlightBoxes = [];
-    private readonly Dictionary<Pos, List<Transform3D>> _wallHighlightBoxes = [];
+    private readonly Dictionary<int, List<Transform3D>> _wallHighlightBoxes = [];
+    private int? _highlightWallId;
     private readonly StandardMaterial3D _selectionHighlightMaterial = new()
     {
         AlbedoColor = new Color(1, 0.94f, 0.68f, 0.19f),
@@ -25,6 +27,69 @@ public partial class PerspectiveCity
     internal int HighlightedBoxCount => _selectionHighlightBoxes.Multimesh?.InstanceCount ?? 0;
     internal int HighlightedRoofTriangleCount { get; private set; }
     internal int SelectionHighlightBuilds { get; private set; }
+    internal Aabb? SelectedObjectBounds { get; private set; }
+    internal Rect2? SelectionVisualFootprint { get; private set; }
+    private bool _selectedMountedDefense;
+    private int _selectedDefensePose, _highlightDefensePose;
+    private IReadOnlyList<Transform3D> _selectedDefenseTransforms = [];
+
+    private bool SyncWallSelectionBounds(GameSession session, WallComponent? wall)
+    {
+        var transforms = new List<Transform3D>();
+        bool mounted = false;
+        if (wall is not null)
+        {
+            var siege = session.Game.Settlement!;
+            var owner = session.WallDefenseToolActive || wall.Defense != WallDefenseKind.None ? wall :
+                siege.Walls.First(member => member.Id == wall.SectionId);
+            var kind = session.WallDefenseToolActive ? session.Preview!.Defense : owner.Defense;
+            if (kind != WallDefenseKind.None && (owner.Health > 0 || session.WallDefenseToolActive))
+            {
+                var batches = new Dictionary<int, List<Transform3D>>();
+                DrawMountedDefense(batches, MountedDefenseOrigin(owner, kind), kind, owner, animate: !session.WallDefenseToolActive,
+                    facing: session.WallDefenseToolActive ? session.Preview!.Rotation == 2 ? -1 : 1 : null);
+                foreach (var batch in batches.Values) transforms.AddRange(batch);
+                mounted = true;
+            }
+            else
+                foreach (var member in siege.Walls.Where(member => member.SectionId == owner.SectionId))
+                    if (_wallHighlightBoxes.TryGetValue(member.Id, out var boxes)) transforms.AddRange(boxes);
+        }
+        Aabb? bounds = null;
+        foreach (var transform in transforms)
+        {
+            var size = transform.Basis.X.Abs() + transform.Basis.Y.Abs() + transform.Basis.Z.Abs();
+            var box = new Aabb(transform.Origin - size / 2, size);
+            bounds = bounds is { } previous ? previous.Merge(box) : box;
+        }
+        bool changed = SelectedObjectBounds != bounds || _selectedMountedDefense != mounted;
+        SelectedObjectBounds = bounds;
+        _selectedMountedDefense = mounted;
+        _selectedDefenseTransforms = mounted ? transforms : [];
+        var pose = new HashCode();
+        foreach (var transform in _selectedDefenseTransforms) pose.Add(transform);
+        _selectedDefensePose = pose.ToHashCode();
+        return changed;
+    }
+
+    private void OutlineSelectedObject(GameSession session, CellRect logicalArea, int color)
+    {
+        if (SelectedObjectBounds is not { } bounds)
+        {
+            Outline(session.Game.Map, logicalArea, color, _selectedWallTop);
+            return;
+        }
+        float padding = Math.Max(0.05f, _indicatorThickness);
+        float width = Math.Max(bounds.Size.X, _selectedMountedDefense ? 1 : logicalArea.Width);
+        float depth = Math.Max(bounds.Size.Z, _selectedMountedDefense ? 1 : logicalArea.Height);
+        var center = bounds.GetCenter();
+        var footprint = new Rect2(center.X - width / 2 - padding, center.Z - depth / 2 - padding,
+            width + padding * 2, depth + padding * 2);
+        SelectionVisualFootprint = footprint;
+        float height = _selectedMountedDefense ? bounds.Position.Y + Math.Max(0.02f, _indicatorThickness / 2 + 0.005f) :
+            bounds.End.Y + _indicatorThickness + 0.025f;
+        Outline(session.Game.Map, footprint, color, height);
+    }
 
     private void InitializeSelectionHighlight()
     {
@@ -44,20 +109,26 @@ public partial class PerspectiveCity
     {
         bool wall = _selection is not null && _selectedWallTop is not null;
         Pos? selected = session.FixedPlacementToolActive || session.Selection is null || _selection is null ? null :
-            wall ? session.Game.Settlement?.Walls.First(w => w.Cell == session.Cursor).SectionAnchor : _selectedPropertyAnchor;
+            wall ? session.SelectedWallComponent?.SectionAnchor : _selectedPropertyAnchor;
+        int? wallId = wall ? session.SelectedWallComponent?.SectionId : null;
         int geometry = wall ? SiegeGeometryBuilds : GeometryBuilds;
-        if (selected == HighlightedStructure && wall == _highlightIsWall && geometry == _highlightGeometryVersion) return;
+        if (selected == HighlightedStructure && wallId == _highlightWallId && wall == _highlightIsWall && geometry == _highlightGeometryVersion &&
+            _selectedDefensePose == _highlightDefensePose) return;
         HighlightedStructure = selected;
+        _highlightWallId = wallId;
         _highlightIsWall = wall;
         _highlightGeometryVersion = geometry;
+        _highlightDefensePose = _selectedDefensePose;
         SelectionHighlightBuilds++;
         var transforms = new List<Transform3D>();
         if (selected is { } anchor)
         {
             if (wall)
             {
-                foreach (var member in session.Game.Settlement!.Walls.Where(w => w.SectionAnchor == anchor))
-                    if (_wallHighlightBoxes.TryGetValue(member.Cell, out var boxes)) transforms.AddRange(boxes);
+                if (_selectedMountedDefense) transforms.AddRange(_selectedDefenseTransforms);
+                else
+                    foreach (var member in session.Game.Settlement!.Walls.Where(w => w.SectionId == wallId))
+                        if (_wallHighlightBoxes.TryGetValue(member.Id, out var boxes)) transforms.AddRange(boxes);
             }
             else
                 foreach (var box in _structureHighlightBoxes)

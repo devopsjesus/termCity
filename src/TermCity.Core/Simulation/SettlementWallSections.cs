@@ -1,4 +1,5 @@
 using TermCity.Core.Util;
+using TermCity.Core.Rendering;
 
 namespace TermCity.Core.Simulation;
 
@@ -41,26 +42,57 @@ public sealed partial class SettlementState
             }
             foreach (var wall in side)
             {
-                if (wall.IsTower || wall.IsGate) { Finish(); continue; }
+                if (wall.IsTower || wall.IsGate || wall.IsGateWing) { Finish(); continue; }
                 group.Add(wall);
                 if (group.Count == 3) Finish();
             }
             Finish();
         }
+        var gate = WallList.Single(w => w.IsGate);
+        var wings = WallList.Where(w => w.IsGateWing).ToArray();
+        if (wings.Length > 0)
+        {
+            double maximum = savedGrouped ? gate.MaxHealth : gate.MaxHealth + wings.Sum(w => w.MaxHealth);
+            double fraction = wings.Append(gate).Min(w => w.Health / w.MaxHealth);
+            var cells = wings.Append(gate).Select(w => w.Cell).ToArray();
+            var bounds = new CellRect(cells.Min(p => p.X), cells.Min(p => p.Y),
+                cells.Max(p => p.X) - cells.Min(p => p.X) + 1,
+                cells.Max(p => p.Y) - cells.Min(p => p.Y) + 1);
+            foreach (var wing in wings)
+            {
+                wing.SharedSection = gate;
+                wing.SectionBounds = bounds;
+            }
+            gate.SectionBounds = bounds;
+            gate.MaxHealth = maximum;
+            gate.Health = savedGrouped ? gate.Health : maximum * fraction;
+        }
     }
 
-    internal WallComponent? AttackableWall(Goblin goblin)
+    internal WallComponent? AttackableWall(SiegeEnemy goblin)
     {
-        var cell = new Pos((int)Math.Floor(goblin.X), (int)Math.Floor(goblin.Y));
         WallComponent? result = null;
-        double closest = 1.05 * 1.05;
-        for (int y = cell.Y - 1; y <= cell.Y + 1; y++)
-            for (int x = cell.X - 1; x <= cell.X + 1; x++)
+        double closest = Math.Pow(goblin.CollisionRadius + 0.35, 2);
+        foreach (var wall in WallsNear(new((float)goblin.X, (float)goblin.Y), (float)goblin.CollisionRadius + .4f))
             {
-                var wall = WallAt(new(x, y));
-                if (wall is null || wall.Health <= 0) continue;
-                double distance = Math.Pow(goblin.X - x - 0.5, 2) + Math.Pow(goblin.Y - y - 0.5, 2);
+                if (wall.Health <= 0 || wall.IsGateWing) continue;
+                var tangent = wall.Tangent;
+                double dx = goblin.X - wall.Center.X, dy = goblin.Y - wall.Center.Y;
+                double along = Math.Clamp(dx * tangent.X + dy * tangent.Y, -WallDamageLayout.Width(wall) / 2, WallDamageLayout.Width(wall) / 2);
+                double across = Math.Clamp(-dx * tangent.Y + dy * tangent.X, -WallDamageLayout.Depth(wall) / 2, WallDamageLayout.Depth(wall) / 2);
+                double ax = wall.Center.X + along * tangent.X - across * tangent.Y;
+                double ay = wall.Center.Y + along * tangent.Y + across * tangent.X;
+                double distance = Math.Pow(goblin.X - ax, 2) + Math.Pow(goblin.Y - ay, 2);
                 if (distance > closest) continue;
+                double vx = ax - goblin.X, vy = ay - goblin.Y, length = vx * vx + vy * vy;
+                if (EnemyList.Any(other =>
+                {
+                    if (other == goblin || other.Health <= 0 || length < 1e-8) return false;
+                    double t = ((other.X - goblin.X) * vx + (other.Y - goblin.Y) * vy) / length;
+                    return t > 0 && t < 1 &&
+                        Math.Pow(goblin.X + vx * t - other.X, 2) +
+                        Math.Pow(goblin.Y + vy * t - other.Y, 2) < other.CollisionRadius * other.CollisionRadius;
+                })) continue;
                 closest = distance;
                 result = wall;
             }

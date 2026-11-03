@@ -12,9 +12,9 @@ public class SiegeWaveCueTests
     {
         var game = TestCity.Flat(config: new GameConfig
         {
-            MapWidth = 80, MapHeight = 72, StartingMoney = 100_000,
+            MapWidth = 128, MapHeight = 128, StartingMoney = 100_000,
         }, rules: CityRules.Full);
-        Assert.True(game.FoundSettlement(new(15, 25, 32, 32)).Success);
+        Assert.True(game.FoundSettlement(new(15, 25, 64, 64)).Success);
         var session = new GameSession(game);
         int cues = 0;
         session.SiegeWaveStarted += () => cues++;
@@ -67,7 +67,7 @@ public class SiegeWaveCueTests
     {
         if (!CityGame.DebugToolsAvailable) return;
         var game = NewSiege();
-        game.Settlement!.GoblinList.Clear();
+        game.Settlement!.EnemyList.Clear();
         game.Settlement.NextWaveSeconds = 0.1;
         game.Speed = GameSpeed.Fast;
         int cues = 0;

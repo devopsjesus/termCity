@@ -344,7 +344,7 @@ public class RoadCurveTests
 
         double nearest = Enumerable.Range(0, path.Count).Min(i => Math.Sqrt(
             Math.Pow(path.Xs[i] / W - 20, 2) + Math.Pow(path.Ys[i] / H - 11, 2)));
-        Assert.InRange(nearest, 2.4, 2.6);
+        Assert.InRange(nearest, 2.7, 2.9);
     }
 
     [Fact]

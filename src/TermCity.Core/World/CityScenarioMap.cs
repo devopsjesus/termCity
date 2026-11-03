@@ -36,8 +36,8 @@ public static class CityScenarioMap
     {
         if (config.Scenario == CityScenario.SanFrancisco) return SanFranciscoMap.Generate(config, content);
         _ = Name(config.Scenario);
-        if (config.MapWidth != 640 || config.MapHeight != 384)
-            throw new ArgumentException("City scenarios require large 640x384 dimensions.", nameof(config));
+        if (config.MapWidth != MapSize.ScenarioWidth || config.MapHeight != MapSize.ScenarioHeight)
+            throw new ArgumentException($"City scenarios require {MapSize.ScenarioWidth}x{MapSize.ScenarioHeight} dimensions.", nameof(config));
         var map = new GameMap(config.MapWidth, config.MapHeight, content);
         var grass = content.Terrains.Get(DefaultTerrains.GrassName);
         var hill = content.Terrains.Get(DefaultTerrains.HillName);

@@ -3,6 +3,7 @@ using TermCity.Core.Rendering;
 using TermCity.Core.Session;
 using TermCity.Core.Simulation;
 using TermCity.Core.Util;
+using TermCity.Core.World;
 
 namespace TermCity.GodotApp;
 
@@ -11,17 +12,25 @@ public partial class PerspectiveCity
     private readonly Node3D _fortifications = new();
     private readonly Node3D _siegeActors = new();
     private readonly List<(Aabb Bounds, Pos Anchor, int Color)> _siegePickBoxes = [];
+    private readonly Dictionary<int, Transform3D> _siegePickTransforms = [];
+    private readonly Dictionary<int, int> _siegePickWallIds = [];
+    public int? PickedWallId { get; private set; }
     private readonly Dictionary<int, MultiMeshInstance3D> _wallInstances = [];
     private readonly Dictionary<int, MultiMeshInstance3D> _actorInstances = [];
     private readonly Dictionary<int, List<Transform3D>> _actorBatches = [];
+    private readonly Dictionary<int, (int Color, int Index)> _projectileInstances = [];
+    internal Vector3? RenderedProjectilePosition(int id) =>
+        _projectileInstances.TryGetValue(id, out var slot)
+            ? _actorBatches[slot.Color][slot.Index].Origin : null;
     private readonly List<WallComponent> _burningWalls = [];
-    private readonly Dictionary<Pos, IReadOnlyList<WallFlameSurface>> _flameSurfaces = [];
+    private readonly Dictionary<int, IReadOnlyList<WallFlameSurface>> _flameSurfaces = [];
     private SettlementState? _renderedSettlement;
     private int _siegeRevision = -1, _wallSignature;
     private double _siegeFraction = -1;
 
     public int WallsDrawn { get; private set; }
-    public int GoblinsDrawn { get; private set; }
+    internal int TimberWallPartsDrawn { get; private set; }
+    public int EnemiesDrawn { get; private set; }
     public int SiegeGeometryBuilds { get; private set; }
     public int SiegeActorBuilds { get; private set; }
     public double SiegeActorBuildMilliseconds { get; private set; }
@@ -42,24 +51,58 @@ public partial class PerspectiveCity
     public bool FirefightingCrewDrawn { get; private set; }
     public int RepairWaterSegmentsDrawn { get; private set; }
     internal (Pos Cell, WallDefenseKind Kind)? DefenseModelPreview { get; init; }
+    internal (Pos Cell, bool Gate)? WallConstructionPreview { get; init; }
+    internal Aabb? WallPreviewBounds { get; private set; }
+
+    private void DrawWallConstructionPreview()
+    {
+        if (WallConstructionPreview is not { } preview) return;
+        var center = new System.Numerics.Vector2(preview.Cell.X + .5f, preview.Cell.Y + .5f);
+        var wall = WallDamageLayout.Preview(center - new System.Numerics.Vector2(2, 0),
+            center + new System.Numerics.Vector2(2, 0), WallMaterial.Wood, preview.Gate);
+        WallPreviewBounds = null;
+        foreach (var model in WallModelParts(wall, _map))
+        {
+            var part = model.Fragment;
+            var position = new Vector3(center.X + part.Center.X, part.Center.Y, center.Y + part.Center.Z);
+            var size = new Vector3(part.Size.X, part.Size.Y, part.Size.Z);
+            BatchBox(model.Color, new Transform3D(Basis.Identity.Scaled(size), position));
+            var bounds = new Aabb(position - size / 2, size);
+            WallPreviewBounds = WallPreviewBounds is { } previous ? previous.Merge(bounds) : bounds;
+        }
+    }
 
     private void DrawDefenseModelPreview()
     {
         if (DefenseModelPreview is not { } preview) return;
         var batches = new Dictionary<int, List<Transform3D>>();
         DrawMountedDefense(batches, new(preview.Cell.X + 0.5f, 0, preview.Cell.Y + 0.5f), preview.Kind);
+        DefensePreviewBounds = null;
         foreach (var (color, instances) in batches)
-            foreach (var transform in instances) BatchBox(color, transform);
+            foreach (var transform in instances)
+            {
+                BatchBox(color, transform);
+                var bounds = DefenseBounds(transform);
+                DefensePreviewBounds = DefensePreviewBounds is { } previous ? previous.Merge(bounds) : bounds;
+            }
     }
 
     private void InitializeSiegeRendering()
     {
         _viewport.AddChild(_fortifications);
         _viewport.AddChild(_siegeActors);
+        _oilSheetMesh.MaterialOverride = _oilMaterial;
+        _siegeActors.AddChild(_oilSheetMesh);
     }
 
-    public Vector3 WallTop(WallComponent wall) => new(wall.Cell.X + 0.5f,
-        TerrainSprite.Elevation(_map!, wall.Cell.X, wall.Cell.Y) + WallHeight(wall), wall.Cell.Y + 0.5f);
+    public Vector3 WallTop(WallComponent wall) => new(wall.Center.X,
+        WallGround(wall) + WallHeight(wall), wall.Center.Y);
+
+    private float WallGround(WallComponent wall) => WallDamageLayout.GroundHeight(wall, _map!);
+
+    private static Basis WallBasis(WallComponent wall) =>
+        new(new Vector3(wall.Tangent.X, 0, wall.Tangent.Y), Vector3.Up,
+            new Vector3(-wall.Tangent.Y, 0, wall.Tangent.X));
 
     private static float WallHeight(WallComponent wall) => WallDamageLayout.TopHeight(wall);
 
@@ -67,10 +110,15 @@ public partial class PerspectiveCity
     {
         var settlement = session.Game.Settlement;
         bool replaced = !ReferenceEquals(_renderedSettlement, settlement);
+        if (replaced) _aimAngles.Clear();
         bool revisionChanged = replaced || _siegeRevision != (settlement?.Revision ?? -1);
         double fraction = settlement?.InterpolationFraction ?? 0;
-        if (!revisionChanged && (settlement is null || fraction == _siegeFraction ||
-            settlement.Goblins.Count == 0 && settlement.Projectiles.Count == 0 && settlement.RepairingWall is null &&
+        int selectedHash = session.SelectedDefenderIds.Aggregate(17, (hash, id) => unchecked(hash * 31 + id));
+        bool selectionChanged = selectedHash != _defenderSelectionHash;
+        _defenderSelectionHash = selectedHash;
+        if (!selectionChanged && !revisionChanged && (settlement is null || fraction == _siegeFraction ||
+            settlement.Enemies.Count == 0 && settlement.Projectiles.Count == 0 && settlement.VisibleRepairingWall is null &&
+            settlement.Defenders.Count == 0 && settlement.Deaths.Count == 0 &&
             settlement.UpgradingWall is null &&
             _burningWalls.Count == 0)) return;
         _renderedSettlement = settlement;
@@ -94,6 +142,7 @@ public partial class PerspectiveCity
                     signature.Add(burning);
                     if (burning) _burningWalls.Add(wall);
                     signature.Add(wall.Defense);
+                    signature.Add(wall.DefenseFacing);
                 }
             }
             int wallSignature = signature.ToHashCode();
@@ -102,9 +151,19 @@ public partial class PerspectiveCity
                 _wallSignature = wallSignature;
                 _flameSurfaces.Clear();
                 foreach (var wall in _burningWalls)
-                    _flameSurfaces.Add(wall.Cell, WallDamageLayout.FlameSurfaces(wall));
+                    _flameSurfaces.Add(wall.Id, WallDamageLayout.FlameSurfaces(wall,
+                        WallModelParts(wall, _map).Select(part => part.Fragment).ToArray()));
                 _siegePickBoxes.Clear();
+                _siegePickTransforms.Clear();
+                _siegePickWallIds.Clear();
                 _wallHighlightBoxes.Clear();
+                _wallTopFaces.Clear();
+                TimberWallPartsDrawn = 0;
+                foreach (var values in _extensionWallBatches.Values) values.Clear();
+                _movingDefenseParts.Clear();
+                _accessLadderWallIds.Clear();
+                _aimedParts.Clear();
+                _defenseAngles.Clear();
                 var batches = new Dictionary<int, List<Transform3D>>();
                 WallsDrawn = 0;
                 if (settlement is not null)
@@ -114,54 +173,104 @@ public partial class PerspectiveCity
                         WallsDrawn++;
                     }
                 SyncSiegeBatches(_fortifications, _wallInstances, batches);
+                SyncWallTops();
                 SiegeGeometryBuilds++;
             }
         }
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
         foreach (var batch in _actorBatches.Values) batch.Clear();
+        _projectileInstances.Clear();
+        foreach (var batch in _splashBatches.Values) batch.Clear();
         var actors = _actorBatches;
-        GoblinsDrawn = 0;
+        _siegeActorPickBoxes.Clear();
+        EnemiesDrawn = 0;
         RepairCrewDrawn = false;
         UpgradeCrewDrawn = false;
         FirefightingCrewDrawn = false;
         RepairWaterSegmentsDrawn = 0;
         BurningWallsDrawn = 0;
+        OilFlowSegmentsDrawn = DroppedStonesDrawn = DefenseSplashesDrawn = 0;
+        OilSheetTriangles = 0;
+        LargestDefenseSplashRadius = 0;
         if (settlement is not null)
         {
-            foreach (var goblin in settlement.Goblins)
+            AnimateMountedDefenses();
+            AnimateAimedWeapons();
+            foreach (var goblin in settlement.Enemies)
             {
-                var pose = SiegeMotion.Goblin(settlement, goblin);
+                var pose = SiegeMotion.Enemy(settlement, goblin);
                 if (!SiegeAnimationEnabled) pose = pose with { Stride = 0, Bob = 0, Sway = 0, Attack = 0 };
                 var at = new Vector3(pose.Position.X, 0, pose.Position.Y);
                 at.Y = GroundLevel(at);
-                DrawGoblin(actors, at, pose, goblin);
-                GoblinsDrawn++;
+                DrawEnemy(actors, at, pose, goblin);
+                EnemiesDrawn++;
             }
+            DrawGarrisonActors(actors, session, settlement);
             foreach (var shot in settlement.Projectiles)
             {
+                if (shot.Melee) continue;
+                if (shot.Id > 0 && shot.Kind == WallDefenseKind.Trebuchet && !shot.Applied)
+                {
+                    var target = new Vector3((float)shot.EndX, shot.WorldEndHeight + .05f, (float)shot.EndY);
+                    foreach (float radius in new[] { .75f, 2.5f })
+                        for (int step = 0; step < 24; step++)
+                        {
+                            float angle = step * Mathf.Tau / 24;
+                            var point = target + new Vector3(Mathf.Cos(angle), 0, Mathf.Sin(angle)) * radius;
+                            point.Y = GroundLevel(point) + .05f;
+                            SiegeBox(actors, point, new(.16f, .025f, .08f), 0xe5cf79);
+                        }
+                }
                 float t = SiegeMotion.ProjectileProgress(settlement, shot);
                 if (t >= 1) continue;
-                var start = new Vector3((float)shot.StartX, 2.9f, (float)shot.StartY);
-                var end = new Vector3((float)shot.EndX, 0.5f, (float)shot.EndY);
+                if (shot.Kind is WallDefenseKind.OilCauldron or WallDefenseKind.Rocks)
+                {
+                    DrawDroppedAttack(actors, settlement, shot, t);
+                    continue;
+                }
+                var start = new Vector3((float)shot.StartX, shot.StartHeight, (float)shot.StartY);
+                var end = new Vector3((float)shot.EndX, shot.EndHeight, (float)shot.EndY);
                 start.Y += GroundLevel(start);
                 end.Y += GroundLevel(end);
                 bool arrow = shot.Kind is WallDefenseKind.None or WallDefenseKind.Ballista;
                 float arc = shot.Kind == WallDefenseKind.Trebuchet ? 5 : arrow ? 0.15f : 1;
+                if (shot.Id > 0)
+                {
+                    if (SiegeMotion.ProjectileElapsed(settlement, shot) < shot.Windup || shot.Applied)
+                    {
+                        if (shot.Applied && shot.Kind == WallDefenseKind.Trebuchet)
+                            SiegeBox(actors, new((float)shot.EndX, shot.WorldEndHeight + .04f, (float)shot.EndY),
+                                new(.45f, .1f, .45f), 0x8b806b);
+                        continue;
+                    }
+                    t = SiegeMotion.ProjectileFlightProgress(settlement, shot);
+                    start.Y = shot.WorldStartHeight; end.Y = shot.WorldEndHeight; arc = shot.ArcHeight;
+                }
                 var at = start.Lerp(end, t) + Vector3.Up * (Mathf.Sin(t * Mathf.Pi) * arc);
                 var direction = (end - start + Vector3.Up * (Mathf.Cos(t * Mathf.Pi) * Mathf.Pi * arc)).Normalized();
                 var orientation = Basis.LookingAt(direction, Math.Abs(direction.Y) > 0.98f ? Vector3.Right : Vector3.Up);
-                SiegeBox(actors, at, arrow ? new(0.08f, 0.08f, 0.55f) : new(0.25f, 0.25f, 0.25f),
+                int projectileColor = arrow ? 0xe4d3a0 : 0xa4a599;
+                if (shot.Id > 0)
+                    _projectileInstances.Add(shot.Id, (projectileColor, actors.GetValueOrDefault(projectileColor)?.Count ?? 0));
+                SiegeBox(actors, at, arrow ? new(0.035f, 0.035f, 0.55f) : new(0.25f, 0.25f, 0.25f),
                     shot.Kind == WallDefenseKind.OilCauldron ? 0xc78739 : arrow ? 0xe4d3a0 : 0xa4a599,
                     orientation: orientation);
-                if (arrow) SiegeBox(actors, at + direction * 0.28f, new(0.12f, 0.08f, 0.13f), 0xa4a599,
-                    orientation: orientation);
+                if (arrow)
+                {
+                    SiegeBox(actors, at + direction * 0.28f, new(0.08f, 0.04f, 0.10f), 0xa4a599, orientation: orientation);
+                    foreach (float angle in new[] { 0f, Mathf.Pi / 2 })
+                        SiegeBox(actors, at - direction * .21f, new(.15f, .02f, .15f), 0xc6bf9c,
+                            orientation: orientation * new Basis(Vector3.Forward, angle));
+                }
             }
-            if (settlement.RepairingWall is { } repair)
+            DrawSiegeDeaths(actors, settlement);
+            if (settlement.VisibleRepairingSection is { } repair)
             {
                 DrawRepairCrew(actors, settlement, repair);
                 RepairCrewDrawn = true;
             }
-            if (settlement.UpgradingWall is { } upgrade && upgrade != settlement.RepairingWall)
+            if (settlement.Enemies.Count == 0 && settlement.UpgradingSection is { } upgrade &&
+                upgrade.Id != settlement.VisibleRepairingSection?.Id)
             {
                 DrawRepairCrew(actors, settlement, upgrade, masonry: true);
                 UpgradeCrewDrawn = true;
@@ -172,21 +281,52 @@ public partial class PerspectiveCity
                 BurningWallsDrawn++;
             }
         }
+        SyncOilSheet();
         SyncSiegeBatches(_siegeActors, _actorInstances, actors);
+        SyncSiegeBatches(_siegeActors, _splashInstances, _splashBatches, _splashDisk);
         SiegeActorBuilds++;
         SiegeActorBuildMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         RequestRender();
     }
 
-    private static void DrawGoblin(Dictionary<int, List<Transform3D>> batches, Vector3 ground, GoblinPose pose, Goblin goblin)
+    private void DrawEnemy(Dictionary<int, List<Transform3D>> batches, Vector3 ground, SiegeEnemyPose pose, SiegeEnemy goblin)
     {
         float size = (float)goblin.BodyScale;
         float strike = Math.Max(0, pose.Attack), windup = Math.Max(0, -pose.Attack);
         var facing = Basis.LookingAt(new Vector3(pose.Forward.X, 0, pose.Forward.Y), Vector3.Up);
         var body = ground + facing * new Vector3(pose.Sway * size, (pose.Bob + strike * 0.025f) * size, -strike * 0.09f * size);
-        void Part(Vector3 offset, Vector3 scale, int color, float swing = 0) =>
-            SiegeBox(batches, body + facing * (offset * size), scale * size, color,
-                orientation: facing * new Basis(Vector3.Right, swing));
+        void Part(Vector3 offset, Vector3 scale, int color, float swing = 0)
+        {
+            var at = body + facing * (offset * size);
+            var basis = facing * new Basis(Vector3.Right, swing);
+            if (_deathActorTransform is { } collapse)
+            {
+                at = collapse * at;
+                basis = collapse.Basis * basis;
+            }
+            SiegeBox(batches, at, scale * size, _deathCharred ? 0x493b29 : color, orientation: basis);
+            if (_deathActorTransform is null)
+                _siegeActorPickBoxes.Add((new(basis.Scaled(scale * size), at), goblin.Id, false));
+        }
+        if (goblin.Definition.IsTroll)
+        {
+            foreach (var part in TrollArtwork.Parts(goblin))
+            {
+                var offset = new Vector3(part.Center.X, part.Center.Y, part.Center.Z);
+                float swing = offset.Y < 0.4f ? pose.Stride * Math.Sign(offset.X) * 0.35f : 0;
+                if (Math.Abs(offset.X) / goblin.Definition.WidthMultiplier >= 0.39 && part.Size.Y >= 0.6f)
+                {
+                    float reach = (float)(goblin.CollisionRadius / goblin.BodyScale) + 0.35f / size;
+                    float angle = MathF.Asin(Math.Clamp((reach + offset.Z - part.Size.Z / 2 - 0.09f) /
+                        part.Size.Y, 0, 0.98f));
+                    swing = strike * angle - windup * 0.6f - pose.Stride * Math.Sign(offset.X) * 0.25f;
+                    var shoulder = offset + Vector3.Up * part.Size.Y / 2;
+                    offset = shoulder + new Basis(Vector3.Right, swing) * (offset - shoulder);
+                }
+                Part(offset, new(part.Size.X, part.Size.Y, part.Size.Z), part.Color, swing);
+            }
+            return;
+        }
         Part(new(0, 0.65f, 0), new(0.5f, 0.6f, 0.38f), 0x694d39, -strike * 0.18f);
         Part(new(0, 0.65f, 0.22f), new(0.4f, 0.5f, 0.12f), 0x443d32);
         Part(new(0, 1.13f, 0), new(0.5f, 0.44f, 0.46f), 0x66834c);
@@ -205,6 +345,13 @@ public partial class PerspectiveCity
                 new(0.15f, 0.48f, 0.18f), 0x66834c, arm);
         }
         if (goblin.Tier > 1) Part(new(0, 1.39f, 0), new(0.56f, 0.15f, 0.52f), 0x586b71);
+        if (goblin.Kind == SiegeEnemyKind.Orc)
+        {
+            Part(new(-0.4f, 0.88f, 0), new(0.28f, 0.22f, 0.48f), 0x586b71);
+            Part(new(0.4f, 0.88f, 0), new(0.28f, 0.22f, 0.48f), 0x586b71);
+            foreach (int side in new[] { -1, 1 })
+                Part(new(side * 0.14f, 1.01f, -0.37f), new(0.065f, 0.18f, 0.06f), 0xd9d49b);
+        }
         float weaponAngle = -pose.Stride * 0.5f + windup * 0.7f - strike * 1.2f;
         var weapon = new Basis(Vector3.Right, weaponAngle);
         var grip = new Vector3(0.46f, 0.6f + windup * 0.08f, -0.08f - pose.Stride * 0.12f);
@@ -212,25 +359,28 @@ public partial class PerspectiveCity
         Part(grip + weapon * new Vector3(0, 1.02f, 0), new(0.28f, 0.18f, 0.12f), 0x586b71, weaponAngle);
     }
 
-    private void DrawRepairCrew(Dictionary<int, List<Transform3D>> batches, SettlementState siege, Pos cell, bool masonry = false)
+    private void DrawRepairCrew(Dictionary<int, List<Transform3D>> batches, SettlementState siege, WallComponent targetWall, bool masonry = false)
     {
+        var cell = targetWall.Cell;
         var inward = cell.Y == siege.Bounds.Bottom ? Vector3.Forward :
             cell.Y == siege.Bounds.Y ? Vector3.Back :
             cell.X == siege.Bounds.X ? Vector3.Right : Vector3.Left;
+        if (!targetWall.IsOriginal)
+        {
+            var normal = new System.Numerics.Vector2(-targetWall.Tangent.Y, targetWall.Tangent.X);
+            int side = siege.WallNetwork.Contains(targetWall.Center + normal) ? 1 : -1;
+            inward = new(normal.X * side, 0, normal.Y * side);
+        }
         var across = new Vector3(-inward.Z, 0, inward.X);
         float phase = SiegeAnimationEnabled
             ? (float)((masonry ? siege.UpgradeAnimationPhase : siege.RepairAnimationPhase) +
                 siege.InterpolationFraction * 0.1) * Mathf.Tau : 0;
-        var site = new Vector3(cell.X + 0.5f, 0, cell.Y + 0.5f);
-        site.Y = GroundLevel(site);
-        float height = 1.9f;
-        bool tower = false;
-        WallComponent? targetWall = null;
-        foreach (var wall in siege.Walls)
-            if (wall.Cell == cell) { height = WallHeight(wall); tower = wall.IsTower; targetWall = wall; break; }
-        bool firefighting = !masonry && targetWall is not null && RepairCrewArtwork.FightingFire(targetWall);
+        var site = new Vector3(targetWall.Center.X, WallGround(targetWall), targetWall.Center.Y);
+        float height = WallHeight(targetWall);
+        bool tower = targetWall.IsTower;
+        bool firefighting = !masonry && RepairCrewArtwork.FightingFire(targetWall);
         FirefightingCrewDrawn |= firefighting;
-        var scaffold = site - inward * (tower ? 0.83f : 0.36f);
+        var scaffold = site - inward * (tower ? WorldScale.Feet(9) : WallDamageLayout.Depth(targetWall) / 2 + 0.4f);
         var facing = Basis.LookingAt(inward, Vector3.Up);
         SiegeBox(batches, scaffold + Vector3.Up * ((height + 0.15f) / 2), new(0.07f, height + 0.15f, 0.07f), 0xa69666);
         SiegeBox(batches, scaffold + Vector3.Up * (height + 0.15f), new(0.8f, 0.07f, 0.28f), 0x79634b,
@@ -238,9 +388,11 @@ public partial class PerspectiveCity
         for (int i = 0; i < 2; i++)
         {
             float step = i == 1 ? MathF.Sin(phase) : 0;
-            var worker = scaffold + across * ((i - 0.5f) * 0.42f + step * 0.08f) + Vector3.Up * (height + 0.19f);
+            const float workerScale = 1.35f / RepairCrewArtwork.WorkerHeight;
+            var worker = scaffold + across * ((i - 0.5f) * 0.75f + step * 0.08f) + Vector3.Up * (height + 0.19f);
             void Part(Vector3 offset, Vector3 size, int color, Basis? local = null) =>
-                SiegeBox(batches, worker + facing * offset, size, color, orientation: facing * (local ?? Basis.Identity));
+                SiegeBox(batches, worker + facing * (offset * workerScale), size * workerScale,
+                    color, orientation: facing * (local ?? Basis.Identity));
             Part(new(0, 0.16f, 0), new(RepairCrewArtwork.WorkerWidth, 0.17f, 0.08f), i == 0 ? 0x79634b : 0x586b71);
             Part(new(0, RepairCrewArtwork.WorkerHeight - 0.05f, 0), new(0.1f, 0.1f, 0.1f), 0xc6bf9c);
             for (int side = -1; side <= 1; side += 2)
@@ -265,13 +417,12 @@ public partial class PerspectiveCity
                     BucketPart(new(0, side * tall * 0.3f, 0), new(width + 0.02f, 0.015f, width + 0.02f), 0x586b71);
                 }
                 BucketPart(new(0, tall * 0.45f, 0), new(width * 0.72f, 0.012f, width * 0.72f), 0x8fc7d4);
-                if (pose.Pour >= 0 && _flameSurfaces.TryGetValue(cell, out var surfaces) && surfaces.Count > 0)
+                if (pose.Pour >= 0 && _flameSurfaces.TryGetValue(targetWall.Id, out var surfaces) && surfaces.Count > 0)
                 {
                     var surface = surfaces[i % surfaces.Count];
-                    bool horizontal = cell.Y == siege.Bounds.Y || cell.Y == siege.Bounds.Bottom;
-                    var wallBasis = horizontal ? Basis.Identity : new Basis(Vector3.Up, Mathf.Pi / 2);
+                    var wallBasis = WallBasis(targetWall);
                     var end = site + wallBasis * new Vector3(surface.Position.X, surface.Position.Y, surface.Position.Z);
-                    var start = worker + facing * (bucket + tilt * new Vector3(0, tall / 2, -width / 2));
+                    var start = worker + facing * ((bucket + tilt * new Vector3(0, tall / 2, -width / 2)) * workerScale);
                     foreach (var segment in RepairCrewArtwork.BucketWater(
                         new(start.X, start.Y, start.Z), new(end.X, end.Y, end.Z), pose.Pour))
                     {
@@ -314,7 +465,9 @@ public partial class PerspectiveCity
     }
 
     private float GroundLevel(Vector3 point) => _map is { } map && map.InBounds((int)point.X, (int)point.Z)
-        ? TerrainSprite.Elevation(map, (int)point.X, (int)point.Z) : 0;
+        ? map.Footbridges.FirstOrDefault(bridge => bridge.Complete &&
+            bridge.Cells().Contains(new((int)point.X, (int)point.Z)))?.DeckHeight(map) ??
+                TerrainSprite.Elevation(map, (int)point.X, (int)point.Z) : 0;
 
     private static Transform3D SiegeBox(Dictionary<int, List<Transform3D>> batches, Vector3 at, Vector3 size, int color,
         float angle = 0, Basis? orientation = null)
@@ -329,7 +482,7 @@ public partial class PerspectiveCity
     }
 
     private void SyncSiegeBatches(Node3D root, Dictionary<int, MultiMeshInstance3D> instances,
-        Dictionary<int, List<Transform3D>> batches)
+        Dictionary<int, List<Transform3D>> batches, Mesh? mesh = null)
     {
         foreach (var (color, instance) in instances)
             if (!batches.ContainsKey(color)) instance.Visible = false;
@@ -339,8 +492,8 @@ public partial class PerspectiveCity
             {
                 instance = new MultiMeshInstance3D
                 {
-                    Multimesh = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, Mesh = _cube },
-                    MaterialOverride = Material(color),
+                    Multimesh = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, Mesh = mesh ?? _cube },
+                    MaterialOverride = Material(color, solid: true),
                 };
                 root.AddChild(instance);
                 instances.Add(color, instance);
@@ -354,46 +507,57 @@ public partial class PerspectiveCity
     private void DrawWall(Dictionary<int, List<Transform3D>> batches, SettlementState settlement, WallComponent wall)
     {
         var highlight = new List<Transform3D>();
-        _wallHighlightBoxes.Add(wall.Cell, highlight);
+        _wallHighlightBoxes.Add(wall.Id, highlight);
+        if (wall.IsGateWing) return;
         var top = WallTop(wall);
         float height = WallHeight(wall);
         float baseY = top.Y - height;
-        bool horizontal = wall.Cell.Y == settlement.Bounds.Y || wall.Cell.Y == settlement.Bounds.Bottom;
-        var basis = horizontal ? Basis.Identity : new Basis(Vector3.Up, Mathf.Pi / 2);
-        var material = settlement.MaterialFor(wall);
-        bool wood = material == WallMaterial.Wood;
-        int band = WallDamageLayout.DamageBand(wall);
-        int bodyColor = wood ? band < 4 ? 0x79634b : 0x4b3b2c : band < 4 ? 0xa4a599 : 0x79796e;
-        if (WallDamageLayout.IsBurning(wall)) bodyColor = wood ? 0x302a23 : 0x55544d;
+        var basis = WallBasis(wall);
         var origin = new Vector3(top.X, baseY, top.Z);
-        foreach (var fragment in WallDamageLayout.Fragments(wall))
+        foreach (var model in WallModelParts(wall, _map, foundations: true))
         {
-            int color = fragment.Kind switch
-            {
-                WallFragmentKind.Trim => material == WallMaterial.ReinforcedStone ? 0x586b71 :
-                    wood ? 0xa69666 : bodyColor,
-                WallFragmentKind.Door => band < 4 ? 0x443d32 : 0x302a23,
-                _ => bodyColor,
-            };
+            var fragment = model.Fragment;
+            int color = model.Color;
+            if (PalisadeArtwork.IsTexturedColor(color)) TimberWallPartsDrawn++;
             var center = origin + basis * new Vector3(fragment.Center.X, fragment.Center.Y, fragment.Center.Z);
             var localSize = new Vector3(fragment.Size.X, fragment.Size.Y, fragment.Size.Z);
-            highlight.Add(SiegeBox(batches, center, localSize, color, orientation: basis));
+            var transform = SiegeBox(wall.IsOriginal ? batches : _extensionWallBatches, center, localSize, color, orientation: basis);
+            RecordWallTop(transform, color, !wall.IsOriginal);
+            highlight.Add(transform);
             var worldSize = basis.X.Abs() * localSize.X + basis.Y.Abs() * localSize.Y + basis.Z.Abs() * localSize.Z;
+            _siegePickTransforms[_siegePickBoxes.Count] = transform;
+            _siegePickWallIds[_siegePickBoxes.Count] = wall.Id;
             _siegePickBoxes.Add((new Aabb(center - worldSize / 2, worldSize), wall.Cell, color));
         }
         DrawWallUpgrade(batches, settlement, wall);
+        DrawAccessLadder(batches, settlement, wall, highlight);
         if (wall.Health > 0 && wall.Defense != WallDefenseKind.None)
         {
+            if (wall.Defense is WallDefenseKind.OilCauldron or WallDefenseKind.Rocks)
+            {
+                DrawDroppedDefense(batches, wall, MountedDefenseOrigin(wall), highlight);
+                return;
+            }
             var mounted = new Dictionary<int, List<Transform3D>>();
-            DrawMountedDefense(mounted, top + Vector3.Up * 0.05f, wall.Defense);
+            var mount = MountedDefenseOrigin(wall);
+            DrawMountedDefense(mounted, mount, wall.Defense, wall);
             foreach (var (color, transforms) in mounted)
             {
                 if (!batches.TryGetValue(color, out var batch)) batches.Add(color, batch = []);
-                batch.AddRange(transforms);
-                highlight.AddRange(transforms);
+                foreach (var transform in transforms)
+                {
+                    int instanceIndex = batch.Count, highlightIndex = highlight.Count, pickIndex = _siegePickBoxes.Count;
+                    batch.Add(transform); highlight.Add(transform);
+                    var inverseAim = WeaponAim(wall).Inverse();
+                    var canonical = new Transform3D(inverseAim * transform.Basis,
+                        mount + inverseAim * (transform.Origin - mount));
+                    _aimedParts.Add(new(wall, mount, canonical, color, instanceIndex, pickIndex, highlightIndex));
+                    var size = transform.Basis.X.Abs() + transform.Basis.Y.Abs() + transform.Basis.Z.Abs();
+                    _siegePickTransforms[_siegePickBoxes.Count] = transform;
+                    _siegePickWallIds[_siegePickBoxes.Count] = wall.Id;
+                    _siegePickBoxes.Add((new Aabb(transform.Origin - size / 2, size), wall.Cell, color));
+                }
             }
-            _siegePickBoxes.Add((new Aabb(top - new Vector3(0.8f, 0, 0.8f), new(1.6f, 1.4f, 1.6f)),
-                wall.Cell, bodyColor));
         }
     }
 
@@ -402,9 +566,8 @@ public partial class PerspectiveCity
         var at = new Vector3(wall.Cell.X + 0.5f,
             TerrainSprite.Elevation(_map!, wall.Cell.X, wall.Cell.Y), wall.Cell.Y + 0.5f);
         double phase = SiegeAnimationEnabled ? (siege.Revision + siege.InterpolationFraction) * 0.1 : 0;
-        bool horizontal = wall.Cell.Y == siege.Bounds.Y || wall.Cell.Y == siege.Bounds.Bottom;
-        var basis = horizontal ? Basis.Identity : new Basis(Vector3.Up, Mathf.Pi / 2);
-        var surfaces = _flameSurfaces[wall.Cell];
+        var basis = WallBasis(wall);
+        var surfaces = _flameSurfaces[wall.Id];
         for (int i = 0; i < surfaces.Count; i++)
         {
             foreach (var part in WallDamageLayout.FlameParts(surfaces[i], phase,
@@ -414,20 +577,29 @@ public partial class PerspectiveCity
         }
     }
 
-    private static void DrawMountedDefense(Dictionary<int, List<Transform3D>> batches, Vector3 top, WallDefenseKind kind)
+    private Vector3 MountedDefenseOrigin(WallComponent wall, WallDefenseKind? kind = null) => new(wall.Center.X,
+        TerrainSprite.Elevation(_map!, wall.Cell.X, wall.Cell.Y) +
+            WallDamageLayout.ActorWalkHeight(wall, _map) +
+            ((kind ?? wall.Defense) is WallDefenseKind.OilCauldron or WallDefenseKind.Rocks ? 0 : .05f), wall.Center.Y);
+
+    private void DrawMountedDefense(Dictionary<int, List<Transform3D>> batches, Vector3 top, WallDefenseKind kind,
+        WallComponent? wall = null, bool animate = true, int? facing = null)
     {
+        if (kind is WallDefenseKind.OilCauldron or WallDefenseKind.Rocks)
+        {
+            var pose = animate ? DefensePose(wall, kind) : (-1, 0f);
+            foreach (var part in TowerDefenseArtwork.Parts(wall, kind, TowerDefenseArtwork.Rise(wall, _map), facing))
+            {
+                var transform = DefenseTransform(TowerDefenseArtwork.Pose(part,
+                    part.Station == pose.Item1 ? pose.Item2 : 0), top);
+                if (!batches.TryGetValue(part.Color, out var batch)) batches.Add(part.Color, batch = []);
+                batch.Add(transform);
+            }
+            return;
+        }
         SiegeBox(batches, top + new Vector3(0, 0.09f, 0), new(0.8f, 0.18f, 0.8f), 0xa69666);
         switch (kind)
         {
-            case WallDefenseKind.OilCauldron:
-                SiegeBox(batches, top + new Vector3(0, 0.35f, 0), new(0.65f, 0.45f, 0.65f), 0x343b3e);
-                SiegeBox(batches, top + new Vector3(0, 0.58f, 0), new(0.46f, 0.04f, 0.46f), 0x201b16);
-                break;
-            case WallDefenseKind.Rocks:
-                for (int i = 0; i < 3; i++)
-                    SiegeBox(batches, top + new Vector3((i - 1) * 0.22f, 0.32f + (i == 1 ? 0.13f : 0), 0),
-                        new(0.3f, 0.3f, 0.4f), 0xa4a599);
-                break;
             case WallDefenseKind.Ballista:
                 SiegeBox(batches, top + new Vector3(0, 0.42f, 0), new(0.14f, 0.65f, 0.14f), 0x79634b);
                 SiegeBox(batches, top + new Vector3(0, 0.65f, 0), new(1.15f, 0.12f, 0.17f), 0x443d32);
@@ -440,11 +612,51 @@ public partial class PerspectiveCity
                 SiegeBox(batches, top + new Vector3(-0.28f, 0.58f, 0), new(0.32f, 0.42f, 0.36f), 0x586b71);
                 break;
         }
+        if (wall is not null)
+        {
+            var aim = WeaponAim(wall);
+            foreach (var values in batches.Values)
+                for (int i = 0; i < values.Count; i++)
+                    values[i] = new(aim * values[i].Basis, top + aim * (values[i].Origin - top));
+        }
     }
 
     private void DrawSettlementGhost(GameSession session, PlacementPreview preview)
     {
-        if (preview.Kind == PlacementKind.Settlement)
+        if (preview.WallPlan is { } plan)
+        {
+            int color = plan.Valid ? 0x64c788 : 0xe47676;
+            var tangent = plan.End - plan.Start;
+            if (tangent.LengthSquared() < .00001f) return;
+            tangent = System.Numerics.Vector2.Normalize(tangent);
+            var spans = plan.Spans.Count > 0 ? plan.Spans : new[] { (A: plan.Start, B: plan.End) };
+            var ghosts = new List<WallComponent>();
+            var material = session.Game.Settlement?.UpgradeTargetMaterial ?? session.Game.Settlement?.Material ?? WallMaterial.Wood;
+            foreach (var span in spans)
+            {
+                int count = plan.Gate ? 1 : Math.Max(1, (int)Math.Ceiling(System.Numerics.Vector2.Distance(span.A, span.B)));
+                for (int i = 0; i < count; i++)
+                    ghosts.Add(WallDamageLayout.Preview(System.Numerics.Vector2.Lerp(span.A, span.B, i / (float)count),
+                        System.Numerics.Vector2.Lerp(span.A, span.B, (i + 1) / (float)count), material, plan.Gate));
+            }
+            foreach (var point in plan.Towers) ghosts.Add(WallDamageLayout.PreviewTower(point, material));
+            foreach (var ghost in ghosts)
+            {
+                if (session.Game.Settlement is { } settlement)
+                    WallDamageLayout.OrientPreview(ghost, settlement, preview.WallEnclosures);
+                var point = ghost.Cell;
+                if (!session.Game.Map.InBounds(point)) continue;
+                var basis = WallBasis(ghost);
+                var origin = new Vector3(ghost.Center.X, WallGround(ghost), ghost.Center.Y);
+                foreach (var model in WallModelParts(ghost, _map, foundations: true))
+                {
+                    var part = model.Fragment;
+                    BatchBox(color, new Transform3D(basis * Basis.Identity.Scaled(new(part.Size.X, part.Size.Y, part.Size.Z)),
+                        origin + basis * new Vector3(part.Center.X, part.Center.Y, part.Center.Z)));
+                }
+            }
+        }
+        else if (preview.Kind == PlacementKind.Settlement)
         {
             int color = preview.ValidCells?.Count > 0 ? 0x64c788 : 0xe47676;
             foreach (var cell in preview.Cells ?? Enumerable.Empty<Pos>())
@@ -452,15 +664,24 @@ public partial class PerspectiveCity
                 if (!session.Game.Map.InBounds(cell)) continue;
                 float ground = TerrainSprite.Elevation(session.Game.Map, cell.X, cell.Y);
                 bool horizontal = cell.Y == preview.Area.Y || cell.Y == preview.Area.Bottom;
-                Box(new(cell.X + 0.5f, ground + 0.85f, cell.Y + 0.5f),
-                    horizontal ? new(1, 1.7f, 0.3f) : new(0.3f, 1.7f, 1), color);
+                var center = new System.Numerics.Vector2(cell.X + .5f, cell.Y + .5f);
+                var direction = horizontal ? System.Numerics.Vector2.UnitX : System.Numerics.Vector2.UnitY;
+                var ghost = WallDamageLayout.Preview(center - direction / 2, center + direction / 2, WallMaterial.Wood);
+                var basis = WallBasis(ghost);
+                foreach (var model in WallModelParts(ghost, _map))
+                {
+                    var part = model.Fragment;
+                    BatchBox(color, new Transform3D(basis * Basis.Identity.Scaled(new(part.Size.X, part.Size.Y, part.Size.Z)),
+                        new Vector3(center.X, ground, center.Y) + basis * new Vector3(part.Center.X, part.Center.Y, part.Center.Z)));
+                }
             }
         }
         else if (preview.Kind == PlacementKind.WallDefense &&
-            session.Game.Settlement?.Walls.FirstOrDefault(w => w.Cell == session.Cursor) is { } wall)
+            session.SelectedWallComponent is { } wall)
         {
             var batches = new Dictionary<int, List<Transform3D>>();
-            DrawMountedDefense(batches, WallTop(wall), preview.Defense);
+            DrawMountedDefense(batches, MountedDefenseOrigin(wall, preview.Defense), preview.Defense, wall, animate: false,
+                facing: preview.Rotation == 2 ? -1 : 1);
             foreach (var (color, instances) in batches)
                 foreach (var transform in instances) BatchBox(PreviewColor(color), transform);
         }

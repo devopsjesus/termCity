@@ -52,7 +52,7 @@ internal static class SettlementSmoke
         session.ClosePrompt();
         game.Paused = true;
         var settlement = game.Settlement!;
-        Require(game.Stats.Population == 100 && settlement.Goblins.Count > 0,
+        Require(game.Stats.Population == 100 && settlement.Enemies.Count > 0,
             "The siege starter must have exactly 100 settlers and an active first wave.");
         var center = new Pos(settlement.Bounds.X + settlement.Bounds.Width / 2,
             settlement.Bounds.Y + settlement.Bounds.Height / 2);
@@ -62,7 +62,7 @@ internal static class SettlementSmoke
         host.Map.Invalidate(true);
         var view = host.Map.Perspective!;
         await Frames(host);
-        Require(view.WallsDrawn == settlement.Walls.Count && view.GoblinsDrawn == settlement.Goblins.Count,
+        Require(view.WallsDrawn == settlement.Walls.Count && view.EnemiesDrawn == settlement.Enemies.Count,
             "The renderer must draw every wall component and goblin.");
         Require(!session.AreaOverlaysVisible && view.ZonePlotsDrawn == 0 && host.Map.AreasDrawn == 0,
             "New sessions must hide vacant-zone and service-range overlays.");
@@ -112,6 +112,7 @@ internal static class SettlementSmoke
         session.SetZoom(-1);
         session.CenterOn(center);
         await Frames(host);
+        await SiegeAnimationSmoke.VerifySurfaceScrolling(host, capturePath);
         int beforeSelection = view.GeometryBuilds;
         var tower = settlement.Walls.First(w => w.IsTower);
         session.SelectCell(tower.Cell);
@@ -119,19 +120,33 @@ internal static class SettlementSmoke
         Require(view.GeometryBuilds == beforeSelection, "Wall selection must not rebuild the city.");
         Require(view.SelectionArea == tower.SectionBounds && view.SelectionOutlineHeight > view.WallTop(tower).Y + 0.32f,
             "The tower selection square must sit above the usable top and crenellations, not on the ground.");
+        Require(view.SelectionVisualFootprint is { } towerFrame && towerFrame.Size.X > WorldScale.TowerWidth &&
+            towerFrame.Size.Y > WorldScale.TowerWidth,
+            "The bare tower frame must enclose its full rendered footprint, not its one-cell logical anchor.");
         session.PreviewWallDefense(WallDefenseKind.OilCauldron);
         session.MoveFixedPlacement(tower.Cell);
         Require(session.WallDefenseToolActive && session.FixedPlacementError is null,
             "The 100-soul starter must be able to preview its first unlocked wall defense.");
         view.Sync(session, host.Map.Size);
         Require(view.GeometryBuilds == beforeSelection, "A mounted-defense ghost must not rebuild the city.");
-        Require(view.SelectionOutlineHeight > view.WallTop(tower).Y + 0.32f,
-            "A valid wall-defense placement square must remain visible on top of the tower.");
+        Require(view.WeaponRangeVisible && view.WeaponRangeOuter == WallDefenses.Get(WallDefenseKind.OilCauldron).Range,
+            "Placement must shade the weapon range even while the general AREAS switch is off.");
+        Require(view.SelectedObjectBounds is { } ghost && view.SelectionVisualFootprint is { } ghostFrame &&
+            ghostFrame.Encloses(new Rect2(ghost.Position.X, ghost.Position.Z, ghost.Size.X, ghost.Size.Z)) &&
+            view.SelectionOutlineHeight >= ghost.Position.Y && view.SelectionOutlineHeight < ghost.Position.Y + .1f,
+            "The defense-placement frame must surround the actual ghost footprint at its base height.");
         await Capture(host, capturePath is null ? null : Path.ChangeExtension(capturePath, ".tower-top-selection.png"));
         Require(session.ConfirmPreview().Success, session.Message);
         session.ClosePrompt();
+        session.SelectCell(tower.Cell);
+        await Frames(host);
+        Require(view.SelectedObjectBounds is { } mounted && mounted.Size.X > 2 &&
+            view.HighlightedBoxCount > 10 && view.SelectionOutlineHeight < mounted.Position.Y + .1f,
+            "The equipped-tower selection must frame the complete multi-station cauldron setup and access steps.");
+        await Capture(host, capturePath is null ? null : Path.ChangeExtension(capturePath, ".cauldron-selection.png"));
         session.ClearSelection();
         view.Sync(session, host.Map.Size);
+        await TowerDefenseSmoke.Run(host, capturePath);
         int beforeCombat = view.GeometryBuilds;
         int mapVersion = game.MapVersion;
         game.Paused = false;
@@ -149,8 +164,9 @@ internal static class SettlementSmoke
         Require(countdown.Value == pausedCountdown, "Pausing must freeze the next-wave bar.");
         Require(game.MapVersion == mapVersion && view.GeometryBuilds == beforeCombat,
             "Combat-only updates must not rebuild terrain and city geometry.");
-        Require(view.GoblinsDrawn > 0, "The active siege must remain visible.");
+        Require(view.EnemiesDrawn > 0, "The active siege must remain visible.");
         await SiegeAnimationSmoke.VerifyWalking(host, capturePath);
+        await SiegeAnimationSmoke.VerifyProjectileFlight(host, capturePath);
         await Capture(host, capturePath);
         bool headless = DisplayServer.GetName() == "headless";
         var window = host.GetWindow();
@@ -250,14 +266,16 @@ internal static class SettlementSmoke
         host.Map.SetPerspective(true);
         session.ClearSelection();
         session.CenterOn(center);
-        GD.Print($"TERMCITY_SETTLEMENT_RENDER_OK walls={view.WallsDrawn} goblins={view.GoblinsDrawn} " +
+        GD.Print($"TERMCITY_SETTLEMENT_RENDER_OK walls={view.WallsDrawn} goblins={view.EnemiesDrawn} " +
             $"initial-builds={geometryBuilds} combat-city-rebuilds=0 nodes={view.SceneObjectCount}");
         await DebugSiegeSmoke.Run(host, capturePath);
         await SiegeAnimationSmoke.VerifyWallDamage(host, capturePath);
         await VerifyDevelopmentModels(host, capturePath);
+        await GarrisonSmoke.Run(host, capturePath);
         await WallUpgradeSmoke.Run(host, capturePath);
         await SelectionHighlightSmoke.Run(host, capturePath);
         await ConstructionKeyboardSmoke.Run(host, capturePath);
+        await SettlementGrowthSmoke.Run(host, capturePath);
     }
 
     private static async Task VerifyDevelopmentModels(Main host, string? capturePath)
@@ -280,16 +298,27 @@ internal static class SettlementSmoke
         for (int n = 0; n < names.Length; n++)
         {
             var type = map.Content.Buildings.Get(names[n]);
-            var p = n == names.Length - 1 ? new Pos(bounds.X + 1, bounds.Y + 8) :
-                new Pos(bounds.X + 4 + n % 3 * 5, bounds.Y + 4 + n / 3 * 4);
+            var p = bounds.Cells().Where(p => type.FootprintAt(p.X, p.Y).Cells().All(cell =>
+                    bounds.Contains(cell) && !WorldScale.FortificationReserved(bounds, cell) &&
+                    map.BuildingAt(cell.X, cell.Y) is null))
+                .OrderBy(p => Math.Abs(p.X - bounds.X - bounds.Width / 2) +
+                    Math.Abs(p.Y - bounds.Y - bounds.Height / 2)).First();
             var area = type.FootprintAt(p.X, p.Y);
             Require(area.Cells().All(cell => map.BuildingAt(cell.X, cell.Y) is null),
                 "The development model fixture must not overwrite civic buildings.");
             map.SetBuildingFootprint(type, area);
-            float height = type.Zone == ZoneType.Residential ? HouseAppearance.At(type, p.X, p.Y).Height : 0.4f;
-            // The courtyard's back wing, unlike its open center, has a roof to pick.
-            float z = type.Name == "Courtyard House" ? p.Y + 0.44f : p.Y + area.Height / 2f;
-            float x = p.X + area.Width / 2f - (type.Name == "Wall House" ? 0.35f : 0);
+            float height = 0.4f, offsetX = 0, offsetZ = -0.06f;
+            if (type.Zone == ZoneType.Residential)
+            {
+                var block = HouseAppearance.At(type, p.X, p.Y)
+                    .BlocksOnPlot(type.ModelWidth, type.ModelDepth, type.Level)[0];
+                height = block.Height + block.RoofRise * 0.5f;
+                offsetX = block.X;
+                offsetZ = block.Z;
+            }
+            float z = p.Y + area.Height / 2f + offsetZ * WorldScale.ArchitectureScale;
+            float x = p.X + area.Width / 2f + offsetX * WorldScale.ArchitectureScale;
+            height *= WorldScale.ArchitectureScale;
             models.Add((p, new(x, TerrainSprite.Elevation(map, p.X, p.Y) + height, z)));
         }
         game.Touch();
@@ -310,14 +339,18 @@ internal static class SettlementSmoke
             int checkedModels = 0;
             foreach (var model in models)
             {
+                var area = map.BuildingFootprintAt(model.Anchor.X, model.Anchor.Y);
+                session.CenterOn(new(area.X + area.Width / 2, area.Y + area.Height / 2));
+                await Frames(host);
                 var screen = view.ScreenPoint(model.Roof);
                 if (!new Rect2(Vector2.Zero, host.Map.Size).HasPoint(screen)) continue;
                 Require(host.Map.TryPickBuilding(screen, out var picked),
                     $"Development model {map.BuildingAt(model.Anchor.X, model.Anchor.Y)!.Name} must have a mesh hit at {angle} degrees, zoom {zoom}.");
                 if (picked != model.Anchor)
                 {
-                    Require(game.Settlement.Walls.Any(wall => wall.Cell == picked),
-                        "A model obscured by a wall must pick that frontmost wall, not nearby land or another building.");
+                    Require(game.Settlement.Walls.Any(wall => wall.Cell == picked) ||
+                        map.BuildingAt(picked.X, picked.Y) is not null,
+                        "An obscured model must pick its actual frontmost structure, not nearby land.");
                     continue;
                 }
                 pickedModels.Add(model.Anchor);
@@ -379,7 +412,7 @@ internal static class SettlementSmoke
         if (image.SavePng(path) != Error.Ok) throw new IOException("Settlement capture failed: " + path);
     }
 
-    private static void Require(bool condition, string message)
+    internal static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
     }

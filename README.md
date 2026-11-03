@@ -1,10 +1,17 @@
 # TermCity
 
 A terminal-styled medieval settlement and siege game built with **Godot .NET and C# on .NET 10**.
-Draw a motte-and-bailey enclosure, welcome settlers and defend its walls against growing goblin raids.
+Draw a motte-and-bailey enclosure, welcome settlers and defend its walls against goblins, Orcs and trolls.
 The earlier city-building sandbox and populated scenarios remain available.
 It runs in a desktop window on Windows, macOS, or Linux.
 Godot is the game's only frontend; no interactive console is required.
+The default 3D view keeps its block-built pixel style with directional shadows,
+recessed house openings, deeper eaves, log-built wooden defenses and projecting
+stone-wall details.
+New random maps use three-times taller block terraces (up to about 18 feet).
+Their elevation profile is saved with the map; older saves and populated scenarios
+retain their original heights. The shared lighting, foliage, rock, bridge and
+building-detail improvements apply across maps without replacing the terminal UI.
 
 For architecture, extension points, builds, exports, and tests, see the
 [developer guide](docs/DEVELOPMENT.md).
@@ -46,11 +53,11 @@ Game options follow Godot's `--` separator:
 | `--seed <n>` | Reproducible signed 32-bit seed; random by default |
 | `--size <size>` | `small`, `medium`, `large`, `SF`, `LA`, `SD`, `CHI`, `STL`, or `WIDTHxHEIGHT`; default `small` |
 | `--load [file]` | Load a city; without a path, use the quick-save |
-| `--fps <n>` | Render frame cap, 5-60; default 30 |
+| `--fps <n>` | Render frame cap, 5-60; default 60 |
 | `--reduced-motion` | Disable all terminal effects (sprites, shakes, ambient life) |
 | `--dump-map` | Print the generated/loaded map as text and exit; works headlessly |
-| `--debug-settlement` | Debug build only: pre-drawn bailey, focused camera and natural immigration |
-| `--debug-siege` | Debug build only: 24x24 bailey with 100 residents and the first goblin attack |
+| `--debug-settlement` | Debug build only: 64x64 pre-drawn bailey, focused camera and natural immigration |
+| `--debug-siege` | Debug build only: 64x64 bailey with 100 residents, a Guard Post, Archer Barracks and the first goblin attack |
 | `-h`, `--help` | Print game options and exit; works headlessly |
 
 ```bash
@@ -71,16 +78,69 @@ Choose **Motte and Bailey enclosure**, click a first corner, then move the mouse
 size a closed rectangular bailey. A live wall preview follows the pointer; click again
 or press **Enter** to found it. **Esc** or right-click cancels without spending gold.
 Middle-drag, zoom, camera rotation and tilt remain available during placement.
-Choose clear, dry ground; invalid terrain, occupied land and unaffordable enclosures
+Choose clear land with dry, gate-reachable starter sites; water may cross the perimeter.
+Invalid terrain, occupied land and unaffordable enclosures
 are rejected as one action, not partially built.
 
 The founding cost includes the lord's hall, well, woodlot, walls, corner towers and
-additional arrow towers at 15-cell intervals. A gate is generated on the viewer-facing
+additional arrow towers at roughly 15-cell intervals, shifted clear of the gateway
+while retaining complete arrow coverage. A gate is generated on the viewer-facing
 wall. Homes, shops and workshops then grow naturally **inside the walls** as families
 arrive and business demand grows. **No roads or manual zoning are required.**
 Repeated journeys wear connected paths between buildings within the bailey, including
 neighboring homes. These paths stay inside the walls rather than leading to exterior roads.
 Press **P** to resume.
+
+### Extending the walls
+
+After founding, open **Garrison** and choose **Extend walls**. Click a start,
+move to preview a straight run snapped to **0, 30, 45, 60 or 90 degrees**
+(repeated in every quadrant), then click or press **Enter** to buy
+the whole run. The next run starts at its endpoint. **Esc** finishes; paused undo
+restores an entire purchase. Existing wall spans are reused rather than charged twice.
+Nearby tower centers retain snap priority so connected runs meet them exactly.
+Green/red previews show the actual wall footprint; a gold outline marks newly
+enclosed territory, which still needs gate access before it can attract settlers.
+
+Extensions can enlarge the perimeter, divide courtyards or stand outside the town.
+New land accepts arrivals only when its enclosure is closed, its walls connect to
+the original bailey and people can reach it through gates. A road alone does not
+connect an outpost. Unfinished extensions do not stop the original town growing.
+Losing enclosure/access blocks new arrivals locally, without evicting households
+or stopping births; normal combat casualties still apply to genuinely exposed homes.
+Gate openings remain walkable even though their boundary cells are not building
+plots. Inspect empty land inside an extension for its growth status: missing
+enclosure, blocked gate/land access, insufficient plot space, or eligible land
+waiting for demand and site selection. Growth reports count access-checked sites;
+an eligible location is not a promise that the next family will choose it.
+
+Choose **Insert gate** for explicit entrances and road crossings. Gates align to
+nearby walls/roads; **[**, **]** or **R** rotates the preview. Gate widths account for
+the road and crossing angle. **Remove wall section** previews and confirms removal;
+old perimeter walls may remain as internal partitions. New runs use the purchased
+material tier, including a paid upgrade target. Gate cutting/removal waits until an
+in-progress material upgrade finishes so shared health and upgrade ownership stay safe.
+Corners and non-collinear junctions automatically add arrow towers, previewed as
+part of the run. Nearby pointers snap to their centers. Tower clearance is validated
+before the whole purchase; a blocked junction is rejected rather than silently omitted.
+Drawn spans use the same wall/merlon cadence as the founded perimeter. Walls can cross water:
+their bottom follows a shallow arch, with an iron grate extending below the surface.
+New towers require an entirely dry footprint: founding towers and automatic
+corner/junction towers are omitted where they would overlap water, leaving the
+ordinary wall crossing intact.
+Grated water passages do not become bridges or walkable ground. Gates still need dry
+land, and starter buildings and housing need reachable dry plots. Keep clear space
+for foundations, upgrades and repairs; road crossings still require explicit gates.
+Once residents live in the settlement, their daily path work can build short
+timber footbridges between separated banks inside the same enclosure. These free
+pedestrian crossings span at most eight water cells and visibly build over four
+game days. They become usable only when complete; cliffs, walls, iron grates and
+open/disconnected enclosures cannot be bypassed. Inspect the crossing for progress
+or a paused-construction explanation. Progress and completed bridges survive saves.
+
+Wall-network settlements use a new save schema. Older rectangular-settlement saves
+are rejected with an explanation and are not migrated or rewritten. Start a new bailey
+for this feature; saves without settlements retain their normal loading rules.
 
 At the permanent **Hamlet milestone (100 residents)**, goblin waves begin approaching
 and attacking individual wall components. Towers fire arrows automatically in range.
@@ -91,13 +151,73 @@ Each new wave sounds an original synthesized battle horn and switches play to
 **1x (Slow)** so the attack does not rush past. The horn respects SOUND mute/volume;
 you can change speed again after the wave begins.
 The opening wave brings **24 goblins with 96 health each**; later waves grow in number
-and durability, up to 120 attackers. Older siege saves upgrade goblin health while
-preserving the percentage of damage already taken.
-Goblins become larger and stronger at later milestones. Damaged walls have visible
+and durability, up to 120 attackers.
+Goblins become stronger and better equipped at later milestones, not physically taller. Damaged walls have visible
 health bars; right-click a wall or tower to inspect it and open Garrison.
 
 Garrison offers wall-top **oil cauldrons**, **rocks**, **ballistae** and **trebuchets**.
-It uses the same construction catalog as other services: select a component to see
+At **100 souls**, **Archer Barracks (900 gold, 12 weekly upkeep)** and
+**Guard Posts (650 gold, 10 weekly upkeep)** unlock. Each recruits up to four defenders.
+Archers use tower ladders to reach roomy wall walkways and elevated firing
+positions. Guards spread between inside gate and corner posts, keeping access clear
+and waiting for a breach rather than patrolling outside. Archers and guards reorient
+toward their targets; movement is faster without teleporting.
+Automatic archers keep pursuing a threat when it is out of bow range or screened
+from their current post. They interrupt stale patrol routes and move to gain a
+clear shot instead of treating a blocked shot as an idle patrol.
+Automatic archers divide among live threats, favoring enemies with fewer archers
+already assigned. Balanced assignments stay stable; as enemies die, spare archers
+redistribute and eventually converge on the final survivors. Explicit attack orders
+can still concentrate fire on a chosen enemy.
+Soldiers guard the gate and engage approaching enemies. Recruitment takes two siege seconds
+per recruit; casualties replenish after an eighteen-second cooldown through upkeep.
+Keep the gate approach clear. Unfunded or insolvent garrisons stop recruiting.
+Garrison travel is 25% faster and ladder ascent is 60% faster than before.
+Climbers face the rungs and use the exposed side of ladders in both directions,
+stepping onto the ladder before descending rather than sinking through the tower.
+Wider catwalks run along the inside of connected enclosures, regardless of wall
+drawing direction, and keep bodies clear of parapets. Gates retain their upper
+walkways and ground passages but never receive ladders. Tower ladder openings have clear
+headroom. Ground-access ladders are confined to the enclosed side; short side
+ladders connect incoming wall walkways to the higher tower deck without extending
+to exterior ground. Archers brace the bow with an extended arm, draw the string to
+their cheek with a bent rear arm, release at the committed shot time, then follow
+through and nock another arrow. Bow limbs flex and the string stays taut; climbing
+archers stow the bow to free their hands. Sword strikes retain their windup, strike and recovery.
+All arrows have visible fletching and slimmer shafts. Slain troops and enemies
+briefly collapse according to arrow, blade, crushing, oil or fall deaths, preserving
+their species/equipment appearance. Death effects are noninteractive visual traces:
+damage resolves at projectile or weapon contact, pause freezes them, and reduced motion uses a
+static fallen pose.
+
+Click a defender to select it; **Shift-click** adds defenders. With troops selected,
+right-click reachable ground to move, or a visible enemy to attack. Units return to
+automatic fighting on arrival or as soon as their assigned enemy dies. **Esc** clears
+troop selection and restores ordinary map context clicks. The settlement supports
+up to 64 defenders; rosters and orders survive saving and paused undo.
+
+From **250 souls**, larger **Orcs** join goblin assaults. The **first** Orc attack
+highlights its threatened wall side in gold on the map/minimap; later Orc attacks
+do not repeat that forecast. Position garrisons and move defenders before the assault:
+troops must physically reach the threatened sector, and distant garrisons cannot
+protect it instantly. Existing goblin health and attack damage are unchanged.
+
+At permanent **1,000 souls**, scouts warn of **tree, stone and mud trolls** before
+their first assault. Individuals stand **8-11 feet** tall: tree trolls are leaner and
+more mobile, stone trolls broader, slower and tougher, and mud trolls squat and heavy.
+They share the existing 120-attacker limit and must batter an ordinary breach;
+they cannot climb or step over intact walls.
+
+World proportions use the unchanged **4.5-foot goblin** as their reference. Orcs
+average **6 feet**; homes, usable doorways, defenders, repair crews and mature trees
+follow that scale. Timber walls provide a **20-foot barrier**, stone walls **26 feet**
+and reinforced walls **30 feet**, with taller towers. Realistic buildings occupy
+larger plots; reserve clear, dry space inside the enclosure and a two-cell structural
+corridor beyond its edges. Medium or larger maps provide more room for development.
+This layout targets new settlements; pre-scale saves and populated legacy scenarios
+are not migrated or retrofitted.
+
+Garrison uses the same construction catalog as other services: select a component to see
 its rendered model and statistics, then choose **Add** to place it. Repairs and wall
 upgrades use the same catalog and show their current gold cost.
 Every type has an underlined keyboard shortcut. Press its letter to select it, then
@@ -107,10 +227,34 @@ When the menu was opened by right-clicking a map spot, fitting buildings and mou
 defenses are placed there immediately. If they do not fit, an unpaid placement preview
 opens at that spot with an explanation, ready to move or rotate. Sidebar catalogs
 still start ordinary placement previews.
-The menu shows each weapon's unlock population, cost, damage, splash, range and reload.
-Cauldrons cover nearby groups, rocks hit harder at short range, ballistae reach farther,
-and trebuchets have the greatest damage and range, but cannot hit inside their minimum
-range. Mounted weapons require an intact, unoccupied wall top. Gold pays for repairs
+The menu shows each weapon's unlock population, cost, damage, footprint, maximum reach and reload.
+Oil deals **180** once in a **1.5 x 1.5-cell** exterior station strip, reloading in
+**10 siege seconds**. Rocks deal **140** in a **1 x 1-cell** drop area every **7 seconds**.
+Both strike at first ground contact, not when the cauldron tips; leaving the fixed
+footprint avoids the hit. Multiple pictured pots/stones share one attack.
+Ballista bolts deal **240** to the first enemy struck every **6 seconds**.
+Trebuchets reload in **14 seconds**, dealing **360** at the landing center, linearly
+tapering to **90** at a **2.5-cell** edge. Their fixed arcing shots can miss or hit cover.
+Tower arrows deal **24 / 2 seconds**, recruited archers **40 / 1.5 seconds**, and
+guards **60 / 1.2 seconds**, with melee revalidated when the blade connects.
+Ranges, minimum ranges, costs, unlocks and fighter movement/health are unchanged.
+These are role-based game abstractions, not historical lethality measurements;
+defensive trebuchets are a deliberate fantasy bombardment role.
+
+Oil and stone towers retain their main-face pair and add an outer-gap station on
+each available adjacent face, without duplicating occupied gaps or blocking ladder
+access. These stations share the existing weapon reload and damage, not extra
+simultaneous attacks.
+
+Arrows and bolts do not home or pierce; clear firing paths and supported elevated
+archer posts are required. Drop guides show exterior station footprints, while
+other weapon rings indicate **maximum reach**, not guaranteed unobstructed coverage.
+Actual projectiles remain visible; selecting a weapon or fighter does not draw
+a target-connecting aim line.
+No friendly fire, lingering oil damage, slow, ammunition or new resistances are added.
+Released attacks survive source removal and are saved with their contact/applied
+state so reload/undo cannot cancel or duplicate a hit. Debug wave reset clears them.
+Mounted weapons require an intact, unoccupied wall top. Gold pays for repairs
 and upgrades from wood to **stone (250 souls)**, then **iron-reinforced stone (1,000)**.
 Unlocks persist after population falls. Walls, weapons, attackers and combat clocks
 are saved; paused undo restores an entire founding or defense purchase.
@@ -128,14 +272,18 @@ add iron reinforcement on the next upgrade. Completed sections gain the new stre
 without erasing damage; unfinished sections keep their old strength. Work pauses with
 the game and survives saving and undo.
 
-Between waves, civilians gradually repair the walls without spending gold. Crews
+At all times, including combat, civilians repair the walls without spending gold. Crews
 finish breaches first, then work through the most damaged sections until everything
 is restored. More residents, occupied industry and active service buildings speed
-the work. Doorway-scale civilians first throw buckets of water onto burning sections.
+the work. Repair and masonry crews and their effects are hidden while any enemy
+remains on the map. After battle, doorway-scale civilians first throw buckets of water onto burning sections.
 Once the flames are out, they hammer on small scaffolds while a second worker
-carries replacement boards; repairs pause during
-attacks or a paused game. Repair progress survives save/load; paid instant repairs
-remain available in Garrison.
+carries replacement boards. Repairs pause only with the game or without residents.
+Continuous labor is substantially stronger than before so ordinary early goblin waves
+are recoverable where the original towers provide coverage; exposed river sectors
+also need archers. Urgent damage can redirect repair work during
+battle. Repair progress survives save/load; paid instant repairs remain available
+in Garrison during combat.
 
 Damaged walls, gates and towers progressively lose chunks and crenellations, leaving
 ragged tops and rubble. Below **33% health**, coarse animated flames mark the damage,
@@ -146,8 +294,9 @@ Inside an enclosure, residents and trades choose individual sites on shared land
 there are no pre-zoned housing, industry or commercial districts. Markets and supply
 shops favor gate traffic and nearby homes, while blacksmiths, woodsmiths and armories
 occupy working sites around the edges. Prosperous households spread into broad
-courtyard houses. Crowded, lower-value neighborhoods grow stacked wooden shanties
-and homes attached to inner wall faces, without replacing defenses or blocking the
+courtyard houses. Crowded, lower-value neighborhoods can add new stacked wooden
+shanties and homes attached to inner wall faces, without converting existing homes
+into shanty towers, replacing defenses or blocking the
 gate and repair alley. Existing households survive redevelopment; new residents
 still need normal immigration and supplies.
 
@@ -177,6 +326,11 @@ godot --path godot -- --seed 42 --debug-siege
 
 These Debug-only starts cannot be combined with each other, loaded cities, populated
 scenarios, map dumps or smoke modes.
+If the requested 64x64 settlement cannot fit the generated terrain, the map
+automatically regenerates with a new seed without shrinking the walls. The accepted
+seed is reported and saved. Debug Siege restarts also regenerate unsuitable maps
+while retaining the selected wall dimensions. Invalid dimensions or impossible
+preset settings still report an error rather than retrying forever.
 
 **Debug Siege map controls:** `--debug-siege` adds a terminal-framed strip at the map's
 top edge. Set a swarm size from **1 to 120**, then choose **START WAVE** (or press
@@ -184,10 +338,11 @@ Enter in the size field) to replace the current attackers with that exact count.
 **REMOVE GOBLINS** clears all attackers and projectiles and restarts the wave countdown.
 **REPAIR ALL** restores walls, gates, towers and mounted defenses for free; ordinary
 town buildings do not have siege hit points. **RESTART GAME** offers save/continue/cancel,
-then restores the same seed's fresh bailey, 100 residents and first wave.
+then restores the same seed's fresh bailey, 100 residents, Guard Post,
+Archer Barracks and first wave.
 The **Walls width x height** inputs choose the starting enclosure for that restart.
 Each dimension must be 12-160 cells and fit the map with exterior space; the exact
-rectangle must have affordable dry land and room for 100 residents. Invalid or
+rectangle must have affordable wall clearance and reachable dry room for 100 residents. Invalid or
 unplaceable sizes leave the current game untouched, never silently shrinking the walls.
 These controls are absent from ordinary gameplay and Release builds.
 
@@ -386,7 +541,9 @@ hill terrace levels. Coarse downstream motion remains visible with low effects a
 and close zoom, including while paused. Effects-off and reduced-motion settings still stop it.
 Rocks vary between boulders, slabs, standing stones, split pairs, scattered stones
 and layered outcrops. Trees and rocks stay clear of the visible curved road bed.
-The 3D map renders at native panel resolution with edge antialiasing; pixel textures remain nearest-filtered.
+The 3D map renders at twice native panel resolution per axis with 8x MSAA and smooth
+downsampling. Linear mipmapped anisotropic textures soften pixel steps while keeping
+the original block-built shapes and palettes. Terminal text and borders remain crisp.
 3D service range guides are circular screen-space overlays, unaffected by camera tilt or terminal-cell aspect.
 Grass and water use visible coarse, restrained-color blocks rather than smooth gradients,
 bright pixel flecks or thin wave lines. Tree canopies have clustered pixel-leaf textures and
@@ -692,16 +849,20 @@ Zoom levels are **0.25x, 0.5x, 1x, and 2x**. Coarse zoom samples 4x4 or 2x2 map-
 
 | Preset | Cells | Description |
 |---|---|---|
-| `small` | 160x96 | Default random map |
-| `medium` | 320x192 | Random map |
-| `large` | 640x384 | Random map |
+| `small` | 320x320 | Default square random map |
+| `medium` | 480x480 | Square random map |
+| `large` | 640x640 | Square random map |
 | `SF` | 640x384 | San Francisco: a walled peninsula on the strait |
 | `LA` | 640x384 | Los Angeles: a sprawling coastal bay town |
 | `SD` | 640x384 | San Diego: a harbour town on dry, burnable hills |
 | `CHI` | 640x384 | Chicago: a cold lakeside freight town |
 | `STL` | 640x384 | St. Louis: a flood-prone river town |
 
-Custom sizes range from 80x24 to 640x384. Named presets are case-insensitive.
+Custom sizes range from 80x24 to 640x640 and may still be rectangular.
+Named presets are case-insensitive. Handcrafted city scenarios retain their
+640x384 layouts. Existing saves and same-size new-city/restart actions retain
+their stored dimensions; only fresh default maps and named random presets change.
+The 64x64 debug settlement occupies 4% of Small, about 1.8% of Medium and 1% of Large.
 Random maps include hills, forests, water systems, existing bridges and highways/interchanges. Highways run
 straight out of each interchange, then at any angle (not just right angles) between them, and bridges stay straight.
 Every road type (track, road, avenue, highway and any added later) is drawn as smooth curves that round every bend and

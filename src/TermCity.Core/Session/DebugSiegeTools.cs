@@ -39,12 +39,15 @@ public sealed partial class GameSession
         {
             CityGame fresh;
             Pos target;
+            int regeneratedMaps;
             try
             {
-                fresh = CityGame.New(Game.Config, Game.Map.Content,
-                    startingDate: StartAtCurrentWeek ? DateTime.Now : null);
-                target = SettlementDebugSetup.Apply(fresh, siege: true,
-                    gateSide: Game.Settlement?.GateSide ?? BaileyGateSide.Bottom, wallWidth: wallWidth, wallHeight: wallHeight);
+                var preset = SettlementDebugSetup.Create(Game.Config, siege: true,
+                    gateSide: Game.Settlement?.GateSide ?? BaileyGateSide.Bottom, wallWidth: wallWidth, wallHeight: wallHeight,
+                    content: Game.Map.Content, startingDate: StartAtCurrentWeek ? DateTime.Now : null);
+                fresh = preset.Game;
+                target = preset.Target;
+                regeneratedMaps = preset.RegeneratedMaps;
             }
             catch (InvalidOperationException error)
             {
@@ -59,7 +62,9 @@ public sealed partial class GameSession
             HasCursor = false;
             GuideVisible = false;
             SetMessage($"Debug siege restarted: {fresh.Settlement!.Bounds.Width}x{fresh.Settlement.Bounds.Height} bailey, " +
-                "100 residents and the first goblin wave.", MessageKind.Success);
+                "100 residents and the first goblin wave." +
+                (regeneratedMaps > 0 ? $" Regenerated {regeneratedMaps} map(s); seed {fresh.Config.Seed}." : ""),
+                MessageKind.Success);
             SiegeWaveStarted?.Invoke();
         });
     }

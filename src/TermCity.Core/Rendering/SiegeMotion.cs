@@ -3,11 +3,11 @@ using TermCity.Core.Simulation;
 
 namespace TermCity.Core.Rendering;
 
-public readonly record struct GoblinPose(Vector2 Position, Vector2 Forward, float Stride, float Bob, float Sway, float Attack);
+public readonly record struct SiegeEnemyPose(Vector2 Position, Vector2 Forward, float Stride, float Bob, float Sway, float Attack);
 
 public static class SiegeMotion
 {
-    public static GoblinPose Goblin(SettlementState siege, Goblin goblin)
+    public static SiegeEnemyPose Enemy(SettlementState siege, SiegeEnemy goblin)
     {
         float fraction = (float)siege.InterpolationFraction;
         var current = new Vector2((float)goblin.X, (float)goblin.Y);
@@ -15,8 +15,11 @@ public static class SiegeMotion
         var position = Vector2.Lerp(previous, current, fraction);
         var movement = current - previous;
         bool walking = movement.LengthSquared() > 0.000001f;
-        var wall = siege.AttackableWall(goblin)?.Cell ?? goblin.Route[^1];
-        var towardWall = new Vector2(wall.X + 0.5f, wall.Y + 0.5f) - position;
+        var attackable = siege.AttackableWall(goblin);
+        var wall = attackable?.Cell ?? goblin.Route[^1];
+        var defender = siege.EngagedDefender(goblin);
+        var towardWall = (defender is not null ? new Vector2((float)defender.X, (float)defender.Y) :
+            new Vector2(wall.X + 0.5f, wall.Y + 0.5f)) - position;
         var forward = walking ? movement : towardWall;
         if (forward.LengthSquared() < 0.000001f)
             forward = new Vector2(siege.Bounds.X + siege.Bounds.Width / 2f, siege.Bounds.Y + siege.Bounds.Height / 2f) - position;
@@ -24,8 +27,10 @@ public static class SiegeMotion
         double distance = goblin.PreviousWalkDistance +
             (goblin.WalkDistance - goblin.PreviousWalkDistance) * fraction;
         float stride = walking ? (float)Math.Sin(distance * Math.Tau / 0.6 + goblin.Id * 0.7) : 0;
-        float attack = !walking && towardWall.LengthSquared() <= 1.05f * 1.05f
-            ? AttackSwing(1 - goblin.AttackCooldown + siege.InterpolationFraction * SettlementState.StepSeconds) : 0;
+        float attack = !walking && (defender is null ? attackable is not null :
+            towardWall.LengthSquared() <= Math.Pow(SettlementState.MeleeDistance(goblin), 2))
+            ? AttackSwing((goblin.Definition.AttackIntervalSeconds - goblin.AttackCooldown +
+                siege.InterpolationFraction * SettlementState.StepSeconds) / goblin.Definition.AttackIntervalSeconds) : 0;
         return new(position, forward, stride, Math.Abs(stride) * 0.065f, stride * 0.045f, attack);
     }
 
@@ -41,4 +46,10 @@ public static class SiegeMotion
 
     public static float ProjectileProgress(SettlementState siege, SiegeProjectile projectile) =>
         (float)Math.Clamp(projectile.Progress + siege.InterpolationFraction * SettlementState.StepSeconds / projectile.FlightSeconds, 0, 1);
+
+    public static double ProjectileElapsed(SettlementState siege, SiegeProjectile projectile) =>
+        projectile.Elapsed + siege.InterpolationFraction * SettlementState.StepSeconds;
+
+    public static float ProjectileFlightProgress(SettlementState siege, SiegeProjectile projectile) =>
+        (float)Math.Clamp((ProjectileElapsed(siege, projectile) - projectile.Windup) / projectile.TravelSeconds, 0, 1);
 }

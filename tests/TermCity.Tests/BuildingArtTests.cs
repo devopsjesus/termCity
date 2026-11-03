@@ -48,7 +48,7 @@ public class BuildingArtTests
     {
         var game = TestCity.Flat();
         var type = game.Map.Content.Buildings.Get("Parish Church");
-        var footprint = new CellRect(10, 17, 2, 2);
+        var footprint = type.FootprintAt(10, 5);
         game.Map.SetBuildingFootprint(type, footprint);
         var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
         foreach (var p in footprint.Cells())
@@ -56,7 +56,7 @@ public class BuildingArtTests
             Assert.Equal(type.FootprintGlyphAt(footprint, p.X, p.Y), CellRenderer.Render(loaded, p.X, p.Y).Glyph);
             Assert.Equal(type.Glyphs[0], CellRenderer.Render(loaded, p.X, p.Y, buildingArt: false).Glyph);
         }
-        Assert.Equal(type.Glyphs[0], new BlockSampler(loaded).Sample(11, 18, 2).Glyph);
+        Assert.Equal(type.Glyphs[0], new BlockSampler(loaded).Sample(11, 6, 2).Glyph);
     }
 
     [Fact(Skip = "Legacy ASCII demolition ghosts are not a dedicated-map rendering contract.")]

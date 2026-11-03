@@ -8,24 +8,21 @@ namespace TermCity.Tests;
 
 public class SettlementFootpathTests
 {
-    private static readonly CellRect Bounds = new(10, 25, 40, 32);
+    private static readonly CellRect Bounds = new(10, 25, 64, 64);
 
     private static CityGame Founded()
     {
         var game = TestCity.Flat(config: new GameConfig
         {
-            MapWidth = 80, MapHeight = 72, StartingMoney = 100_000,
+            MapWidth = 100, MapHeight = 100, StartingMoney = 100_000,
         });
         TravelRoutes.FootpathJourneys(game.Map).ToArray();
         Assert.True(game.FoundSettlement(Bounds).Success);
-        foreach (var p in new Pos[] { new(15, 30), new(20, 30), new(26, 31) })
+        foreach (var p in new Pos[] { new(15, 30), new(22, 30), new(29, 31) })
         {
-            game.Map.SetZone(p.X, p.Y, ZoneType.Residential);
-            game.Map.SetBuildingFootprint(game.Map.Content.Buildings.Get("Cottage"), CellRect.Single(p));
-            game.Map.SetHousehold(p.X, p.Y, new(2, 2, 0));
+            TestCity.Stamp(game, "Cottage", p, new(2, 2, 0));
         }
-        game.Map.SetZone(24, 48, ZoneType.Industrial);
-        game.Map.SetBuildingFootprint(game.Map.Content.Buildings.Get("Workshop"), new(24, 48, 1, 1));
+        TestCity.Stamp(game, "Workshop", new(24, 70));
         game.Touch();
         return game;
     }
@@ -99,8 +96,7 @@ public class SettlementFootpathTests
     public void ExteriorBuildingsCannotPullBaileyPathsThroughTheWalls()
     {
         var game = Founded();
-        game.Map.SetZone(6, 30, ZoneType.Residential);
-        game.Map.SetBuildingFootprint(game.Map.Content.Buildings.Get("Cottage"), new(6, 30, 1, 1));
+        TestCity.Stamp(game, "Cottage", new(0, 30));
         game.Touch();
         var journeys = TravelRoutes.FootpathJourneys(game.Map).ToArray();
         Assert.NotEmpty(journeys);

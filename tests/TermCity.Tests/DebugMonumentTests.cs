@@ -29,24 +29,24 @@ public class DebugMonumentTests
         Assert.True(type.DebugOnly);
         Assert.True(type.IsMonument);
         Assert.Equal(100_000, type.MinPopulation);
-        Assert.Equal((8, 6), (type.Width, type.Height));
+        Assert.Equal((40, 30), (type.Width, type.Height));
         Assert.Equal(CityGame.DebugToolsAvailable, CityProgression.IsUnlocked(game, type));
         Assert.Equal(CityGame.DebugToolsAvailable, game.CanPlaceBuilding(type, 30, 40));
         var result = game.PlaceBuilding(type, new(30, 40, 1, 1));
         Assert.Equal(CityGame.DebugToolsAvailable, result.Success);
         if (!CityGame.DebugToolsAvailable)
         {
-            game.Map.SetBuildingFootprint(type, new(30, 40, 8, 6));
+            game.Map.SetBuildingFootprint(type, type.FootprintAt(30, 40));
             Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(SaveGameStore.Serialize(game)));
             return;
         }
         Assert.Equal(50_000, game.Money);
-        Assert.Equal(new CellRect(30, 40, 8, 6), game.Map.BuildingFootprintAt(37, 45));
+        Assert.Equal(new CellRect(30, 40, 40, 30), game.Map.BuildingFootprintAt(69, 69));
         Assert.Single(game.Map.BuildingFootprints);
         Assert.Empty(game.Map.ServiceCells);
         var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
-        Assert.Equal(type.Name, loaded.Map.BuildingAt(37, 45)!.Name);
-        Assert.True(loaded.Demolish(new CellRect(37, 45, 1, 1)).Success);
+        Assert.Equal(type.Name, loaded.Map.BuildingAt(69, 69)!.Name);
+        Assert.True(loaded.Demolish(new CellRect(69, 69, 1, 1)).Success);
         Assert.Empty(loaded.Map.BuildingFootprints);
     }
 

@@ -123,10 +123,11 @@ public sealed partial class CityGame
     {
         config = config with { StartingYear = config.StartingYear ?? DateTime.Now.Year - 800 };
         if (config.Scenario != CityScenario.Random)
-            config = config with { MapWidth = MapSize.MaxWidth, MapHeight = MapSize.MaxHeight };
-        content ??= new GameContent();
+            config = config with { MapWidth = MapSize.ScenarioWidth, MapHeight = MapSize.ScenarioHeight };
+        content ??= GameContent.ForScenario(config.Scenario);
         var map = config.Scenario != CityScenario.Random ? CityScenarioMap.Generate(config, content)
             : MapGenerator.Generate(config.MapWidth, config.MapHeight, config.Seed, content);
+        if (config.Scenario == CityScenario.Random) map.SetElevationProfile(TerrainElevationProfile.Triple);
         RoadSeparation.Apply(map);
         var names = GameRandom.ForStage(config.Seed, "city-name");
         string[] prefixes = ["Oak", "Cedar", "Maple", "Willow", "Pine", "Silver", "Clear", "River"];
@@ -730,6 +731,8 @@ public sealed partial class CityGame
         {
             byte id = Map.BuildingLayer[i];
             if (id != 0 && Map.IsBuildingAnchor(i) &&
+                (Settlement is null || Map.BuildingFootprintAt(i % Map.Width, i / Map.Width).Cells()
+                    .All(p => Settlement.AcceptsArrivals(this, p))) &&
                 Map.Content.Buildings[id].Capacity - Map.HouseholdLayer[i].Total >= 3 && CityAnalysis.Operating(this, i))
             {
                 vacancies.Add(i);
@@ -843,7 +846,8 @@ public sealed partial class CityGame
 
                 if (!TryPlot(p, out var footprint)) continue;
                 // Roads accelerate settlement; a remote plot remains a valid place to live.
-                if (network.AccessRank(Map.Index(p.X, p.Y)) == 0 && !Rng.Chance(0.35)) continue;
+                if (!footprint.Cells().Any(cell => network.AccessRank(Map.Index(cell.X, cell.Y)) > 0) &&
+                    !Rng.Chance(0.35)) continue;
                 Map.SetBuildingFootprint(building, footprint);
                 if (zone == ZoneType.Residential)
                 {
@@ -862,8 +866,8 @@ public sealed partial class CityGame
         bool TryPlot(Pos p, out CellRect footprint)
         {
             int variation = CellHash.Pick(p.X + 17, p.Y + 29, 100);
-            int width = variation >= 88 ? 2 : 1;
-            int height = variation is >= 80 and < 88 or >= 96 ? 2 : 1;
+            int width = (variation >= 88 ? 2 : 1) * building.ModelScale;
+            int height = (variation is >= 80 and < 88 or >= 96 ? 2 : 1) * building.ModelScale;
             footprint = new(p.X, p.Y, Math.Max(building.Width, width), Math.Max(building.Height, height));
             if (Available(footprint)) return true;
             footprint = new(p.X, p.Y, building.Width, building.Height);
@@ -898,7 +902,8 @@ public sealed partial class CityGame
             .Average(p => Map.TerrainAt(p.X, p.Y).BuildCostModifier));
 
     public bool CanBuildOn(int x, int y) =>
-        Map.InBounds(x, y) && !IsSettlementWall(x, y) && Map.TerrainAt(x, y).Buildable && !Map.HasRoad(x, y) &&
+        Map.InBounds(x, y) && !IsSettlementWall(x, y) && Map.TerrainAt(x, y).Buildable &&
+        !Map.Footbridges.Any(bridge => bridge.Cells().Contains(new Pos(x, y))) && !Map.HasRoad(x, y) &&
         Map.ZoneAt(x, y) == ZoneType.None && Map.BuildingAt(x, y) is null &&
         !Network.RoadOverlapsCell(Map.Index(x, y));
 
@@ -906,7 +911,7 @@ public sealed partial class CityGame
     {
         var type = Map.Content.Buildings.ForZone(zone);
         if (type is null) return [];
-        if (Settlement is { } settlement) return SettlementSites(settlement.Bounds, type);
+        if (Settlement is { } settlement) return SettlementSites(settlement.GrowthBounds(this), type);
         var claimed = new HashSet<int>();
         var plots = new List<CellRect>();
         var size = MinimumGrowthSize(zone);
@@ -943,7 +948,7 @@ public sealed partial class CityGame
         var stroke = cells as IReadOnlyList<Pos> ?? cells.ToList();
         var plan = RoadRules.Plan(Map, stroke, type.Rank,
             (x, y) => (Map.TerrainAt(x, y).Buildable || Map.TerrainAt(x, y).Name == DefaultTerrains.WaterName) &&
-                !IsSettlementWall(x, y) && Map.ZoneAt(x, y) == ZoneType.None && Map.BuildingAt(x, y) is null);
+                !RoadWallBlocked(x, y) && Map.ZoneAt(x, y) == ZoneType.None && Map.BuildingAt(x, y) is null);
         if (plan.Count == 0) return plan;
         if (stroke.Count > 1)
         {
@@ -1016,7 +1021,9 @@ public sealed partial class CityGame
     public bool CanPlaceBuilding(BuildingType type, int x, int y, int rotation = 0)
     {
         var footprint = type.FootprintAt(x, y, rotation);
-        return CityProgression.IsUnlocked(this, type) && footprint.Cells().All(p => CanBuildOn(p.X, p.Y)) &&
+        return CityProgression.IsUnlocked(this, type) &&
+            (SettlementState.RosterCapacity(type) == 0 || Settlement?.GarrisonPlacementError(this, type, footprint) is null && Settlement is not null) &&
+            footprint.Cells().All(p => CanBuildOn(p.X, p.Y)) &&
             (!type.RequiresWaterNearby || footprint.Cells().Any(p => Map.NearWater(p.X, p.Y, 1)));
     }
 
@@ -1036,6 +1043,11 @@ public sealed partial class CityGame
         if (footprint.Cells().Any(p => !Map.InBounds(p)))
         {
             return $"Move the {type.Name} fully inside the map.";
+        }
+        if (SettlementState.RosterCapacity(type) > 0)
+        {
+            if (Settlement is null) return "Found a bailey before placing a garrison.";
+            if (Settlement.GarrisonPlacementError(this, type, footprint) is { } garrisonError) return garrisonError;
         }
         if (footprint.Cells().Any(p => !Map.TerrainAt(p.X, p.Y).Buildable))
         {

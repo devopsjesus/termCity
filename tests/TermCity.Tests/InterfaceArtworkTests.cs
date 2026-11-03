@@ -193,8 +193,8 @@ public class InterfaceArtworkTests
         var map = game.Map;
         foreach (int cell in map.RoadCells.ToArray()) map.SetRoad(cell % map.Width, cell / map.Width, false);
         var well = map.Content.Buildings.Get("Town Well");
-        map.SetBuildingFootprint(well, new(10, 10, 1, 1));
-        map.SetBuildingFootprint(well, new(16, 13, 1, 1));
+        TestCity.Stamp(game, well.Name, new(10, 10));
+        TestCity.Stamp(game, well.Name, new(22, 16));
         for (int day = 0; day < 24; day++) TravelRoutes.WearPaths(map);
         var original = FootpathLayout.Strokes(map);
         Assert.NotEmpty(original);

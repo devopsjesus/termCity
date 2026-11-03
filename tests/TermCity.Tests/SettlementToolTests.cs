@@ -20,9 +20,9 @@ public class SettlementToolTests
         Assert.Null(session.FixedPlacementError);
         Assert.True(session.ConfirmPreview().Success);
         Assert.Null(game.Settlement);
-        session.MoveFixedPlacement(new(57, 53));
-        Assert.Equal(new CellRect(30, 30, 28, 24), session.Preview!.Area);
-        Assert.All(session.Preview.Cells!, p => Assert.True(p.X is 30 or 57 || p.Y is 30 or 53));
+        session.MoveFixedPlacement(new(77, 69));
+        Assert.Equal(new CellRect(30, 30, 48, 40), session.Preview!.Area);
+        Assert.All(session.Preview.Cells!, p => Assert.True(p.X is 30 or 77 || p.Y is 30 or 69));
         Assert.Equal(money, game.Money);
         Assert.Null(session.FixedPlacementError);
         Assert.True(session.ConfirmPreview().Success, session.Message);
@@ -79,8 +79,8 @@ public class SettlementToolTests
         session.BeginSettlementPlacement();
         session.MoveFixedPlacement(new(30, 30));
         session.ConfirmPreview();
-        session.MoveCursor(27, 23);
-        Assert.Equal(new CellRect(30, 30, 28, 24), session.Preview!.Area);
+        session.MoveCursor(47, 39);
+        Assert.Equal(new CellRect(30, 30, 48, 40), session.Preview!.Area);
         Assert.True(session.ConfirmPreview().Success, session.Message);
         Assert.NotNull(game.Settlement);
         session.RequestUndo();

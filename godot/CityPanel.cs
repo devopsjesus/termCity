@@ -43,9 +43,16 @@ public partial class CityPanel : Control
     public override void _Ready()
     {
         CustomMinimumSize = new Vector2(CitySplit.MinimumSidebar - TerminalFrame.Inset * 2, 0);
-        _content = new VBoxContainer();
+        _content = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         _content.AddThemeConstantOverride("separation", 4);
-        AddChild(_content);
+        var scroll = new ScrollContainer
+        {
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
+        };
+        scroll.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        AddChild(scroll);
+        scroll.AddChild(_content);
         _top = new GridContainer { Columns = 1, SizeFlagsHorizontal = SizeFlags.ExpandFill };
         _top.AddThemeConstantOverride("h_separation", 4);
         _top.AddThemeConstantOverride("v_separation", 4);
@@ -365,7 +372,7 @@ public partial class CityPanel : Control
                 fixedHeight = _content.GetCombinedMinimumSize().Y - Minimap.CustomMinimumSize.Y;
                 if (fixedHeight + mapHeight <= Size.Y) break;
             }
-            Minimap.SetHeight(Math.Min(mapHeight, Math.Max(0, Size.Y - fixedHeight)));
+            Minimap.SetHeight(Math.Min(mapHeight, Math.Max(80, Size.Y - fixedHeight)));
             _content.Size = Size;
             _fittedHeight = Size.Y;
             _fittedWidth = Size.X;

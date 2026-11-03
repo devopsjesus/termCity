@@ -12,7 +12,7 @@ public partial class Main
 {
     internal const int IconPadding = 6;
     internal const int RailPadding = 4;
-    private enum WallAction { Upgrade, Repair }
+    private enum WallAction { Upgrade, Repair, Extend, Gate, Remove }
     private sealed record ConstructionChoice(string Name, Color Color, ChoiceHelp Help,
         BuildingType? Building = null, RoadType? Road = null, RoadTemplate? Template = null,
         WallDefenseKind? Defense = null, WallAction? WallAction = null);
@@ -39,8 +39,9 @@ public partial class Main
         _constructionContextGame = null;
     }
 
-    private RenderedModelPreview CreateModelPreview(string name, BuildingType? building = null,
-        RoadType? road = null, RoadTemplate? template = null, WallDefenseKind? defense = null)
+    internal RenderedModelPreview CreateModelPreview(string name, BuildingType? building = null,
+        RoadType? road = null, RoadTemplate? template = null, WallDefenseKind? defense = null,
+        bool wall = false, bool gate = false)
     {
         if (_modelPreviewCache is null)
         {
@@ -50,8 +51,9 @@ public partial class Main
         return new RenderedModelPreview
         {
             Name = name, Cache = _modelPreviewCache,
-            Subject = new ModelPreviewSubject(Session.Game.Map.Content, building, road, template, defense),
-            TooltipText = defense is { } weapon ? WallDefenses.Get(weapon).Name : building?.Name ?? template?.Name ?? road!.Name,
+            Subject = new ModelPreviewSubject(Session.Game.Map.Content, building, road, template, defense, wall, gate),
+            TooltipText = wall ? gate ? "Gate" : "Wall run" :
+                defense is { } weapon ? WallDefenses.Get(weapon).Name : building?.Name ?? template?.Name ?? road!.Name,
         };
     }
 
@@ -168,7 +170,19 @@ public partial class Main
                 .Append(new("Repair all walls", new Color("#88ee99"),
                     new("^", "Restore the health of damaged walls, towers and the gate.",
                         "Cost: based on missing health\n\nEffect: restore damaged components without changing their material"),
-                    Building: stone, WallAction: WallAction.Repair)).ToArray();
+                    Building: stone, WallAction: WallAction.Repair))
+                .Append(new("Extend walls", new Color("#b99568"),
+                    new("^", "Draw connected wall runs at any angle. Complete and connect an enclosure before settlers arrive.",
+                        "Cost: based on net new length and the purchased material\n\nPlacement: click start, then endpoint; each run is one purchase and undo"),
+                    Building: game.Map.Content.Buildings.Get("Motte and Bailey"), WallAction: WallAction.Extend))
+                .Append(new("Insert gate", new Color("#c4a478"),
+                    new("^", "Place an explicit gate across a road or replace a wall span with an entrance.",
+                        "Cost: based on gate width and material\n\nPlacement: [ / ] or R rotates; click or Enter confirms"),
+                    Building: game.Map.Content.Buildings.Get("Motte and Bailey"), WallAction: WallAction.Gate))
+                .Append(new("Remove wall section", new Color("#ff9977"),
+                    new("^", "Remove a wall section after reviewing the newly exposed area.",
+                        "Cost: no refund\n\nEffect: existing residents stay; exposed areas stop accepting new arrivals"),
+                    Building: game.Map.Content.Buildings.Get("Motte and Bailey"), WallAction: WallAction.Remove)).ToArray();
         }
         string title = monuments ? "Monuments (Debug)" : service is { } category ? CityReport.ServiceName(category) : "Roads";
         _constructionIndex = 0;
@@ -233,7 +247,7 @@ public partial class Main
             string? capacity = choice.Building is { Capacity: > 0 } building
                 ? ChoiceHelpContent.CapacityText(building) : null;
             var shortcut = _constructionPrompt.Shortcuts[i];
-            var button = new MnemonicButton { Text = shortcut.DisplayLabel(choice.Name), ClipText = true,
+            var button = new MnemonicButton { Text = shortcut.DisplayLabel(choice.Name), ClipText = true, ClipContents = true,
                 UnderlineIndex = shortcut.UnderlineIndex < 0 ? choice.Name.Length + 2 : shortcut.UnderlineIndex,
                 TooltipText = (capacity is null ? choice.Name : $"{choice.Name}\nCapacity: {capacity}") +
                     $"\nKey: {(shortcut.Shift ? "Shift+" : "")}{shortcut.Letter}",
@@ -249,9 +263,11 @@ public partial class Main
                 style.ContentMarginBottom = capacity is null ? 6 : 26;
                 button.AddThemeStyleboxOverride(state, style);
             }
-            var icon = CreateModelPreview("ConstructionTypePreview", choice.Building, choice.Road, choice.Template, choice.Defense);
-            icon.AnchorBottom = capacity is null ? 1 : 0;
-            icon.OffsetBottom = capacity is null ? 0 : 44;
+            var icon = CreateModelPreview("ConstructionTypePreview", choice.Building, choice.Road, choice.Template, choice.Defense,
+                choice.WallAction is WallAction.Extend or WallAction.Gate or WallAction.Remove, choice.WallAction == WallAction.Gate);
+            icon.OffsetLeft = RailPadding;
+            icon.OffsetTop = RailPadding;
+            icon.OffsetBottom = 44 - RailPadding;
             icon.OffsetRight = 40;
             button.AddChild(icon);
             if (locked)
@@ -374,7 +390,8 @@ public partial class Main
             previewSlot.RemoveChild(oldPreview);
             oldPreview.QueueFree();
         }
-        _constructionPreview = CreateModelPreview("ConstructionModelPreview", choice.Building, choice.Road, choice.Template, choice.Defense);
+        _constructionPreview = CreateModelPreview("ConstructionModelPreview", choice.Building, choice.Road, choice.Template, choice.Defense,
+            choice.WallAction is WallAction.Extend or WallAction.Gate or WallAction.Remove, choice.WallAction == WallAction.Gate);
         _constructionPreview.CustomMinimumSize = new Vector2(0, 144);
         _constructionPreview.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         previewSlot.AddChild(_constructionPreview);
@@ -415,6 +432,7 @@ public partial class Main
                         " (current plot)",
                     "Cost" when choice.WallAction == WallAction.Upgrade => Fmt.Money(Session.Game.WallUpgradeCost),
                     "Cost" when choice.WallAction == WallAction.Repair => Fmt.Money(Session.Game.WallRepairCost),
+                    "Cost" when choice.WallAction is WallAction.Extend or WallAction.Gate or WallAction.Remove => row.Value,
                     "Cost" when choice.Defense is { } defense => Fmt.Money(WallDefenses.Get(defense).Cost),
                     "Cost" => Fmt.Money(choice.Building?.Cost ?? (int)Math.Round(
                         Session.Game.Config.RoadCostPerCell * choice.Road!.CostMultiplier)),
@@ -483,9 +501,11 @@ public partial class Main
         {
             WallAction.Upgrade => Session.Game.WallUpgradeError(),
             WallAction.Repair => Session.Game.WallRepairError(),
+            WallAction.Extend or WallAction.Gate or WallAction.Remove =>
+                Session.Game.Settlement is null ? "Found a bailey before editing its walls." : null,
             _ => choice.Defense is { } defense ? Session.WallDefensePurchaseError(defense) :
                 choice.Building is { Name: "Motte and Bailey" } && Session.Game.Settlement is not null
-                    ? "A bailey is already founded; mount defenses, repair or upgrade its walls."
+                    ? "A bailey is already founded; choose Extend walls to expand its perimeter."
                     : choice.Building is { } building ? Session.BuildingPurchaseError(building) : null,
         };
         _constructionAdd.Text = choice.WallAction?.ToString() ?? "Add";
@@ -518,6 +538,13 @@ public partial class Main
         var choice = _constructionChoices[_constructionIndex];
         if (choice.WallAction is { } action)
         {
+            if (action is WallAction.Extend or WallAction.Gate or WallAction.Remove)
+            {
+                Session.BeginWallPlacement(action == WallAction.Gate ? PlacementKind.Gate :
+                    action == WallAction.Remove ? PlacementKind.RemoveWall : PlacementKind.WallRun);
+                if (Session.WallToolActive) Session.ClosePrompt();
+                return;
+            }
             if (action == WallAction.Upgrade) Session.UpgradeWalls();
             else Session.RepairWalls();
             SelectConstruction(_constructionIndex);
@@ -561,7 +588,7 @@ public partial class Main
 
     private bool ConstructionLocked(ConstructionChoice choice)
     {
-        if (choice.WallAction == WallAction.Repair) return false;
+        if (choice.WallAction is WallAction.Repair or WallAction.Extend or WallAction.Gate or WallAction.Remove) return false;
         if (choice.WallAction == WallAction.Upgrade)
             return Session.Game.HighestPopulation <
                 (Session.Game.Settlement?.Material == WallMaterial.Wood ? 250 : 1_000);

@@ -27,9 +27,11 @@ public sealed class RoadType : RegisteredType
     /// <summary>Bigger roads can replace smaller ones (an upgrade, paying only the difference).</summary>
     public int Rank { get; init; }
 
-    public float WidthCells { get; init; } = 1;
+    private float _widthCells = 1;
+    public float WidthCells { get => _widthCells; init => _widthCells = value; }
 
-    public double BendRadiusCells { get; init; }
+    private double _bendRadiusCells;
+    public double BendRadiusCells { get => _bendRadiusCells; init => _bendRadiusCells = value; }
 
     /// <summary>How many trips a cell of this road carries each week before the city starts to jam.</summary>
     public int TrafficCapacity { get; init; } = 6;
@@ -39,9 +41,28 @@ public sealed class RoadType : RegisteredType
 
     public bool PlayerPlaceable { get; init; } = true;
 
-    public string Description { get; init; } = string.Empty;
+    private string _description = string.Empty;
+    public string Description { get => _description; init => _description = value; }
 
     public string GlyphFor(int neighbourMask) => Glyphs[neighbourMask & 15];
+
+    internal RoadType WithLegacyLayout(bool legacy)
+    {
+        var copy = (RoadType)MemberwiseClone();
+        var dimensions = Name switch
+        {
+            DefaultRoads.CobbledName => DefaultRoads.CobbledRoad(legacy),
+            DefaultRoads.KingsRoadName => DefaultRoads.KingsRoad(legacy),
+            _ => null,
+        };
+        if (dimensions is not null)
+        {
+            copy._widthCells = dimensions.WidthCells;
+            copy._bendRadiusCells = dimensions.BendRadiusCells;
+            copy._description = dimensions.Description;
+        }
+        return copy;
+    }
 }
 
 public sealed class RoadRegistry : TypeRegistry<RoadType>
@@ -54,12 +75,12 @@ public sealed class RoadRegistry : TypeRegistry<RoadType>
     /// <summary>The type used when none is specified: the smallest, cheapest road.</summary>
     public RoadType Default => this.OrderBy(r => r.Rank).First();
 
-    public static RoadRegistry CreateDefault()
+    public static RoadRegistry CreateDefault(bool retainLegacyLayout = false)
     {
         var registry = new RoadRegistry();
         registry.Register(DefaultRoads.Track());
-        registry.Register(DefaultRoads.CobbledRoad());
-        registry.Register(DefaultRoads.KingsRoad());
+        registry.Register(DefaultRoads.CobbledRoad(retainLegacyLayout));
+        registry.Register(DefaultRoads.KingsRoad(retainLegacyLayout));
         return registry;
     }
 }
@@ -94,9 +115,10 @@ public static class DefaultRoads
         Description = "One-cell dirt track between homes and fields; a narrow, rutted surface for light traffic",
     };
 
-    public static RoadType CobbledRoad() => new()
+    public static RoadType CobbledRoad(bool retainLegacyLayout = false) => new()
     {
         Name = CobbledName,
+        WidthCells = retainLegacyLayout ? 1 : 2,
         SurfaceColor = Rgb.Hex(0x707477),
         Glyphs = Heavy,
         Foreground = Rgb.Hex(0xa9d4ff),
@@ -106,10 +128,11 @@ public static class DefaultRoads
         BendRadiusCells = 1,
         TrafficCapacity = 20,
         WeeklyUpkeep = 2,
-        Description = "One-cell cobbled market road; firm stone surfacing gives carts more usable room and carries more traffic than dirt",
+        Description = retainLegacyLayout ? "One-cell cobbled market road for carts and market traffic" :
+            "Two-cell cobbled market road, about nine feet wide; firm surfacing gives carts more room than a dirt track",
     };
 
-    public static RoadType KingsRoad() => new()
+    public static RoadType KingsRoad(bool retainLegacyLayout = false) => new()
     {
         Name = KingsRoadName,
         SurfaceColor = Rgb.Hex(0x565757),
@@ -118,10 +141,11 @@ public static class DefaultRoads
         Background = Rgb.Hex(0x33302a),
         CostMultiplier = 3.0,
         Rank = 3,
-        WidthCells = 2,
-        BendRadiusCells = 6,
+        WidthCells = retainLegacyLayout ? 2 : 4,
+        BendRadiusCells = retainLegacyLayout ? 6 : 8,
         TrafficCapacity = 60,
         WeeklyUpkeep = 3,
-        Description = "Two-cell King's Road: a paved, patrolled highway for long-distance travel, with broad bends rather than sharp right-angle corners",
+        Description = retainLegacyLayout ? "Two-cell King's Road: a paved highway with broad bends for long-distance travel" :
+            "Four-cell King's Road, about eighteen feet wide: a paved, patrolled highway with broad bends for long-distance travel",
     };
 }

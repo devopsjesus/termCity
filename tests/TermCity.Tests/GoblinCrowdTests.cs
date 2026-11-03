@@ -25,18 +25,18 @@ public class GoblinCrowdTests
 
     private static void Spaced(SettlementState state, double fraction = 1)
     {
-        for (int first = 0; first < state.Goblins.Count; first++)
-            for (int last = first + 1; last < state.Goblins.Count; last++)
+        for (int first = 0; first < state.Enemies.Count; first++)
+            for (int last = first + 1; last < state.Enemies.Count; last++)
             {
-                var a = state.Goblins[first];
-                var b = state.Goblins[last];
+                var a = state.Enemies[first];
+                var b = state.Enemies[last];
                 double ax = a.MotionInitialized ? a.PreviousX + (a.X - a.PreviousX) * fraction : a.X;
                 double ay = a.MotionInitialized ? a.PreviousY + (a.Y - a.PreviousY) * fraction : a.Y;
                 double bx = b.MotionInitialized ? b.PreviousX + (b.X - b.PreviousX) * fraction : b.X;
                 double by = b.MotionInitialized ? b.PreviousY + (b.Y - b.PreviousY) * fraction : b.Y;
                 double distance = Math.Sqrt(Math.Pow(ax - bx, 2) + Math.Pow(ay - by, 2));
                 Assert.True(distance + 1e-7 >= a.CollisionRadius + b.CollisionRadius,
-                    $"Goblins {a.Id}/{b.Id} overlap at blend {fraction}: distance {distance}, " +
+                    $"Enemies {a.Id}/{b.Id} overlap at blend {fraction}: distance {distance}, " +
                     $"required {a.CollisionRadius + b.CollisionRadius}.");
             }
     }
@@ -48,8 +48,8 @@ public class GoblinCrowdTests
     {
         var game = Swarm(tier);
         var state = game.Settlement!;
-        Assert.Equal(120, state.Goblins.Count);
-        Assert.Equal(120, state.Goblins.Select(g => (g.X, g.Y)).Distinct().Count());
+        Assert.Equal(120, state.Enemies.Count);
+        Assert.Equal(120, state.Enemies.Select(g => (g.X, g.Y)).Distinct().Count());
         Spaced(state);
         foreach (var wall in state.Walls) wall.IsTower = false;
         bool reachedWall = false;
@@ -67,11 +67,11 @@ public class GoblinCrowdTests
     {
         var game = Swarm();
         var state = game.Settlement!;
-        state.GoblinList.Clear();
+        state.EnemyList.Clear();
         foreach (var wall in state.Walls) wall.IsTower = false;
         var target = new Pos(30, 25);
         for (int n = 0; n < 3; n++)
-            state.GoblinList.Add(new Goblin
+            state.EnemyList.Add(new SiegeEnemy
             {
                 Id = n + 1, X = 30.5, Y = 24.5 - n, Health = 96, MaxHealth = 96, Tier = 1,
                 Route = Enumerable.Range(0, n + 1).Select(i => new Pos(30, 24 - n + i)).Append(target).ToList(),
@@ -80,13 +80,13 @@ public class GoblinCrowdTests
         for (int n = 0; n < 140; n++)
         {
             state.Advance(game, 0.1);
-            foreach (var unit in state.Goblins)
+            foreach (var unit in state.Enemies)
                 if (unit.AttackCooldown > 0) attacked.Add(unit.Id);
             Spaced(state, 0.5);
             Spaced(state);
         }
         Assert.Equal(3, attacked.Count);
-        Assert.Contains(state.Goblins, unit => unit.Route[^1] != target);
+        Assert.Contains(state.Enemies, unit => unit.Route[^1] != target);
         var template = new SettlementState(state.Bounds);
         for (int n = 0; n < state.Walls.Count; n++) state.WallList[n].IsTower = template.Walls[n].IsTower;
         var copy = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
@@ -103,22 +103,22 @@ public class GoblinCrowdTests
     {
         var game = Swarm();
         var state = game.Settlement!;
-        state.GoblinList.Clear();
+        state.EnemyList.Clear();
         foreach (var wall in state.Walls) wall.IsTower = false;
         var target = state.Walls.Single(wall => wall.Cell == new Pos(30, 25));
-        Goblin Unit(int id, double y) => new()
+        SiegeEnemy Unit(int id, double y) => new()
         {
             Id = id, X = 30.5, Y = y, Health = 500, MaxHealth = 500, Tier = 1,
             Route = [new(30, 24), target.Cell],
         };
         var front = Unit(1, 24.5);
         var rear = Unit(2, 23.5);
-        state.GoblinList.AddRange([front, rear]);
+        state.EnemyList.AddRange([front, rear]);
         for (int n = 0; n < 10; n++) game.Update(0.2);
         Spaced(state);
         Assert.Equal(target.MaxHealth - 6, target.Health);
         Assert.True(rear.Y < front.Y - 0.9);
-        Assert.Equal(0, SiegeMotion.Goblin(state, rear).Attack);
+        Assert.Equal(0, SiegeMotion.Enemy(state, rear).Attack);
         game.Update(0.2);
         Assert.Equal(target.MaxHealth - 12, target.Health);
     }
@@ -128,16 +128,16 @@ public class GoblinCrowdTests
     {
         var game = Swarm();
         var state = game.Settlement!;
-        var first = state.GoblinList[0];
-        var second = state.GoblinList[1];
+        var first = state.EnemyList[0];
+        var second = state.EnemyList[1];
         second.X = first.X;
         second.Y = first.Y;
         second.Route = new(first.Route);
         second.RouteIndex = first.RouteIndex;
-        int count = state.Goblins.Count;
+        int count = state.Enemies.Count;
         ulong random = game.Rng.State;
         var migrated = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
-        Assert.Equal(count, migrated.Settlement!.Goblins.Count);
+        Assert.Equal(count, migrated.Settlement!.Enemies.Count);
         Assert.Equal(random, migrated.Rng.State);
         Spaced(migrated.Settlement);
         string saved = SaveGameStore.Serialize(migrated);

@@ -1,4 +1,5 @@
 using TermCity.Core.Buildings;
+using TermCity.Core.World;
 
 namespace TermCity.Core.Simulation;
 
@@ -95,7 +96,8 @@ public static class CityProgression
                 return "Walls need repair! G: repair or upgrade walls. Right-click a wall for health.";
             return game.HighestMilestone < 100
                 ? "P resumes settlement. Homes and jobs grow inside the bailey; no roads needed. G: Garrison."
-                : $"Wave {settlement.WaveNumber}: {settlement.Goblins.Count} goblins. G: mount defenses and upgrade walls; towers fire automatically.";
+                : $"Wave {settlement.WaveNumber}: {settlement.Enemies.Count} attackers, {settlement.Defenders.Count} defenders. " +
+                    "G: recruit troops, mount defenses or repair walls. Click troops to command.";
         }
         if (game.Config.Scenario == CityScenario.Random && game.Stats.Residential.Zoned == 0)
             return "G > enclosure: click a corner, move to size the bailey, click again. No roads needed.";
@@ -129,7 +131,7 @@ public static class CityProgression
             return complaint.Reason == "Smoke"
                 ? "Smoke holds growth back. Move workshops away from homes; greens help. Keep fuel sources clean."
                 : $"Care: {complaint.Reason} holds growth back. Improve nearby cover; save for it. F6: Happiness.";
-        if (game.Stats.Residential.Zoned - game.Stats.Residential.Filled < 20)
+        if (game.VacantPlots(ZoneType.Residential).Count < 20)
             return "Expand a short connected track and zone homes. Leave service plots; do not spend your reserve.";
         if (game.Config.FullRules && game.Services.SeatRank == 0)
             return "7. Save for a Motte and Bailey (14,000g): settlers, defence and denser homes at 500 souls.";

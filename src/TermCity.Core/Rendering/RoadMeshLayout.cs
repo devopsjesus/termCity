@@ -105,7 +105,7 @@ public sealed class RoadMeshLayout
             }
             for (int first = 0; first < points.Count - 2; first++)
             {
-                if (water[first] || heights[first] < TerrainSprite.HillBaseHeight) continue;
+                if (water[first] || heights[first] < TerrainSprite.HillBaseFor(map)) continue;
                 float length = 0, lowest = heights[first];
                 for (int last = first + 1; last < points.Count; last++)
                 {

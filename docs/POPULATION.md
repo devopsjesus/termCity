@@ -19,15 +19,51 @@ prefer customers and the gate; blacksmiths, woodsmiths and armories favor periph
 working sites. Paths, gate approaches and access to existing buildings remain clear.
 No road, outside road connection or manual zoning is required.
 
+Wall extensions use actual closed regions rather than an enlarged bounding rectangle.
+New arrivals and organic infill require a closed region whose wall network connects
+to the original bailey and whose interior is reachable through gates. Standalone
+closed outposts remain empty until their walls connect; roads alone do not qualify.
+Internal walls can make a courtyard inaccessible until a gate is added. A breach
+or blocked entrance stops arrivals only in affected areas. Established households,
+births, buildings and worn paths are retained; ordinary raid casualties and the
+normal demographic simulation are not suppressed.
+Both vacancy refilling and new plot development enforce this rule. Expanded homes
+receive their complete internal zone classification and still count as one building.
+Dry-land walking remains valid without roads, but routes cannot cut through walls.
+Founding and drawn walls may cross water using a shallow arched base and iron
+grates extending below the surface. Logical water and river flow remain unchanged:
+grated passages are not bridges. Starter buildings and homes still require dry
+plots reachable from a dry gate; land across an unbridged river is not automatically
+eligible just because a continuous wall encloses it.
+Residents can connect separated enclosed banks through the daily path-building
+system. At most one short pedestrian bridge is built at a time, free of gold
+cost, across no more than eight water cells. Four daily work increments complete
+the timber deck and activate walking, deliveries and further bank development.
+No resident or service can use an incomplete crossing. Construction pauses while
+its enclosure or banks are blocked; wall grates and unbridged wide water remain
+barriers. Neither bridge construction nor completion changes logical water, river
+flow, road types, housing capacity or normal demand.
+Territory eligibility and construction safety share the same dry-land flood and
+physical gate crossings. Gate cells are transit, not residential land; a boundary
+cell must not falsely strand buildings in another connected region. Proposed
+construction is still rejected if it removes access to an existing building.
+Empty-land inspection distinguishes enclosure, gate/land-route, complete-plot and
+construction-access failures from demand or ordinary site preference. Reported
+eligible sites pass the same safety check used by development; diagnostics do not
+create residents, alter demand, require roads or advance the simulation.
+
 Higher-value homes take broad, low courtyard plots where complete wings fit. Once
-60% of the developable core is occupied, low-value homes can redevelop into four-story
-timber shanties, and three-story wall houses attach to the inner wall face. Wall cells,
+60% of the developable core is occupied, new low-value infill can use four-story
+timber shanties, and three-story wall houses attach to the inner wall face. Existing
+homes are not automatically replaced by shanty towers. Wall cells,
 towers and defenses remain intact, with an inner repair alley and clear gate approach.
 Redevelopment preserves existing households: additional residents still arrive through
 normal immigration. Services, jobs, taxes and upkeep count each multi-cell building once.
 Only occupied footprints carry the internal residential/trade/workplace classification;
-vacant land is never zoned. Older settlement saves release vacant reservations on load
-without moving existing buildings. The older manually zoned city route is unchanged.
+vacant land is never zoned. Wall-network saves retain established territory, geometry,
+shared health and gate state. Older rectangular-settlement saves are unsupported
+and rejected explicitly, without rewriting the file. Populated legacy scenarios
+without a founded bailey keep their existing behavior.
 
 Bailey journeys form natural paths between reachable buildings, including neighboring
 homes, rather than seeking roads. Growth and use compact these interior trails over
@@ -40,6 +76,30 @@ land, attack individual components, and can breach walls. Towers shoot automatic
 wall-top defenses add short-range splash or longer-range siege fire. Population
 milestones permanently unlock weapons and wall materials and also strengthen later
 goblin waves. Combat state is part of saves and paused undo, not an ambient visual effect.
+Civilian repairs continue during combat and scale with residents, occupied industry
+and active services. A 100-resident debug starter with two industries and three services
+provides 63 HP per siege second, up from 5.25. Instant gold repairs remain available.
+
+Physical anatomy no longer grows with population tier: goblins remain approximately
+4.5 feet tall and Orcs average 6 feet. At permanent 1,000 souls, a one-time scout report
+schedules the first tree/stone/mud troll wave. At least twenty siege seconds of warning
+remain for a next-wave introduction; a later unlock defers introduction by a wave.
+Trolls have deterministic, persisted individual heights between 8 and 11 feet and
+species-specific health, damage, speed and attack intervals. No aging, regeneration
+or climbing system is introduced. Mixed waves retain the shared 120-attacker cap.
+All species use the ordinary siege breach consequences.
+
+Building plots reserve five world cells per authored model cell, while population,
+jobs, upkeep and service outputs remain per complete building. Larger reserved land
+does not manufacture residents. Dense housing preserves households during redevelopment;
+inner-wall housing now leaves the reserved structural/repair corridor clear.
+At 100 souls, Archer Barracks and Guard Posts recruit finite rosters of archers and
+soldiers, funded by upkeep. Archers climb gate/tower ladders to wall or tower decks;
+automatic soldiers stay inside, covering gates and corners until enemies breach.
+Direct player move/attack orders can still send troops to reachable destinations;
+manual move/attack orders return to automatic defense when completed. Orcs join
+goblin waves from 250 souls, with a sector forecast only for their first appearance.
+Permanent unlocks remain after population declines; this does not add road requirements.
 
 ## The loop
 

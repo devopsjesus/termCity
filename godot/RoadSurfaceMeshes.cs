@@ -21,6 +21,9 @@ internal sealed class RoadSurfaceMeshes
     }
 
     private readonly RoadMeshLayout _layout;
+    private readonly bool _litGround;
+    private readonly bool _litInfrastructure;
+    private readonly bool _edgeRelief;
     private readonly Dictionary<RoadMeshLayout.Segment, (Vector2[] Road, Vector2[] Corridor, Rect2 Bounds)> _polygons = [];
     private readonly Dictionary<int, List<Vector2[]>> _remnants = [];
     private readonly Dictionary<int, bool> _bridgeCuts = [];
@@ -44,9 +47,13 @@ internal sealed class RoadSurfaceMeshes
     private static float BorderWidth(TermCity.Core.Roads.RoadType type) =>
         type.Rank >= 3 ? 0.1f : type.Rank == 2 ? 0.075f : 0.12f;
 
-    public RoadSurfaceMeshes(RoadMeshLayout layout)
+    public RoadSurfaceMeshes(RoadMeshLayout layout, bool litGround = false,
+        bool litInfrastructure = false, bool edgeRelief = false)
     {
         _layout = layout;
+        _litGround = litGround;
+        _litInfrastructure = litInfrastructure;
+        _edgeRelief = edgeRelief;
         foreach (var segment in layout.Segments)
         {
             var road = Convert(segment.Road); var corridor = Convert(segment.Corridor);
@@ -97,7 +104,7 @@ internal sealed class RoadSurfaceMeshes
                 ground.SetUV(new((point.X - x) / span, (point.Y - y) / span));
                 ground.AddVertex(new(point.X, level, point.Y));
             }
-            return new(ground.Commit(), null, null, faces, cutEdges, cutCenters, wallSamples, shoreSamples, bridgeSideSamples);
+            return new(ground.Commit(_litGround), null, null, faces, cutEdges, cutCenters, wallSamples, shoreSamples, bridgeSideSamples);
         }
         var waterCorners = new Dictionary<(int X, int Y), float>();
         var waterHeights = new Dictionary<Vector2, float>();
@@ -941,7 +948,7 @@ internal sealed class RoadSurfaceMeshes
                         wallSamples.Add(high.Lerp(low, 0.75f));
                     }
                     var normal = (topB - topA).Cross(lowA - topA).Normalized();
-                    float shade = normal.X + normal.Z < 0 ? 1 : 0.78f;
+                    float shade = _litInfrastructure || normal.X + normal.Z < 0 ? 1 : 0.78f;
                     float bottom = Math.Min(lowA.Y, lowB.Y), top = Math.Max(topA.Y, topB.Y);
                     for (int band = (int)Math.Floor(bottom / 0.24f); band * 0.24f < top; band++)
                     {
@@ -952,14 +959,86 @@ internal sealed class RoadSurfaceMeshes
                         var bHigh = new Vector3(b.X, Math.Clamp(upper, lowB.Y, topB.Y), b.Y);
                         if (aHigh.Y - aLow.Y < 0.00001f && bHigh.Y - bLow.Y < 0.00001f) continue;
                         float stratum = band % 2 == 0 ? 1 : 0.94f;
-                        banks.SetColor(new Color(0x72 / 255f * shade * stratum,
-                            0x5b / 255f * shade * stratum, 0x40 / 255f * shade * stratum));
-                        banks.AddVertex(aHigh); banks.AddVertex(bHigh); banks.AddVertex(bLow);
-                        banks.AddVertex(aHigh); banks.AddVertex(bLow); banks.AddVertex(aLow);
-                        bankVertices += 6;
+                        var color = new Color(0x72 / 255f * shade * stratum,
+                            0x5b / 255f * shade * stratum, 0x40 / 255f * shade * stratum);
+                        if (_edgeRelief && kind != "cut" && map.TerrainAt(x, y).Buildable)
+                        {
+                            float cap = .07f * (int)map.ElevationProfile;
+                            var aTurf = new Vector3(a.X,
+                                Math.Clamp(topA.Y - Math.Min(cap, (topA.Y - lowA.Y) * .24f), aLow.Y, aHigh.Y), a.Y);
+                            var bTurf = new Vector3(b.X,
+                                Math.Clamp(topB.Y - Math.Min(cap, (topB.Y - lowB.Y) * .24f), bLow.Y, bHigh.Y), b.Y);
+                            if (aHigh.Y > aTurf.Y + .00001f || bHigh.Y > bTurf.Y + .00001f)
+                                Face(aHigh, bHigh, bTurf, aTurf, new Color("#4a6d37"));
+                            aHigh = aTurf;
+                            bHigh = bTurf;
+                            if (aHigh.Y - aLow.Y < .00001f && bHigh.Y - bLow.Y < .00001f) continue;
+                        }
+                        bool inset = _edgeRelief && kind != "cut" && band % 3 == 1 &&
+                            lower > bottom + .01f && upper < top - .01f;
+                        if (inset)
+                        {
+                            var along = (b - a).Normalized();
+                            var inwardUnit = new Vector2(-along.Y, along.X);
+                            if (inwardUnit.Dot(new Vector2(x + .5f, y + .5f) - (a + b) / 2) < 0)
+                                inwardUnit = -inwardUnit;
+                            var inward = inwardUnit * .045f;
+                            var shift = new Vector3(inward.X, 0, inward.Y);
+                            Face(aHigh + shift, bHigh + shift, bLow + shift, aLow + shift, color);
+                            Face(aHigh, bHigh, bHigh + shift, aHigh + shift, color);
+                            Face(aLow + shift, bLow + shift, bLow, aLow, color);
+                            if (!Continues(a, -along)) Face(aHigh, aHigh + shift, aLow + shift, aLow, color);
+                            if (!Continues(b, along)) Face(bHigh + shift, bHigh, bLow, bLow + shift, color);
+
+                            bool Continues(Vector2 endpoint, Vector2 direction)
+                            {
+                                foreach (var segment in nearby)
+                                    if (EndsAtCut(_polygons[segment].Corridor) || EndsAtCut(_polygons[segment].Road))
+                                        return false;
+                                foreach (var polygon in Remnants(map, x, y))
+                                    if (EndsAtCut(polygon)) return false;
+                                var inside = endpoint + direction * .02f + inwardUnit * .02f;
+                                var outside = endpoint + direction * .02f - inwardUnit * .02f;
+                                int ix = (int)MathF.Floor(inside.X), iy = (int)MathF.Floor(inside.Y);
+                                int ox = (int)MathF.Floor(outside.X), oy = (int)MathF.Floor(outside.Y);
+                                if (!map.InBounds(ix, iy) || CutForCell(ix, iy, inside)) return false;
+                                float high = LandSurface(ix, iy, inside);
+                                float low = !map.InBounds(ox, oy) ? -.04f : map.TerrainAt(ox, oy).Buildable
+                                    ? CutForCell(ox, oy, outside) ? ShoulderHeight(outside) : LandSurface(ox, oy, outside)
+                                    : WaterHeight(ox, oy, outside);
+                                return lower > low + .01f && upper < high - .01f;
+
+                                bool EndsAtCut(Vector2[] polygon)
+                                {
+                                    for (int edge = 0; edge < polygon.Length; edge++)
+                                    {
+                                        var first = polygon[edge]; var second = polygon[(edge + 1) % polygon.Length];
+                                        var delta = second - first;
+                                        if (delta.LengthSquared() < .00000001f ||
+                                            Math.Abs(direction.Cross(delta.Normalized())) < .0001f) continue;
+                                        if (Geometry2D.GetClosestPointToSegment(endpoint, first, second)
+                                            .DistanceSquaredTo(endpoint) <= .00000001f) return true;
+                                    }
+                                    return false;
+                                }
+                            }
+                        }
+                        else Face(aHigh, bHigh, bLow, aLow, color);
                     }
                     if (!belowRoad && kind != "shore") cutEdges.Add((a, b));
                     if (kind == "cut") cutCenters.Add((topA + topB + lowA + lowB) / 4);
+
+                    void Face(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Color color)
+                    {
+                        banks.SetColor(color);
+                        Vertex(a); Vertex(b); Vertex(c); Vertex(a); Vertex(c); Vertex(d);
+                        bankVertices += 6;
+                        void Vertex(Vector3 vertex)
+                        {
+                            banks.AddVertex(vertex);
+                            if (_litInfrastructure) cellFaces.Add(vertex);
+                        }
+                    }
                 }
             }
         long flatBorderStarted = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -1012,8 +1091,8 @@ internal sealed class RoadSurfaceMeshes
         borderMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(flatBorderStarted).TotalMilliseconds;
         emittedBorderVertices += roads.Vertices.Count - beforeFlatBorders;
         foreach (var (cell, buffer) in faceBuffers) faces.Add(cell, buffer.ToArray());
-        return new(ground.Commit(), roads.Vertices.Count > 0 ? roads.Commit() : null,
-            bankVertices > 0 ? banks.Commit() : null, faces, cutEdges, cutCenters, wallSamples, shoreSamples, bridgeSideSamples)
+        return new(ground.Commit(_litGround), roads.Vertices.Count > 0 ? roads.Commit(_litInfrastructure, upwardOnly: false) : null,
+            bankVertices > 0 ? banks.Commit(_litInfrastructure, upwardOnly: false) : null, faces, cutEdges, cutCenters, wallSamples, shoreSamples, bridgeSideSamples)
             {
                 RoadBorderTriangles = (previewFootprint is null ? borderVertices : emittedBorderVertices) / 3,
                 RoadBorderMilliseconds = borderMilliseconds,
@@ -1159,7 +1238,7 @@ internal sealed class RoadSurfaceMeshes
             _bridgeCuts.Add(index, false);
             return false;
         }
-        float bankMargin = TerrainSprite.HillStepHeight / 2 + 0.06f;
+        float bankMargin = TerrainSprite.HillStepFor(map) / 2 + 0.06f;
         Vector2[] tile = [new(x, y), new(x + 1, y), new(x + 1, y + 1), new(x, y + 1)];
         bool cut = false;
         foreach (var segment in nearby)
@@ -1503,7 +1582,7 @@ internal sealed class RoadSurfaceMeshes
             if (_hasUv) _uvs.Add(uv);
         }
 
-        public ArrayMesh Commit()
+        public ArrayMesh Commit(bool normals = false, bool upwardOnly = true)
         {
             if (_vertices.Count % 3 != 0 || _hasUv && _uvs.Count != _vertices.Count)
                 throw new InvalidOperationException("Terrain meshes require complete triangles with matching vertex attributes.");
@@ -1511,6 +1590,25 @@ internal sealed class RoadSurfaceMeshes
             if (_vertices.Count == 0) return mesh;
             using var arrays = new Godot.Collections.Array();
             arrays.Resize((int)Mesh.ArrayType.Max);
+            if (normals)
+            {
+                var values = new Vector3[_vertices.Count];
+                for (int i = 0; i < _vertices.Count; i += 3)
+                {
+                    var normal = (_vertices[i + 1] - _vertices[i]).Cross(_vertices[i + 2] - _vertices[i]).Normalized();
+                    // Legacy unshaded terrain is double-sided. Lit tops need clockwise
+                    // front faces as well as upward normals, or Godot lights their undersides.
+                    if (upwardOnly && normal.Y > 0)
+                    {
+                        (_vertices[i + 1], _vertices[i + 2]) = (_vertices[i + 2], _vertices[i + 1]);
+                        (_colors[i + 1], _colors[i + 2]) = (_colors[i + 2], _colors[i + 1]);
+                        if (_hasUv) (_uvs[i + 1], _uvs[i + 2]) = (_uvs[i + 2], _uvs[i + 1]);
+                    }
+                    else normal = -normal;
+                    values[i] = values[i + 1] = values[i + 2] = normal;
+                }
+                arrays[(int)Mesh.ArrayType.Normal] = values;
+            }
             using Variant vertices = _vertices.ToArray();
             using Variant colors = _colors.ToArray();
             arrays[(int)Mesh.ArrayType.Vertex] = vertices;

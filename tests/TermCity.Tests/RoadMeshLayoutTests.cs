@@ -29,12 +29,12 @@ public class RoadMeshLayoutTests
         var layout = new RoadMeshLayout(map, [path]);
         foreach (int side in new[] { -1, 1 })
         {
-            var center = Rotate(new(19.5f, side < 0 ? 18.5f : 21.5f));
+            var center = Rotate(new(19.5f, side < 0 ? 17.5f : 22.5f));
             int x = (int)MathF.Floor(center.X), y = (int)MathF.Floor(center.Y);
             Assert.DoesNotContain(layout.Segments, s => RoadMeshLayout.OverlapsCell(s.Road, x, y));
             Assert.False(new RoadGeometry(map, [path]).OverlapsCell(x, y));
         }
-        var curvedNeighbor = Rotate(new(20.5f, 21.5f));
+        var curvedNeighbor = Rotate(new(21.5f, 22.5f));
         int curvedX = (int)MathF.Floor(curvedNeighbor.X), curvedY = (int)MathF.Floor(curvedNeighbor.Y);
         Assert.Contains(layout.Segments, s => RoadMeshLayout.OverlapsCell(s.Road, curvedX, curvedY));
         Assert.True(new RoadGeometry(map, [path]).OverlapsCell(curvedX, curvedY));
@@ -114,8 +114,8 @@ public class RoadMeshLayoutTests
 
     [Theory]
     [InlineData(DefaultRoads.TrackName, 1f)]
-    [InlineData(DefaultRoads.CobbledName, 1f)]
-    [InlineData(DefaultRoads.KingsRoadName, 2f)]
+    [InlineData(DefaultRoads.CobbledName, 2f)]
+    [InlineData(DefaultRoads.KingsRoadName, 4f)]
     public void RoadWidthsPickingAndShouldersUseWorldCellsAtEveryAngle(string name, float width)
     {
         var map = TestCity.Flat().Map;
@@ -169,7 +169,7 @@ public class RoadMeshLayoutTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void HighwayBedsAndSelectionOccupyExactlyTwoWholeCellBands(bool vertical)
+    public void HighwayBedsAndSelectionOccupyExactlyFourWholeCellBands(bool vertical)
     {
         var map = new GameMap(32, 32, new GameContent());
         var type = map.Content.Roads.Get(DefaultRoads.KingsRoadName);
@@ -181,14 +181,15 @@ public class RoadMeshLayoutTests
         var selection = layout.SelectionPolygon(point);
         Assert.Equal(4, selection.Length);
         Assert.All(selection, p => Assert.Equal(MathF.Round(vertical ? p.X : p.Y), vertical ? p.X : p.Y));
-        Assert.Equal(10, selection.Min(p => vertical ? p.X : p.Y));
-        Assert.Equal(12, selection.Max(p => vertical ? p.X : p.Y));
+        Assert.Equal(9, selection.Min(p => vertical ? p.X : p.Y));
+        Assert.Equal(13, selection.Max(p => vertical ? p.X : p.Y));
         Assert.Equal(13, selection.Min(p => vertical ? p.Y : p.X));
         Assert.Equal(14, selection.Max(p => vertical ? p.Y : p.X));
-        Assert.False(geometry.OverlapsCell(vertical ? 9 : 13, vertical ? 13 : 9));
+        Assert.False(geometry.OverlapsCell(vertical ? 8 : 13, vertical ? 13 : 8));
         Assert.True(geometry.OverlapsCell(vertical ? 10 : 13, vertical ? 13 : 10));
         Assert.True(geometry.OverlapsCell(vertical ? 11 : 13, vertical ? 13 : 11));
-        Assert.False(geometry.OverlapsCell(vertical ? 12 : 13, vertical ? 13 : 12));
+        Assert.True(geometry.OverlapsCell(vertical ? 12 : 13, vertical ? 13 : 12));
+        Assert.False(geometry.OverlapsCell(vertical ? 13 : 13, vertical ? 13 : 13));
     }
 
     [Theory]
@@ -227,7 +228,7 @@ public class RoadMeshLayoutTests
     }
 
     [Fact]
-    public void OneHighwayAnchorReservesATwoCellPlotNotFourPartialCells()
+    public void OneHighwayAnchorReservesFourWholeCellsAcrossItsWidth()
     {
         var map = new GameMap(32, 32, new GameContent());
         map.SetRoad(10, 10, map.Content.Roads.Get(DefaultRoads.KingsRoadName));
@@ -236,8 +237,8 @@ public class RoadMeshLayoutTests
         var segment = Assert.Single(layout.Segments);
         Assert.Equal(10, segment.Road.Min(p => p.X));
         Assert.Equal(11, segment.Road.Max(p => p.X));
-        Assert.Equal(10, segment.Road.Min(p => p.Y));
-        Assert.Equal(12, segment.Road.Max(p => p.Y));
+        Assert.Equal(9, segment.Road.Min(p => p.Y));
+        Assert.Equal(13, segment.Road.Max(p => p.Y));
         Assert.Equal(new TermCity.Core.Util.Pos(10, 10), Assert.Single(Assert.Single(paths).SourceCells));
     }
 
@@ -315,13 +316,13 @@ public class RoadMeshLayoutTests
             var type = map.Content.Roads.Get(DefaultRoads.KingsRoadName);
             var path = new RoadPath(type, true, false, [10.5 * 12, 10.5 * 12], [3 * 22.0, 32 * 22.0]);
             var layout = new RoadMeshLayout(map, [path]);
-            foreach (float x in new[] { 11.99999f, 12, 12.00001f, 12.2f })
+            foreach (float x in new[] { 13.99999f, 14, 14.00001f, 14.2f })
             {
                 Assert.True(layout.TryHeightAt(new(x, 10), out float height));
                 Assert.Equal(0, height);
                 Assert.True(layout.TryHeightAt(new(x, 32), out _));
             }
-            Assert.False(layout.TryHeightAt(new(12.75f, 10), out _));
+            Assert.False(layout.TryHeightAt(new(14.75f, 10), out _));
     }
 
     [Fact]

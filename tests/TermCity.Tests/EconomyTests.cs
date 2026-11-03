@@ -101,7 +101,7 @@ public class EconomyTests
     public void WeeklyTaxIsFivePercentOfAResidentialCellsTwoHundredDollarValue()
     {
         var game = TestCity.Flat();
-        game.Designate(new CellRect(0, 21, 10, 1), ZoneType.Residential);
+        game.Designate(new CellRect(0, 21, 50, 5), ZoneType.Residential);
         TestCity.Advance(game, 1);
         // Three families move in the first week: 3 cells x $200 x 5% = $30.
         Assert.Equal(3, game.Stats.Residential.Filled);
@@ -113,7 +113,7 @@ public class EconomyTests
     public void IncomeScalesWithTaxRate()
     {
         var game = TestCity.Flat();
-        game.Designate(new CellRect(0, 21, 10, 1), ZoneType.Residential);
+        game.Designate(new CellRect(0, 21, 50, 5), ZoneType.Residential);
         TestCity.Advance(game, 1);
         game.Taxes.Residential = 0.10;
         game.Touch();

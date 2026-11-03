@@ -12,14 +12,14 @@ public class SettlementDevelopmentTests
     {
         var game = TestCity.Flat(config: new GameConfig
         {
-            MapWidth = 64, MapHeight = 64, StartingMoney = 100_000,
+            MapWidth = 160, MapHeight = 160, StartingMoney = 500_000,
             FireIgnitionPerBuildingWeek = 0, RaidChancePerWeek = 0,
             FloodChancePerWeek = 0, OutbreakChancePerWeek = 0,
         }, rules: CityRules.Full);
         foreach (int i in game.Map.RoadCells.ToArray())
             game.Map.SetRoad(i % game.Map.Width, i / game.Map.Width, false);
         game.Touch();
-        Assert.True(game.FoundSettlement(new(25, 25, 32, 32)).Success);
+        Assert.True(game.FoundSettlement(new(16, 16, 128, 128)).Success);
         game.Map.BuildingEstablishedDays.Clear();
         game.Touch();
         return game;
@@ -65,7 +65,7 @@ public class SettlementDevelopmentTests
             Assert.All(area.Cells(), p => Assert.Equal(type.Zone, map.ZoneAt(p.X, p.Y)));
             if (type.Name == "Courtyard House")
             {
-                Assert.Equal(4, area.Area);
+                Assert.Equal(100, area.Area);
                 Assert.True(game.SettlementLandValue(new(area.X, area.Y)) >= 47);
             }
         }
@@ -81,17 +81,13 @@ public class SettlementDevelopmentTests
         var bounds = game.Settlement!.Bounds;
         var cottage = map.Content.Buildings.Get("Cottage");
         var services = map.BuildingFootprints.Values.ToArray();
-        for (int y = bounds.Y + 3; y <= bounds.Bottom - 3; y++)
-            for (int x = bounds.X + 3; x <= bounds.Right - 3; x++)
+        for (int y = bounds.Y + 9; y <= bounds.Bottom - 8 - cottage.Height; y += cottage.Height + 1)
+            for (int x = bounds.X + 9; x <= bounds.Right - 8 - cottage.Width; x += cottage.Width)
             {
-                if (map.BuildingAt(x, y) is not null) continue;
-                if (services.Any(a => new CellRect(a.X - 1, a.Y - 1, a.Width + 2, a.Height + 2).Contains(x, y)))
-                {
-                    map.SetPathWear(x, y, 4);
-                    continue;
-                }
-                if ((y - bounds.Y) % 3 == 2) { map.SetPathWear(x, y, 4); continue; }
-                map.SetBuildingFootprint(cottage, new(x, y, 1, 1));
+                var area = cottage.FootprintAt(x, y);
+                if (area.Cells().Any(p => map.BuildingAt(p.X, p.Y) is not null ||
+                    services.Any(a => new CellRect(a.X - 1, a.Y - 1, a.Width + 2, a.Height + 2).Contains(p)))) continue;
+                map.SetBuildingFootprint(cottage, area);
                 map.SetHousehold(x, y, new Household(3, 2, 0));
             }
         game.Touch();
@@ -100,24 +96,32 @@ public class SettlementDevelopmentTests
     }
 
     [Fact]
-    public void CrowdingStacksPoorHousingWithoutInventingPeopleAndAttachesHomesToWalls()
+    public void CrowdingPreservesExistingHomesAndAttachesNewHomesToWalls()
     {
         var game = Crowded();
         int people = game.Stats.Population;
         game.RedevelopSettlement();
         game.Touch();
         Assert.Equal(people, game.Stats.Population);
-        Assert.Contains(game.Map.BuildingFootprints.Values,
+        Assert.DoesNotContain(game.Map.BuildingFootprints.Values,
             area => game.Map.BuildingAt(area.X, area.Y)!.Name == "Shanty Tower");
         var walls = game.Settlement!.Walls.Select(w => (w.Cell, w.Health, w.Defense)).ToArray();
-        int cell = Assert.IsType<int>(game.DevelopSettlementBuilding(ZoneType.Residential));
-        var p = game.Map.PosOf(cell);
-        Assert.Equal("Wall House", game.Map.BuildingAt(p.X, p.Y)!.Name);
+        Pos? attached = null;
+        for (int n = 0; n < 8 && attached is null; n++)
+        {
+            int? cell = game.DevelopSettlementBuilding(ZoneType.Residential);
+            if (cell is null) break;
+            var developed = game.Map.PosOf(cell.Value);
+            if (game.Map.BuildingAt(developed.X, developed.Y)!.Name == "Wall House") attached = developed;
+        }
+        Assert.True(attached.HasValue, "Crowded new infill must still provide wall housing without replacing existing homes.");
+        var p = attached.Value;
         Assert.Equal(walls, game.Settlement.Walls.Select(w => (w.Cell, w.Health, w.Defense)));
         Assert.All(game.Settlement.Walls, w => Assert.Null(game.Map.BuildingAt(w.Cell.X, w.Cell.Y)));
         var bounds = game.Settlement.Bounds;
-        Assert.True(p.X == bounds.X + 1 || p.X == bounds.Right - 1 ||
-            p.Y == bounds.Y + 1 || p.Y == bounds.Bottom - 1);
+        var house = game.Map.BuildingFootprintAt(p.X, p.Y);
+        Assert.True(house.X == bounds.X + 3 || house.Right == bounds.Right - 3 ||
+            house.Y == bounds.Y + 3 || house.Bottom == bounds.Bottom - 3);
     }
 
     [Fact]
@@ -138,8 +142,8 @@ public class SettlementDevelopmentTests
 
     [Theory]
     [InlineData("Courtyard House", 1, 0.6)]
-    [InlineData("Shanty Tower", 4, 1.5)]
-    [InlineData("Wall House", 3, 1.1)]
+    [InlineData("Shanty Tower", 4, 1.8)]
+    [InlineData("Wall House", 3, 1.4)]
     public void HousingGeometryExpressesHorizontalWealthAndVerticalCrowding(string name, int stories, double maxHeight)
     {
         var type = Founded().Map.Content.Buildings.Get(name);

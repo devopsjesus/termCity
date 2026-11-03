@@ -189,9 +189,19 @@ public partial class Main
             HandleDialogKey(key);
             return true;
         }
+        if (code == Key.Escape && Session.SelectedEnemy is not null && Session.Preview is null)
+        {
+            Session.ClearSelection();
+            return true;
+        }
+        if (code == Key.Escape && Session.SelectedDefenderIds.Count > 0 && Session.Preview is null)
+        {
+            Session.ClearDefenderSelection();
+            return true;
+        }
         bool undo = (OS.HasFeature("macos") ? key.MetaPressed : key.CtrlPressed) &&
             !key.ShiftPressed && !key.AltPressed && code == Key.Z;
-        if (undo && (Session.Preview is null || Session.RoadToolActive || Session.Preview.Template is not null))
+        if (undo && (Session.Preview is null || Session.RoadToolActive || Session.WallToolActive || Session.Preview.Template is not null))
         {
             Session.RequestUndo();
             return true;
@@ -199,7 +209,11 @@ public partial class Main
         if (Session.MapNavigationAllowed && HandleMapNavigationKey(key, code)) return true;
         if (Session.Preview is not null)
         {
-            if (Session.BuildingToolActive && !key.ShiftPressed && code is Key.Bracketleft or Key.Bracketright)
+            if (Session.WallDefenseToolActive && code == Key.R)
+                Session.FlipWallDefenseFacing();
+            else if (Session.Preview.Kind == PlacementKind.Gate && code is Key.Bracketleft or Key.Bracketright or Key.R)
+                Session.RotateGatePlacement(code == Key.Bracketleft ? -1 : 1);
+            else if (Session.BuildingToolActive && !key.ShiftPressed && code is Key.Bracketleft or Key.Bracketright)
             {
                 Session.RotateBuildingPlacement(code == Key.Bracketleft ? -1 : 1);
             }
@@ -444,11 +458,44 @@ public partial class Main
             }
             Map.TryMapPosition(button.Position, out var gridPosition);
             var position = gridPosition;
-            if ((!Session.FixedPlacementToolActive || Session.WallDefenseToolActive) && !Session.RoadToolActive &&
+            if (Session.Preview is null && button.ButtonIndex is MouseButton.Left or MouseButton.Right)
+            {
+                bool actor = Map.TryPickSiegeActor(button.Position, out bool friendly, out int actorId);
+                if (button.ButtonIndex == MouseButton.Left && actor && (friendly || !button.ShiftPressed))
+                {
+                    if (friendly) Session.SelectDefender(actorId, button.ShiftPressed);
+                    else Session.SelectEnemy(actorId);
+                    Map.AcceptEvent();
+                    return;
+                }
+                if (button.ButtonIndex == MouseButton.Right && Session.SelectedDefenderIds.Count > 0)
+                {
+                    if (actor && !friendly) Session.CommandSelectedDefenders(enemyId: actorId);
+                    else if (Map.TryMapPosition(button.Position, out var target)) Session.CommandSelectedDefenders(target);
+                    else Session.SetMessage("Choose reachable ground or a visible enemy.", MessageKind.Error);
+                    Map.AcceptEvent();
+                    return;
+                }
+                if (button.ButtonIndex == MouseButton.Left && !button.ShiftPressed && Session.SelectedDefenderIds.Count > 0)
+                    Session.ClearDefenderSelection();
+            }
+            Session.RememberWallPick(null);
+            if ((!Session.FixedPlacementToolActive || Session.WallDefenseToolActive ||
+                Session.Preview?.Kind is PlacementKind.RemoveWall or PlacementKind.Gate) && !Session.RoadToolActive &&
                 button.ButtonIndex is MouseButton.Left or MouseButton.Right &&
                 !button.ShiftPressed && !button.CtrlPressed && !button.AltPressed && !button.MetaPressed &&
                 Map.TryPickBuilding(button.Position, out var buildingAnchor))
+            {
                 position = buildingAnchor;
+                Session.RememberWallPick(Map.PickedWallId);
+            }
+            else if (Session.Preview is null && !Session.FixedPlacementToolActive && !Session.RoadToolActive &&
+                button.ButtonIndex is MouseButton.Left or MouseButton.Right &&
+                !button.ShiftPressed && !button.CtrlPressed && !button.AltPressed && !button.MetaPressed &&
+                Map.TryPickFeature(button.Position, out var feature))
+            {
+                position = feature;
+            }
             if (!Session.Game.Map.InBounds(position) &&
                 button.ButtonIndex is MouseButton.Left or MouseButton.Middle or MouseButton.Right)
             {
@@ -554,9 +601,17 @@ public partial class Main
             }
             else if (Session.FixedPlacementToolActive)
             {
-                if (Session.WallDefenseToolActive && Map.TryPickBuilding(motion.Position, out var wall))
+                if ((Session.WallDefenseToolActive || Session.Preview?.Kind is PlacementKind.RemoveWall or PlacementKind.Gate) &&
+                    Map.TryPickBuilding(motion.Position, out var wall))
+                {
+                    Session.RememberWallPick(Map.PickedWallId);
                     Session.MoveFixedPlacement(wall);
-                else if (Map.TryMapPosition(motion.Position, out var world)) Session.MoveFixedPlacement(world);
+                }
+                else if (Map.TryMapPosition(motion.Position, out var world))
+                {
+                    Session.RememberWallPick(null);
+                    Session.MoveFixedPlacement(world);
+                }
             }
             else if (_selecting)
             {

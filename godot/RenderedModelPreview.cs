@@ -15,7 +15,7 @@ public partial class RenderedModelPreview : TextureRect
     internal RenderedModelPreviewCache Cache { get; init; } = null!;
     internal ModelPreviewSubject Subject { get; init; } = null!;
     public string ModelName => Subject.Name;
-    public string PreviewKind => Subject.Defense is not null ? "WallDefense" : Subject.Building is not null ? "Building" :
+    public string PreviewKind => Subject.Wall ? "Wall" : Subject.Defense is not null ? "WallDefense" : Subject.Building is not null ? "Building" :
         Subject.Template is not null ? "RoadTemplate" : "Road";
     public bool MetadataReady { get; internal set; }
     public bool GraphicsAvailable => Cache.GraphicsAvailable;
@@ -27,6 +27,7 @@ public partial class RenderedModelPreview : TextureRect
     public RenderedModelPreview()
     {
         MouseFilter = MouseFilterEnum.Ignore;
+        ClipContents = true;
         ExpandMode = ExpandModeEnum.IgnoreSize;
         StretchMode = StretchModeEnum.KeepAspectCentered;
         TextureFilter = TextureFilterEnum.Linear;
@@ -52,9 +53,10 @@ public partial class RenderedModelPreview : TextureRect
 }
 
 internal sealed record ModelPreviewSubject(GameContent Content, BuildingType? Building = null,
-    RoadType? Road = null, RoadTemplate? Template = null, WallDefenseKind? Defense = null)
+    RoadType? Road = null, RoadTemplate? Template = null, WallDefenseKind? Defense = null, bool Wall = false, bool Gate = false)
 {
-    public string Name => Defense is { } defense ? WallDefenses.Get(defense).Name : Building?.Name ?? Template?.Name ?? Road!.Name;
+    public string Name => Wall ? Gate ? "Gate" : "Wall run" :
+        Defense is { } defense ? WallDefenses.Get(defense).Name : Building?.Name ?? Template?.Name ?? Road!.Name;
 }
 
 /// <summary>Serializes thumbnail renders and retains only their static textures, never live preview viewports.</summary>
@@ -74,6 +76,7 @@ public partial class RenderedModelPreviewCache : Node
     public int PendingPreviewCount => _queue.Count;
     public int ActivePreviewViewportCount => _renderer is null ? 0 : 1;
     public int CompletedRenderCount { get; private set; }
+    internal DepthTreatment? RenderedTreatment { get; private set; }
     public int FailedRenderCount { get; private set; }
     public int CompletedMetadataCount => _metadata.Count;
     public bool GraphicsAvailable => DisplayServer.GetName() != "headless";
@@ -154,10 +157,10 @@ public partial class RenderedModelPreviewCache : Node
                 map.ClearCell(x, y);
                 map.SetTerrain(x, y, meadow);
             }
-        int width = subject.Defense is not null ? 1 : subject.Building?.Width ?? subject.Template?.Width ?? 6;
-        int height = subject.Building?.Height ?? subject.Template?.Height ?? 1;
+        int width = subject.Wall ? 6 : subject.Defense is not null ? 1 : subject.Building?.Width ?? subject.Template?.Width ?? 6;
+        int height = subject.Wall ? 1 : subject.Building?.Height ?? subject.Template?.Height ?? 1;
         var area = new CellRect((map.Width - width) / 2, (map.Height - height) / 2, width, height);
-        if (subject.Defense is null && subject.Building is { } building)
+        if (!subject.Wall && subject.Defense is null && subject.Building is { } building)
         {
             if (building.Zone != ZoneType.None)
                 foreach (var p in area.Cells()) map.SetZone(p.X, p.Y, building.Zone);
@@ -166,7 +169,7 @@ public partial class RenderedModelPreviewCache : Node
                     map.SetZone(p.X, p.Y, ZoneType.Residential);
             map.SetBuildingFootprint(building, area);
         }
-        else if (subject.Defense is null)
+        else if (!subject.Wall && subject.Defense is null)
         {
             var road = subject.Road ?? subject.Content.Roads.Get(subject.Template!.RoadName);
             var cells = subject.Template?.Cells(new Pos(area.X, area.Y)) ?? area.Cells().ToArray();
@@ -176,13 +179,15 @@ public partial class RenderedModelPreviewCache : Node
         _session!.SetViewport(8, 8);
         _session.CenterOn(new Pos(map.Width / 2, map.Height / 2));
         int extent = Math.Max(width, height);
-        _session.SetZoom((subject.Building is not null || subject.Defense is not null) && extent <= 2 ? 1 : extent <= 5 ? 0 : -1);
+        _session.SetZoom(subject.Defense is not null ? 1 : extent <= 5 ? 0 : extent <= 15 ? -1 : -2);
         _renderer = new PerspectiveCity
         {
             Name = "CanonicalModelPreviewRenderer", WaterMotionEnabled = false,
             DefenseModelPreview = subject.Defense is { } defense ? (new Pos(area.X, area.Y), defense) : null,
+            WallConstructionPreview = subject.Wall ? (new Pos(area.X + width / 2, area.Y), subject.Gate) : null,
         };
         AddChild(_renderer);
+        RenderedTreatment = _renderer.DepthTreatment;
         var renderSize = new Vector2(768, 576);
         _renderer.Sync(_session, renderSize);
         var center = new Vector2(area.X + width / 2f, area.Y + height / 2f);
@@ -190,20 +195,24 @@ public partial class RenderedModelPreviewCache : Node
             _session.CameraX + _session.ViewWidth * _session.Stride / 2f,
             _session.CameraY + _session.ViewHeight * _session.Stride / 2f));
         _renderer.Sync(_session, renderSize);
-        float shoulder = subject.Defense is not null ? 0.5f : subject.Building is not null ? 0.25f :
+        float shoulder = subject.Wall ? .5f : subject.Defense is not null ? 0.5f : subject.Building is not null ? 0.25f :
             (float)(subject.Road ?? subject.Content.Roads.Get(subject.Template!.RoadName)).WidthCells / 2 + 0.25f;
         var bounds = new Aabb(new Vector3(area.X - shoulder, 0, area.Y - shoulder),
             new Vector3(width + shoulder * 2, subject.Defense is not null ? 1.9f : 0.25f, height + shoulder * 2));
+        if (subject.Defense is not null && _renderer.DefensePreviewBounds is { } defenseBounds)
+            bounds = bounds.Merge(defenseBounds).Grow(.15f);
+        if (subject.Wall && _renderer.WallPreviewBounds is { } wallBounds)
+            bounds = wallBounds.Grow(.15f);
         IReadOnlyList<Aabb> volumes = subject.Building is not null
             ? _renderer.BuildingVolumes(new Pos(area.X, area.Y))
                 .Concat(_renderer.YardVolumes(new Pos(area.X, area.Y))).ToArray() : [];
-        if (subject.Building is not null)
+        if (!subject.Wall && subject.Building is not null)
         {
             foreach (var volume in volumes)
                 bounds = bounds.Merge(volume);
-            // Roof triangles are not in BuildingVolumes; include their peaks and overhangs.
-            bounds = bounds.Grow(0.35f);
-            bounds.Size += Vector3.Up * 1.2f;
+            foreach (var point in _renderer.BuildingRoofVertices(new Pos(area.X, area.Y)))
+                bounds = bounds.Expand(point);
+            bounds = bounds.Grow(0.15f);
         }
         var points = Enumerable.Range(0, 8).Select(index => _renderer.ScreenPoint(bounds.GetEndpoint(index))).ToArray();
         int left = Math.Max(0, (int)MathF.Floor(points.Min(p => p.X)) - 6);
@@ -211,7 +220,7 @@ public partial class RenderedModelPreviewCache : Node
         int right = Math.Min((int)renderSize.X, (int)MathF.Ceiling(points.Max(p => p.X)) + 6);
         int bottom = Math.Min((int)renderSize.Y, (int)MathF.Ceiling(points.Max(p => p.Y)) + 6);
         _crop = new Rect2I(left, top, Math.Max(1, right - left), Math.Max(1, bottom - top));
-        if (subject.Building is not null && volumes.Count > 0)
+        if (!subject.Wall && subject.Building is not null && volumes.Count > 0)
             _crop = FitBuildingCrop(_crop, volumes, new Pos(area.X, area.Y));
         _active = subject;
         _draws = 0;
@@ -251,7 +260,7 @@ public partial class RenderedModelPreviewCache : Node
             FailIfTimedOut();
             return;
         }
-        using var cropped = image.GetRegion(_crop);
+        using var cropped = image.GetRegion(_renderer.DisplayRegionToRender(_crop));
         if (!HasSubjectPixels(cropped))
         {
             FailIfTimedOut();

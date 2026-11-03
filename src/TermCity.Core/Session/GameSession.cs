@@ -306,6 +306,7 @@ public sealed partial class GameSession
     /// <summary>Moves the highlight cursor to a cell without selecting anything and without scrolling.</summary>
     public void PlaceCursor(Pos p)
     {
+        ClearEnemySelection();
         HasCursor = true;
         Cursor = Clamp(p);
         Anchor = null;
@@ -392,6 +393,7 @@ public sealed partial class GameSession
 
     private void MoveCursorCells(int dx, int dy, bool extend)
     {
+        ClearEnemySelection();
         HasCursor = true;
         if (RoadToolActive)
         {
@@ -441,6 +443,7 @@ public sealed partial class GameSession
     /// <summary>Single click: selects exactly one cell.</summary>
     public void SelectCell(Pos p)
     {
+        ClearEnemySelection();
         HasCursor = true;
         Cursor = Clamp(p);
         Anchor = null;
@@ -455,6 +458,7 @@ public sealed partial class GameSession
     /// </summary>
     public void BeginDrag(Pos p, bool extend = false)
     {
+        ClearEnemySelection();
         HasCursor = true;
         if (RoadToolActive)
         {
@@ -522,6 +526,7 @@ public sealed partial class GameSession
 
     public void ClearSelection()
     {
+        ClearEnemySelection();
         ClearPreview();
         Anchor = null;
         Selection = null;

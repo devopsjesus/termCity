@@ -17,10 +17,10 @@ public class BuildingRotationTests
     }
 
     [Theory]
-    [InlineData(0, 2, 1)]
-    [InlineData(1, 1, 2)]
-    [InlineData(2, 2, 1)]
-    [InlineData(3, 1, 2)]
+    [InlineData(0, 10, 5)]
+    [InlineData(1, 5, 10)]
+    [InlineData(2, 10, 5)]
+    [InlineData(3, 5, 10)]
     public void PreviewPlacementAndSavesAgreeOnRotatedFootprints(int rotation, int width, int height)
     {
         var session = new GameSession(ReadyCity());
@@ -32,18 +32,18 @@ public class BuildingRotationTests
         Assert.Equal(new CellRect(10, 10, width, height), session.Preview.Area);
         Assert.Null(session.BuildingPlacementError);
         Assert.Equal(building.Cost, session.Preview.Quote.Cost);
-        session.MoveBuildingPlacement(new(12, 12));
-        var footprint = new CellRect(12, 12, width, height);
+        session.MoveBuildingPlacement(new(12, 8));
+        var footprint = new CellRect(12, 8, width, height);
         Assert.Equal(footprint, session.Preview!.Area);
         Assert.Equal(rotation, session.Preview.Rotation);
         Assert.True(session.ConfirmPreview().Success);
         var map = session.Game.Map;
-        Assert.Equal(footprint, map.BuildingFootprintAt(12, 12));
-        Assert.Equal(rotation, map.BuildingRotations.GetValueOrDefault(map.Index(12, 12)));
+        Assert.Equal(footprint, map.BuildingFootprintAt(12, 8));
+        Assert.Equal(rotation, map.BuildingRotations.GetValueOrDefault(map.Index(12, 8)));
         Assert.All(footprint.Cells(), cell => Assert.Same(building, map.BuildingAt(cell.X, cell.Y)));
         var restored = SaveGameStore.Deserialize(SaveGameStore.Serialize(session.Game));
-        Assert.Equal(footprint, restored.Map.BuildingFootprintAt(12, 12));
-        Assert.Equal(rotation, restored.Map.BuildingRotations.GetValueOrDefault(restored.Map.Index(12, 12)));
+        Assert.Equal(footprint, restored.Map.BuildingFootprintAt(12, 8));
+        Assert.Equal(rotation, restored.Map.BuildingRotations.GetValueOrDefault(restored.Map.Index(12, 8)));
     }
 
     [Fact]
@@ -71,14 +71,15 @@ public class BuildingRotationTests
         var session = new GameSession(ReadyCity());
         var map = session.Game.Map;
         var building = map.Content.Buildings.Get("Tavern");
-        map.SetTerrain(10, 11, map.Content.Terrains.Get("Hill"));
+        map.SetTerrain(10, 16, map.Content.Terrains.Get("Hill"));
         session.Game.Touch();
         session.PlaceCursor(new(10, 10));
         session.PreviewBuilding(building);
         Assert.Equal(building.Cost, session.Preview!.Quote.Cost);
         session.RotateBuildingPlacement(1);
-        Assert.Equal((int)Math.Round(building.Cost * 1.25), session.Preview!.Quote.Cost);
-        map.SetZone(10, 11, ZoneType.Residential);
+        Assert.Equal((int)Math.Round(building.Cost * (1 + 0.5 / (building.Width * building.Height))),
+            session.Preview!.Quote.Cost);
+        map.SetZone(10, 16, ZoneType.Residential);
         session.Game.Touch();
         session.MoveBuildingPlacement(new(10, 10));
         Assert.Contains("zone blocks", session.BuildingPlacementError);
@@ -94,12 +95,12 @@ public class BuildingRotationTests
     {
         var session = new GameSession(ReadyCity());
         var map = session.Game.Map;
-        session.PlaceCursor(new(map.Width - 1, 10));
+        session.PlaceCursor(new(map.Width - 5, 10));
         session.PreviewBuilding(map.Content.Buildings.Get("Tavern"));
         Assert.Contains("fully inside", session.BuildingPlacementError);
         session.RotateBuildingPlacement(1);
         Assert.Null(session.BuildingPlacementError);
-        Assert.Equal(new Pos(map.Width - 1, 10), session.Cursor);
+        Assert.Equal(new Pos(map.Width - 5, 10), session.Cursor);
         Assert.True(session.ConfirmPreview().Success);
     }
 
@@ -117,7 +118,7 @@ public class BuildingRotationTests
         session.RequestUndo();
         session.SelectPrompt(0);
         Assert.Equal(1, session.Game.Map.BuildingRotations[session.Game.Map.Index(10, 10)]);
-        Assert.Equal(new CellRect(10, 10, 1, 2), session.Game.Map.BuildingFootprintAt(10, 10));
+        Assert.Equal(new CellRect(10, 10, 5, 10), session.Game.Map.BuildingFootprintAt(10, 10));
     }
 
     [Theory]
@@ -151,7 +152,7 @@ public class BuildingRotationTests
         json.AsObject().Remove("BuildingRotations");
         var restored = SaveGameStore.Deserialize(json.ToJsonString());
         Assert.Empty(restored.Map.BuildingRotations);
-        Assert.Equal(new CellRect(10, 10, 2, 1), restored.Map.BuildingFootprintAt(10, 10));
+        Assert.Equal(new CellRect(10, 10, 10, 5), restored.Map.BuildingFootprintAt(10, 10));
     }
 
     [Fact]

@@ -27,16 +27,16 @@ public class DebugSiegeControlsTests
         var state = game.Settlement!;
         int wave = state.WaveNumber, money = game.Money, mapVersion = game.MapVersion, population = game.Stats.Population;
         ulong random = game.Rng.State;
-        int firstId = state.Goblins.Max(g => g.Id);
+        int firstId = state.Enemies.Max(g => g.Id);
         Assert.True(session.DebugStartWave(size).Success);
-        Assert.Equal(size, state.Goblins.Count);
+        Assert.Equal(size, state.Enemies.Count);
         Assert.Equal(wave + 1, state.WaveNumber);
         Assert.Equal(1, state.NextWaveFraction);
         Assert.Equal(money, game.Money);
         Assert.Equal(population, game.Stats.Population);
         Assert.Equal(mapVersion, game.MapVersion);
         Assert.Equal(random, game.Rng.State);
-        Assert.All(state.Goblins, goblin =>
+        Assert.All(state.Enemies, goblin =>
         {
             Assert.True(goblin.Id > firstId);
             Assert.True(game.Map.TerrainAt((int)goblin.X, (int)goblin.Y).Buildable);
@@ -97,7 +97,7 @@ public class DebugSiegeControlsTests
         Assert.Equal(money, game.Money);
         Assert.Equal(buildings, game.Map.BuildingFootprints.ToArray());
         Assert.True(session.DebugClearGoblins().Success);
-        Assert.Empty(state.Goblins);
+        Assert.Empty(state.Enemies);
         Assert.Empty(state.Projectiles);
         Assert.Equal(wave, state.WaveNumber);
         Assert.Equal(1, state.NextWaveFraction);
@@ -161,11 +161,11 @@ public class DebugSiegeControlsTests
         var session = Siege();
         session.Game.Paused = true;
         Assert.True(session.DebugClearGoblins().Success);
-        Assert.Empty(session.Game.Settlement!.Goblins);
+        Assert.Empty(session.Game.Settlement!.Enemies);
         session.RequestUndo();
         session.SelectPrompt(0);
         Assert.True(session.DebugSiegeMode);
-        Assert.Equal(24, session.Game.Settlement!.Goblins.Count);
+        Assert.Equal(24, session.Game.Settlement!.Enemies.Count);
         Assert.Equal(1, session.Game.Settlement.WaveNumber);
         Assert.True(session.Game.Paused);
     }

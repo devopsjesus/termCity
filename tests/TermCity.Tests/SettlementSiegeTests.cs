@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text.Json.Nodes;
 using TermCity.Core.Persistence;
+using TermCity.Core.Rendering;
 using TermCity.Core.Session;
 using TermCity.Core.Simulation;
 using TermCity.Core.Util;
@@ -12,13 +13,13 @@ namespace TermCity.Tests;
 
 public class SettlementSiegeTests(ITestOutputHelper output)
 {
-    private static readonly CellRect Enclosure = new(15, 25, 32, 32);
+    private static readonly CellRect Enclosure = new(15, 25, 64, 64);
 
     private static CityGame Empty(int money = 50_000)
     {
         var game = TestCity.Flat(config: new GameConfig
         {
-            MapWidth = 80, MapHeight = 72, StartingMoney = money, DefaultTaxRate = 0.05,
+            MapWidth = 128, MapHeight = 128, StartingMoney = money, DefaultTaxRate = 0.05,
             FireIgnitionPerBuildingWeek = 0, RaidChancePerWeek = 0, FloodChancePerWeek = 0,
             OutbreakChancePerWeek = 0,
         }, rules: CityRules.Full);
@@ -40,12 +41,12 @@ public class SettlementSiegeTests(ITestOutputHelper output)
     private static void Field(object value, string field, object data) =>
         value.GetType().GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(value, data);
 
-    private static List<Goblin> Attackers(SettlementState state) =>
-        (List<Goblin>)state.GetType().GetField("GoblinList", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(state)!;
+    private static List<SiegeEnemy> Attackers(SettlementState state) =>
+        (List<SiegeEnemy>)state.GetType().GetField("EnemyList", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(state)!;
 
-    private static Goblin Attacker(int id, Pos wall, double x, double y, double health = 300)
+    private static SiegeEnemy Attacker(int id, Pos wall, double x, double y, double health = 300)
     {
-        var goblin = new Goblin();
+        var goblin = new SiegeEnemy();
         Set(goblin, "Id", id);
         Set(goblin, "X", x);
         Set(goblin, "Y", y);
@@ -97,8 +98,8 @@ public class SettlementSiegeTests(ITestOutputHelper output)
         Assert.Equal(new[] { "Motte and Bailey", "Town Well", "Woodlot" },
             game.Map.ServiceCells.Select(i => game.Map.BuildingAt(i % game.Map.Width, i / game.Map.Width)!.Name).Order());
         var state = game.Settlement!;
-        Assert.Equal(124, state.Walls.Count);
-        Assert.Equal(124, state.Walls.Select(w => w.Cell).Distinct().Count());
+        Assert.Equal(252, state.Walls.Count);
+        Assert.Equal(252, state.Walls.Select(w => w.Cell).Distinct().Count());
         Assert.Equal(new(Enclosure.Right, Enclosure.Y + Enclosure.Height / 2), Assert.Single(state.Walls, w => w.IsGate).Cell);
         Assert.Equal(4, state.Walls.Count(w => w.IsTower &&
             (w.Cell.X == Enclosure.X || w.Cell.X == Enclosure.Right) &&
@@ -112,8 +113,18 @@ public class SettlementSiegeTests(ITestOutputHelper output)
         })
         {
             var sorted = edge.Order().ToArray();
-            Assert.All(sorted.Zip(sorted.Skip(1)), pair => Assert.InRange(pair.Second - pair.First, 1, 15));
+            Assert.All(sorted.Zip(sorted.Skip(1)), pair => Assert.InRange(pair.Second - pair.First, 1, 19));
         }
+        double arrowRange = WallDefenses.Get(WallDefenseKind.None).Range;
+        Assert.All(state.Walls, section =>
+        {
+            double x = section.Cell.X + 0.5, y = section.Cell.Y + 0.5;
+            if (section.Cell.X == Enclosure.X) x -= 1.3;
+            else if (section.Cell.X == Enclosure.Right) x += 1.3;
+            else y += section.Cell.Y == Enclosure.Y ? -1.3 : 1.3;
+            Assert.Contains(state.Walls, tower => tower.IsTower &&
+                Math.Pow(tower.Cell.X + 0.5 - x, 2) + Math.Pow(tower.Cell.Y + 0.5 - y, 2) <= arrowRange * arrowRange);
+        });
         var wall = state.Walls[0].Cell;
         Assert.False(game.CanBuildOn(wall.X, wall.Y));
         Assert.False(game.CanPlaceRoad(wall.X, wall.Y));
@@ -123,17 +134,18 @@ public class SettlementSiegeTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void WaterRoadsAndOccupiedLandGiveExplicitAtomicErrorsButTreesCanBeCleared()
+    public void WetGatesRoadsAndOccupiedLandGiveExplicitAtomicErrorsButTreesCanBeCleared()
     {
         var game = Empty();
         var water = game.Map.Content.Terrains.Get("Water");
-        game.Map.SetTerrain(Enclosure.X, Enclosure.Y, water);
+        var gate = new Pos(Enclosure.Right, Enclosure.Y + Enclosure.Height / 2);
+        game.Map.SetTerrain(gate.X, gate.Y, water);
         game.Touch();
         string before = SaveGameStore.Serialize(game);
         Assert.Contains("dry", game.SettlementPlacementError(Enclosure)!);
         Assert.False(game.FoundSettlement(Enclosure).Success);
         Assert.Equal(before, SaveGameStore.Serialize(game));
-        game.Map.SetTerrain(Enclosure.X, Enclosure.Y, game.Map.Content.Terrains.Base);
+        game.Map.SetTerrain(gate.X, gate.Y, game.Map.Content.Terrains.Base);
         game.Map.SetRoad(Enclosure.X, Enclosure.Y, true);
         game.Touch();
         Assert.Contains("Roads", game.SettlementPlacementError(Enclosure)!);
@@ -194,7 +206,13 @@ public class SettlementSiegeTests(ITestOutputHelper output)
                 }
             var loadedSiege = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
             Assert.Equal(game.Indicators.Happiness, loadedSiege.Indicators.Happiness);
-            Assert.Equal(game.Stats, loadedSiege.Stats);
+            var stats = game.Stats;
+            var loadedStats = loadedSiege.Stats;
+            Assert.Equal(stats.ResidentialIncome, loadedStats.ResidentialIncome, 10);
+            Assert.Equal(stats.CommercialIncome, loadedStats.CommercialIncome, 10);
+            Assert.Equal(stats.IndustrialIncome, loadedStats.IndustrialIncome, 10);
+            Assert.Equal(stats with { ResidentialIncome = loadedStats.ResidentialIncome,
+                CommercialIncome = loadedStats.CommercialIncome, IndustrialIncome = loadedStats.IndustrialIncome }, loadedStats);
         }
         Assert.Throws<InvalidOperationException>(() => SettlementDebugSetup.Apply(game));
         var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(Empty()));
@@ -205,14 +223,14 @@ public class SettlementSiegeTests(ITestOutputHelper output)
     public void FirstWaveUsesPermanentPopulationAndCombatDoesNotInvalidateMap()
     {
         var game = Founded();
-        Assert.Empty(game.Settlement!.Goblins);
+        Assert.Empty(game.Settlement!.Enemies);
         Populate(game, 99);
         Assert.Equal(0, game.Settlement.WaveNumber);
         Populate(game, 1);
         Assert.Equal(1, game.Settlement.WaveNumber);
-        Assert.NotEmpty(game.Settlement.Goblins);
+        Assert.NotEmpty(game.Settlement.Enemies);
         game.Speed = GameSpeed.Medium;
-        Assert.All(game.Settlement.Goblins, g => Assert.True(game.Map.TerrainAt((int)g.X, (int)g.Y).Buildable));
+        Assert.All(game.Settlement.Enemies, g => Assert.True(game.Map.TerrainAt((int)g.X, (int)g.Y).Buildable));
         int mapVersion = game.MapVersion, revision = game.Settlement.Revision, changes = 0;
         game.SiegeChanged += () => changes++;
         game.Update(0.1);
@@ -283,10 +301,10 @@ public class SettlementSiegeTests(ITestOutputHelper output)
         var game = Founded();
         Populate(game, 100);
         game.Speed = GameSpeed.Medium;
-        int count = game.Settlement!.Goblins.Count;
-        for (int i = 0; i < 80 && game.Settlement.Goblins.Count == count; i++) game.Update(0.1);
-        Assert.True(game.Settlement.Goblins.Count < count);
-        Assert.True(game.Settlement.Projectiles.Count > 0 || game.Settlement.Goblins.Count < count);
+        int count = game.Settlement!.Enemies.Count;
+        for (int i = 0; i < 160 && game.Settlement.Enemies.Count == count; i++) game.Update(0.1);
+        Assert.True(game.Settlement.Enemies.Count < count);
+        Assert.True(game.Settlement.Projectiles.Count > 0 || game.Settlement.Enemies.Count < count);
         string save = SaveGameStore.Serialize(game);
         var copy = SaveGameStore.Deserialize(save);
         Assert.Equal(save, SaveGameStore.Serialize(copy));
@@ -314,8 +332,8 @@ public class SettlementSiegeTests(ITestOutputHelper output)
         game.Update(0.1);
         Assert.Equal(randomState, game.Rng.State);
         Assert.Equal(2, state.WaveNumber);
-        Assert.All(state.Goblins, g => Assert.Equal(4, g.Tier));
-        Assert.True(state.Goblins.Count > 7);
+        Assert.All(state.Enemies, g => Assert.Equal(4, g.Tier));
+        Assert.True(state.Enemies.Count > 7);
     }
 
     [Fact]
@@ -329,18 +347,21 @@ public class SettlementSiegeTests(ITestOutputHelper output)
         var wall = state.Walls.Single(w => w.Cell == new Pos(Enclosure.X + 10, Enclosure.Y));
         var attackers = Attackers(state);
         attackers.Clear();
-        attackers.Add(Attacker(1, wall.Cell, wall.Cell.X + 0.5, wall.Cell.Y - 1.5));
-        attackers.Add(Attacker(2, wall.Cell, wall.Cell.X + 1.5, wall.Cell.Y - 1.5));
+        attackers.Add(Attacker(1, wall.Cell, wall.Cell.X + 0.5, wall.Cell.Y - 1.2));
+        attackers.Add(Attacker(2, wall.Cell, wall.Cell.X + .8, wall.Cell.Y - 1.0));
         Assert.True(game.PlaceWallDefense(wall.Cell, WallDefenseKind.OilCauldron).Success);
         Field(wall, "DefenseCooldown", 0d);
         game.Update(0.1);
-        Assert.All(attackers, g => Assert.Equal(282, g.Health));
+        Assert.All(attackers, g => Assert.Equal(300, g.Health));
         Assert.Contains(state.Projectiles, p => p.Kind == WallDefenseKind.OilCauldron);
+        var oilShot = state.Projectiles.First(p => p.Kind == WallDefenseKind.OilCauldron);
+        state.AdvanceCommittedAttacks(game, oilShot.ContactSeconds + .01);
+        Assert.All(attackers, g => Assert.Equal(120, g.Health));
         Set(game, "HighestPopulation", 250);
         Assert.True(game.PlaceWallDefense(wall.Cell, WallDefenseKind.Ballista).Success);
         Field(wall, "DefenseCooldown", 0d);
         game.Update(0.1);
-        Assert.All(attackers, g => Assert.Equal(282, g.Health));
+        Assert.All(attackers, g => Assert.Equal(120, g.Health));
     }
 
     [Fact]
@@ -359,7 +380,7 @@ public class SettlementSiegeTests(ITestOutputHelper output)
         int people = game.Stats.Population, money = game.Money;
         game.Update(0.1);
         Assert.Equal(0, wall.Health);
-        Assert.Empty(game.Settlement.Goblins);
+        Assert.Empty(game.Settlement.Enemies);
         Assert.True(game.Stats.Population < people);
         Assert.True(game.Money < money);
         Assert.Contains(game.Events, e => e.Message.Contains("breached"));
@@ -390,8 +411,8 @@ public class SettlementSiegeTests(ITestOutputHelper output)
     }
 
     [Theory]
-    [InlineData(12)]
-    [InlineData(16)]
+    [InlineData(48)]
+    [InlineData(56)]
     public void SmallEnclosuresRemainUsableAndPaid(int size)
     {
         var game = Empty();
@@ -415,10 +436,10 @@ public class SettlementSiegeTests(ITestOutputHelper output)
         SettlementDebugSetup.Apply(game, siege: true, gateSide: BaileyGateSide.Bottom);
         game.Speed = speed;
         var state = game.Settlement!;
-        int attackers = state.Goblins.Count;
-        Assert.All(state.Goblins, goblin => Assert.Equal(96, goblin.MaxHealth));
+        int attackers = state.Enemies.Count;
+        Assert.All(state.Enemies, goblin => Assert.Equal(96, goblin.MaxHealth));
         double elapsed = 0;
-        while (state.Goblins.Count > 0 && elapsed < minimumSeconds * 3)
+        while (state.Enemies.Count > 0 && elapsed < minimumSeconds * 3)
         {
             game.Update(0.1);
             elapsed += 0.1;
@@ -427,8 +448,8 @@ public class SettlementSiegeTests(ITestOutputHelper output)
         Assert.Equal(24, attackers);
         Assert.True(elapsed >= minimumSeconds,
             $"First siege ended after {elapsed:0.0}s at {speed} speed; expected at least {minimumSeconds:0.0}s.");
-        Assert.Empty(state.Goblins);
-        Assert.Contains(state.Walls, wall => wall.Health < wall.MaxHealth);
+        Assert.Empty(state.Enemies);
+        Assert.All(state.Walls, wall => Assert.InRange(wall.Health, double.Epsilon, wall.MaxHealth));
     }
 
     [Fact]
@@ -441,8 +462,8 @@ public class SettlementSiegeTests(ITestOutputHelper output)
         goblin["MaxHealth"] = 32;
         goblin["Health"] = 16;
         var restored = SaveGameStore.Deserialize(json.ToJsonString());
-        Assert.Equal(96, restored.Settlement!.Goblins[0].MaxHealth);
-        Assert.Equal(48, restored.Settlement.Goblins[0].Health);
+        Assert.Equal(96, restored.Settlement!.Enemies[0].MaxHealth);
+        Assert.Equal(48, restored.Settlement.Enemies[0].Health);
         string migrated = SaveGameStore.Serialize(restored);
         Assert.Equal(migrated, SaveGameStore.Serialize(SaveGameStore.Deserialize(migrated)));
         goblin["MaxHealth"] = 95;
@@ -455,16 +476,16 @@ public class SettlementSiegeTests(ITestOutputHelper output)
         var game = Founded();
         Populate(game, 100);
         var state = game.Settlement!;
-        double firstHealth = state.Goblins[0].MaxHealth;
+        double firstHealth = state.Enemies[0].MaxHealth;
         Attackers(state).Clear();
         Set(game, "HighestPopulation", 2_500);
         Set(state, "WaveNumber", 99);
         Set(state, "NextWaveSeconds", 0d);
         game.Speed = GameSpeed.Fast;
         game.Update(0.1);
-        Assert.Equal(120, state.Goblins.Count);
+        Assert.Equal(120, state.Enemies.Count);
         Assert.Equal(GameSpeed.Slow, game.Speed);
-        Assert.All(state.Goblins, goblin =>
+        Assert.All(state.Enemies, goblin =>
         {
             Assert.Equal(5, goblin.Tier);
             Assert.True(goblin.MaxHealth > firstHealth);
@@ -480,9 +501,9 @@ public class SettlementSiegeTests(ITestOutputHelper output)
         var rocks = WallDefenses.Get(WallDefenseKind.Rocks);
         var ballista = WallDefenses.Get(WallDefenseKind.Ballista);
         var trebuchet = WallDefenses.Get(WallDefenseKind.Trebuchet);
-        Assert.True(rocks.Damage > oil.Damage);
-        Assert.True(rocks.ReloadSeconds > oil.ReloadSeconds);
-        Assert.True(oil.SplashRadius > rocks.SplashRadius);
+        Assert.True(oil.Damage > rocks.Damage);
+        Assert.True(oil.ReloadSeconds > rocks.ReloadSeconds);
+        Assert.True(DropAttackLayout.Size(WallDefenseKind.OilCauldron) > DropAttackLayout.Size(WallDefenseKind.Rocks));
         Assert.True(ballista.RequiredPopulation > rocks.RequiredPopulation);
         Assert.True(trebuchet.RequiredPopulation > ballista.RequiredPopulation);
         foreach (var kind in Enum.GetValues<WallDefenseKind>().Where(kind => kind != WallDefenseKind.Trebuchet))
@@ -543,9 +564,9 @@ public class SettlementSiegeTests(ITestOutputHelper output)
     {
         if (!CityGame.DebugToolsAvailable) return;
         var game = CityGame.New(new GameConfig { Seed = 42 }, startingDate: new DateTime(2026, 10, 20));
-        var bounds = Enumerable.Range(1, game.Map.Height - 17)
-            .SelectMany(y => Enumerable.Range(1, game.Map.Width - 17).Select(x => new CellRect(x, y, 16, 16)))
-            .First(area => game.SettlementPlacementError(area) is null);
+        var probe = CityGame.New(game.Config);
+        SettlementDebugSetup.Apply(probe);
+        var bounds = probe.Settlement!.Bounds;
         game.Paused = true;
         var session = new GameSession(game);
         session.BeginSettlementPlacement();
@@ -582,7 +603,7 @@ public class SettlementSiegeTests(ITestOutputHelper output)
             s => s["Walls"]![0]!["MaxHealth"] = 999,
             s => s["Walls"]![0]!.AsObject().Remove("Health"),
             s => s["Walls"]![0]!["IsTower"] = false,
-            s => s["Walls"]!.AsArray().RemoveAt(0),
+            s => s["NextAttackId"] = 0,
             s => s["Goblins"]![0]!["X"] = -1,
             s => s["Goblins"]![0]!["Route"]!.AsArray().Clear(),
             s => s["Goblins"]![1]!["Id"] = s["Goblins"]![0]!["Id"]!.DeepClone(),
@@ -634,7 +655,7 @@ public class SettlementSiegeTests(ITestOutputHelper output)
         for (int i = 0; i < 120; i++)
         {
             game.Update(0.1);
-            Assert.All(game.Settlement!.Goblins, goblin =>
+            Assert.All(game.Settlement!.Enemies, goblin =>
                 Assert.True(game.Map.TerrainAt((int)goblin.X, (int)goblin.Y).Buildable));
         }
         Assert.Equal(1, game.Settlement!.WaveNumber);

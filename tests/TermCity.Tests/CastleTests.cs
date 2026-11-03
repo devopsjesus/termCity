@@ -11,8 +11,8 @@ public class CastleTests
     private static CityGame Town()
     {
         var game = TestCity.Flat(1, new GameConfig { StartingMoney = 5_000_000, DefaultTaxRate = 0.09 }, CityRules.Full);
-        Assert.True(game.Designate(new CellRect(10, 18, 50, 2), ZoneType.Residential).Success);
-        Assert.True(game.Designate(new CellRect(10, 21, 50, 2), ZoneType.Residential).Success);
+        Assert.True(game.Designate(new CellRect(10, 10, 50, 10), ZoneType.Residential).Success);
+        Assert.True(game.Designate(new CellRect(10, 21, 50, 10), ZoneType.Residential).Success);
         return game;
     }
 
@@ -53,7 +53,7 @@ public class CastleTests
         int near = game.Map.Index(55, 18), far = game.Map.Index(10, 22);
         Assert.Equal(0, game.Services.Coverage(ServiceKind.Defence, near));
 
-        Assert.True(game.PlaceBuilding(Type(game, "Motte and Bailey"), new CellRect(62, 19, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(Type(game, "Motte and Bailey"), new CellRect(62, 10, 1, 1)).Success);
         game.Map.BuildingEstablishedDays.Clear();
         game.Touch();
 
@@ -79,9 +79,9 @@ public class CastleTests
         int cell = game.Map.Index(55, 18);
         double bareValue = CityAnalysis.LandValue(game, cell);
 
-        Assert.True(game.PlaceBuilding(Type(game, "Motte and Bailey"), new CellRect(62, 19, 1, 1)).Success);
-        Assert.True(game.PlaceBuilding(Type(game, "Chapel"), new CellRect(64, 19, 1, 1)).Success);
-        Assert.True(game.PlaceBuilding(Type(game, "Market Cross"), new CellRect(66, 19, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(Type(game, "Motte and Bailey"), new CellRect(62, 10, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(Type(game, "Chapel"), new CellRect(62, 21, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(Type(game, "Market Cross"), new CellRect(73, 21, 1, 1)).Success);
         game.Map.BuildingEstablishedDays.Clear();
         game.Touch();
 
@@ -114,7 +114,7 @@ public class CastleTests
     public void ACastleSavesAndLoads()
     {
         var game = Town();
-        Assert.True(game.PlaceBuilding(Type(game, "Motte and Bailey"), new CellRect(62, 19, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(Type(game, "Motte and Bailey"), new CellRect(62, 10, 1, 1)).Success);
         game.Touch();
         var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
         Assert.Equal(1, loaded.Services.SeatRank);

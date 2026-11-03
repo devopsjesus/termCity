@@ -5,22 +5,34 @@ namespace TermCity.Core.Simulation;
 public sealed partial class SettlementState
 {
     internal Pos? RepairTarget;
+    internal int? RepairTargetId;
     internal double RepairPhase;
 
-    public Pos? RepairingWall => GoblinList.Count == 0 ? DamagedRepairTarget?.Cell : null;
+    public Pos? RepairingWall => DamagedRepairTarget?.Cell;
+    public WallComponent? RepairingSection => DamagedRepairTarget;
+    public WallComponent? VisibleRepairingSection => EnemyList.Count == 0 &&
+        DamagedRepairTarget is { RepairAnimationActive: true } wall ? wall : null;
+    public Pos? VisibleRepairingWall => VisibleRepairingSection?.Cell;
     public double RepairAnimationPhase => RepairingWall is not null ? RepairPhase : 0;
 
-    private WallComponent? DamagedRepairTarget =>
-        RepairTarget is { } cell && WallAt(cell) is { } wall && wall.Health < wall.MaxHealth ? wall : null;
+    private WallComponent? DamagedRepairTarget
+    {
+        get
+        {
+            var wall = RepairTargetId is { } id ? WallList.FirstOrDefault(w => w.Id == id) :
+                RepairTarget is { } cell ? WallAt(cell) : null;
+            return wall is not null && wall.Health < wall.MaxHealth ? wall : null;
+        }
+    }
 
     /// <summary>Civilian wall-health restored each simulation second, without a treasury cost.</summary>
     public double RepairRatePerSecond(CityGame game) => game.Stats.Population <= 0 ? 0 :
-        1 + 0.02 * game.Stats.Population + 0.75 * game.Stats.Industrial.Occupied +
-        0.25 * game.Services.ActiveCounts.Sum();
+        12 + 0.24 * game.Stats.Population + 9 * game.Stats.Industrial.Occupied +
+        3 * game.Services.ActiveCounts.Sum();
 
     internal void AdvanceRepairs(CityGame game, double seconds)
     {
-        if (game.Paused || GoblinList.Count != 0) return;
+        if (game.Paused) return;
         if (WaveNumber == 0 || game.Stats.Population <= 0)
         {
             ClearRepairCrew();
@@ -30,12 +42,26 @@ public sealed partial class SettlementState
 
         double work = RepairRatePerSecond(game) * seconds;
         var target = DamagedRepairTarget;
+        if (EnemyList.Count > 0)
+        {
+            var urgent = WallSections.Where(w => w.Health < w.MaxHealth)
+                .OrderBy(w => w.Health == 0 ? 0 : 1)
+                .ThenBy(w => w.Health / w.MaxHealth).ThenBy(w => w.Cell.Y).ThenBy(w => w.Cell.X).FirstOrDefault();
+            if (urgent is not null && (target is null ||
+                urgent.Health / urgent.MaxHealth + 0.10 < target.Health / target.MaxHealth))
+            {
+                target = urgent;
+                RepairTarget = urgent.Cell;
+                RepairTargetId = urgent.Id;
+                RepairPhase = 0;
+            }
+        }
         if (target is null) ClearRepairCrew();
         while (work > 0)
         {
             if (target is null)
             {
-                target = WallList.Where(w => w.Health < w.MaxHealth)
+                target = WallSections.Where(w => w.Health < w.MaxHealth)
                     .OrderBy(w => w.Health == 0 ? 0 : 1)
                     .ThenBy(w => w.Health / w.MaxHealth).FirstOrDefault();
                 if (target is null)
@@ -44,6 +70,7 @@ public sealed partial class SettlementState
                     return;
                 }
                 RepairTarget = target.Cell;
+                RepairTargetId = target.Id;
                 RepairPhase = 0;
             }
 
@@ -62,6 +89,7 @@ public sealed partial class SettlementState
     internal void ClearRepairCrew()
     {
         RepairTarget = null;
+        RepairTargetId = null;
         RepairPhase = 0;
     }
 }

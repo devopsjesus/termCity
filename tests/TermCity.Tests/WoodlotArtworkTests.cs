@@ -48,8 +48,8 @@ public class WoodlotArtworkTests
         Assert.Contains(WoodlotArtwork.BarkColor, colors);
         Assert.DoesNotContain(colors, TreeAppearance.IsFoliageColor);
         Assert.DoesNotContain(0x53694a, colors);
-        Assert.Equal(2, woodlot.Width);
-        Assert.Equal(2, woodlot.Height);
+        Assert.Equal(10, woodlot.Width);
+        Assert.Equal(10, woodlot.Height);
         Assert.Equal(300, woodlot.Capacity);
         Assert.Contains("fenced yard", woodlot.Description);
     }

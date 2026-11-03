@@ -137,8 +137,8 @@ public class ClockTests
     public void GrowthIsSpreadOverTheDaysOfTheWeekAndTaxesArriveAtTheEnd()
     {
         var game = TestCity.Flat();
-        game.Designate(new CellRect(0, 21, 160, 2), ZoneType.Residential);
-        game.Designate(new CellRect(0, 18, 160, 2), ZoneType.Residential);
+        game.Designate(new CellRect(0, 21, 160, 10), ZoneType.Residential);
+        game.Designate(new CellRect(0, 10, 160, 10), ZoneType.Residential);
         int money = game.Money;
 
         // After a few weeks the weekly cap is big enough to be spread over several days.
@@ -378,7 +378,7 @@ public class SessionTests
         Assert.True(s.QuickSave());
         s.Demolish();
         s.SelectCell(new Pos(10, 10));
-        s.Game.Demolish(new CellRect(10, 10, 2, 1));
+        s.Game.Demolish(new CellRect(10, 10, 5, 5));
         Assert.Equal(0, s.Game.Stats.Commercial.Zoned);
         Assert.True(s.QuickLoad());
         Assert.Equal(zoned, s.Game.Stats.Commercial.Zoned);
