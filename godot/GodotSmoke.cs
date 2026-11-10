@@ -5423,13 +5423,13 @@ internal static class GodotSmoke
             "Growth title must be centered and yellow.");
         Require(Descendants(growthDialog).OfType<TerminalFrame>().Single(frame => frame.Name == "ReportSectionHeader0")
             .GetChild<Label>(0).Modulate == new Color("#88ee99") &&
-            !Descendants(growthDialog).OfType<Label>().Any(label => label.Name == "NewServicesHeader"),
-            "The first city-size milestone must be green without an empty New Services section.");
+            Descendants(growthDialog).OfType<Label>().Count(label => label.Name == "NewServicesHeader") == 1,
+            "Hamlet must have a green city-size heading and one New Services section for its military unlocks.");
         var citySizeHeading = Descendants(growthDialog).OfType<TerminalFrame>()
             .Single(frame => frame.Name == "ReportSectionHeader0").GetChild<Label>(0);
         Require(citySizeHeading.HorizontalAlignment == HorizontalAlignment.Center &&
             citySizeHeading.GetThemeFontSize("font_size") == 24,
-            "City size must retain its centered, enlarged 24-point heading without an empty services header.");
+            "City size must retain its centered, enlarged 24-point heading.");
         var unlockedBuildings = session.Game.Map.Content.Buildings.Where(building => building.PlayerPlaceable &&
             building.MinPopulation > 0 && CityProgression.RequiredPopulation(building) == 100).ToArray();
         var milestoneArt = Descendants(growthDialog).OfType<RenderedModelPreview>()
@@ -7147,7 +7147,8 @@ internal static class GodotSmoke
                 .GetChildren().OfType<Button>().ToArray();
             sharedNameWidth ??= choices[0].Size.X;
             Require(choices.All(choice => Math.Abs(choice.Size.X - sharedNameWidth.Value) < 0.01),
-                "Every building and road name cell must have the same width across all catalogs.");
+                $"Every building and road name cell must have the same width across all catalogs: " +
+                $"category={category.Name}, expected={sharedNameWidth}, actual={choices[0].Size.X}.");
             foreach (var choice in choices)
             {
                 choice.EmitSignal(Button.SignalName.Pressed);
@@ -7159,6 +7160,39 @@ internal static class GodotSmoke
                     .GetChildren().OfType<PanelContainer>().Select(cell => cell.HasMeta("details_value")
                         ? cell.GetMeta("details_value").AsString() : cell.GetChild<Label>(0).Text).ToArray();
                 var selectedType = session.Game.Map.Content.Buildings.FirstOrDefault(building => building.CatalogName == choice.Text);
+                var description = Descendants(host).OfType<Label>().Single(label => label.Name == "ConstructionDescription").Text;
+                var defense = Enum.GetValues<WallDefenseKind>().FirstOrDefault(kind =>
+                    kind != WallDefenseKind.None && WallDefenses.Get(kind).Name == choice.Text);
+                if (defense != WallDefenseKind.None)
+                {
+                    var help = ChoiceHelpContent.WallDefense(defense);
+                    var expectedCells = help.Details.Split("\n\n", StringSplitOptions.RemoveEmptyEntries)
+                        .Where(detail => !detail.StartsWith("Placement:", StringComparison.Ordinal))
+                        .SelectMany(detail =>
+                        {
+                            int separator = detail.IndexOf(':');
+                            string value = detail[(separator + 1)..].Trim();
+                            return new[] { detail[..separator], char.ToUpperInvariant(value[0]) + value[1..] };
+                        });
+                    Require(description == help.Description && cells.SequenceEqual(expectedCells),
+                        $"Wall weapons must show their combat details, not building area effects or upkeep: {choice.Text}.");
+                    continue;
+                }
+                string[]? wallActionRows = choice.Text switch
+                {
+                    "Upgrade all walls" => ["Cost", "Unlock", "Effect"],
+                    "Repair all walls" or "Remove wall section" => ["Cost", "Effect"],
+                    "Extend walls" or "Insert gate" => ["Cost"],
+                    _ => null,
+                };
+                if (wallActionRows is not null)
+                {
+                    Require(cells.Where((_, index) => index % 2 == 0).SequenceEqual(wallActionRows) &&
+                        cells.Where((_, index) => index % 2 == 1).All(value => !string.IsNullOrWhiteSpace(value)) &&
+                        !string.IsNullOrWhiteSpace(description),
+                        $"Wall actions must show their own costs and effects, not building or road statistics: {choice.Text}.");
+                    continue;
+                }
                 bool hasAreaEffect = choice.Text != "Traffic Circle" &&
                     (selectedType is null || AreaOfEffect.ForBuilding(selectedType, new Pos(0, 0)).Count > 0);
                 Require(!cells.Where((_, index) => index % 2 == 0).Contains("Area of Effect") &&

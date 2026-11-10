@@ -229,6 +229,9 @@ public partial class Main
         var names = Session.Game.Map.Content.Buildings.Where(building => building.PlayerPlaceable && !building.IsMonument)
             .Select(building => building.Name)
             .Concat(Session.Game.Map.Content.Roads.Where(road => road.PlayerPlaceable).Select(road => road.Name))
+            .Concat(Enum.GetValues<WallDefenseKind>().Where(kind => kind != WallDefenseKind.None)
+                .Select(kind => WallDefenses.Get(kind).Name))
+            .Concat(["Upgrade all walls", "Repair all walls", "Extend walls", "Insert gate", "Remove wall section"])
             .Concat(_constructionChoices.Select(choice => choice.Name));
         float typeWidth = names.Max(name =>
             Theme.DefaultFont.GetStringSize(name, fontSize: nameFontSize).X) + 56;
