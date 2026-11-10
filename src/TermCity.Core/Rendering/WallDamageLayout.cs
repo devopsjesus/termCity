@@ -33,7 +33,7 @@ public static class WallDamageLayout
                 wall.Cell.X == owner.Bounds.X ? -1 : 1
             : owner.WallExteriorSide(wall)
         : wall.DefenseFacing;
-    public static float WalkwayOffset(WallComponent wall) => wall.IsTower || wall.IsGate ? 0 :
+    public static float WalkwayOffset(WallComponent wall) => wall.IsTower ? 0 :
         -ExteriorSide(wall) * Math.Max(0, (WalkwayWidth + WorldScale.Feet(1) - Depth(wall)) / 2);
 
     public static IReadOnlyList<TowerWalkwayLadder> WalkwayLadders(WallComponent tower)

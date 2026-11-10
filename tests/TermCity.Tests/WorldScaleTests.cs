@@ -118,7 +118,8 @@ public class WorldScaleTests
             WorldScale.HumanRadius, throughGate: true));
         Assert.True(WallDamageLayout.BlocksGround(gate, gate.Cell.X + 0.5, gate.Cell.Y + 2.2,
             WorldScale.HumanRadius, throughGate: true));
-        Assert.Contains(WallDamageLayout.Fragments(gate), part => part.Center.X == 0 && part.Center.Z == 0 &&
+        Assert.Contains(WallDamageLayout.Fragments(gate), part => part.Center.X == 0 &&
+            part.Center.Z == WallDamageLayout.WalkwayOffset(gate) &&
             Math.Abs(part.Center.Y + part.Size.Y / 2 - WallDamageLayout.WalkHeight(gate)) < 0.00001);
     }
 
