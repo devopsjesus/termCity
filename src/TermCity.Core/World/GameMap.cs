@@ -3,12 +3,34 @@ using TermCity.Core.Features;
 using TermCity.Core.Roads;
 using TermCity.Core.Terrain;
 using TermCity.Core.Util;
+using TermCity.Core.Simulation;
 
 namespace TermCity.Core.World;
 
 /// <summary>The set of registries that define what exists in the game world.</summary>
 public sealed class GameContent
 {
+    public static GameContent ForScenario(Simulation.CityScenario scenario, GameContent? existing = null)
+    {
+        bool legacy = scenario is not (Simulation.CityScenario.Random or Simulation.CityScenario.Top);
+        int scale = legacy ? 1 : WorldScale.ArchitectureScale;
+        if (existing is null) return legacy ? new()
+        {
+            Buildings = BuildingRegistry.CreateDefault(retainLegacyLayout: true),
+            Roads = RoadRegistry.CreateDefault(retainLegacyLayout: true),
+        } : new();
+        if (existing.Buildings.All(building => building.ModelScale == scale)) return existing;
+        var buildings = new BuildingRegistry();
+        foreach (var building in existing.Buildings) buildings.Register(building.WithModelScale(scale));
+        var roads = new RoadRegistry();
+        foreach (var road in existing.Roads) roads.Register(road.WithLegacyLayout(legacy));
+        return new()
+        {
+            Terrains = existing.Terrains, Features = existing.Features,
+            Buildings = buildings, Roads = roads,
+        };
+    }
+
     public TerrainRegistry Terrains { get; init; } = TerrainRegistry.CreateDefault();
 
     public FeatureRegistry Features { get; init; } = FeatureRegistry.CreateDefault();
@@ -24,7 +46,7 @@ public sealed record ZoneRemoval(ZoneType Zone, double RemoveAtDay);
 /// The layered world grid: terrain, natural features, roads, zones, buildings and the households living in them.
 /// Each layer is a flat array indexed by <c>y * Width + x</c>.
 /// </summary>
-public sealed class GameMap
+public sealed partial class GameMap
 {
     // Internal so persistence can read and write layers directly.
     internal readonly byte[] TerrainLayer;
@@ -41,9 +63,39 @@ public sealed class GameMap
     internal readonly byte[] PathLinkLayer;
     internal readonly Dictionary<int, double> BuildingEstablishedDays = [];
     internal readonly Dictionary<string, Simulation.TravelRoutes> TravelCache = [];
+    internal double[]? TravelStepCosts;
+    public int NavigationVersion { get; private set; }
+    public int FootpathVersion { get; internal set; }
+    public double LastTravelRepairMilliseconds { get; internal set; }
+    public int LastRepairedFields { get; internal set; }
+    public int LastCompactedCells { get; internal set; }
+    public double LastRepairTreeMilliseconds { get; internal set; }
+    public double LastRepairScanMilliseconds { get; internal set; }
+    public double LastRepairFloodMilliseconds { get; internal set; }
+    public int LastRepairFloodNodes { get; internal set; }
+    public double LastBuildingJourneyMilliseconds { get; internal set; }
+    public double LastRoadJourneyMilliseconds { get; internal set; }
+    public double LastPathLinkMilliseconds { get; internal set; }
+    public double LastFootbridgeMilliseconds { get; internal set; }
     internal Simulation.TravelRoutes? PathRoutes;
+    internal readonly HashSet<int> RoadAccessChanges = [];
+    internal int[]? FootpathRoadTargets;
+    internal byte[]? FootpathStepKnown, FootpathStepAllowed;
+    internal byte[]? TravelWallKnown, TravelWallAllowed;
+    internal Simulation.SettlementState? TravelWallState;
+    internal int TravelWallTopology = -1;
+    internal int FootpathStepTerrain = -1;
     internal int[][]? BuildingPaths;
+    internal int[][]? FootpathJourneyCache, FootpathJourneyBuildings;
+    internal TravelRoutes? FootpathJourneyRoads;
+    internal int FootpathJourneyNavigation = -1;
+    internal IReadOnlyList<TermCity.Core.Rendering.FootpathLayout.Stroke>? FootpathStrokeCache;
+    internal int FootpathStrokeNavigation = -1, FootpathStrokeVersion = -1;
+    internal int[][]? FootpathStrokeJourneys;
+    internal Dictionary<int, IReadOnlyList<TermCity.Core.Rendering.EntranceAccess>>? EntranceAccesses;
     internal byte[]? HillLevels;
+    internal Rendering.TerrainElevationField? TerrainSamples;
+    internal int TerrainSamplesVersion = -1;
     internal byte[]? CoastalHillCaps; // 0 unknown, 1 coastal, 2 collapsed, 3 inland.
     internal double[]? WaterDensities;
     internal sbyte[]? CoastDistances;
@@ -68,6 +120,36 @@ public sealed class GameMap
     public IReadOnlyDictionary<int, CellRect> BuildingFootprints => _buildingFootprints;
     public IReadOnlyDictionary<int, int> HouseYardCells => _houseYardCells;
     public Dictionary<int, int> BuildingRotations { get; } = [];
+    public CellRect? SettlementBounds { get; private set; }
+    internal readonly List<SettlementFootbridge> FootbridgeList = [];
+    public IReadOnlyList<SettlementFootbridge> Footbridges => FootbridgeList;
+    public bool HasFootbridge(int x, int y)
+    {
+        foreach (var bridge in FootbridgeList)
+            if (bridge.Complete && (bridge.Start.X == bridge.End.X
+                ? x == bridge.Start.X && y >= Math.Min(bridge.Start.Y, bridge.End.Y) && y <= Math.Max(bridge.Start.Y, bridge.End.Y)
+                : y == bridge.Start.Y && x >= Math.Min(bridge.Start.X, bridge.End.X) && x <= Math.Max(bridge.Start.X, bridge.End.X)))
+                return true;
+        return false;
+    }
+    internal Simulation.SettlementState? Fortifications { get; set; }
+
+    public bool FootpathsAllowedAt(int x, int y) => InBounds(x, y) &&
+        (Fortifications is { } fortifications ? (fortifications.EstablishedAt(new(x, y)) || HasFootbridge(x, y)) &&
+            !fortifications.GroundBlocked(new(x + .5f, y + .5f)) : SettlementBounds is not { } bounds ||
+            x > bounds.X && x < bounds.Right && y > bounds.Y && y < bounds.Bottom);
+
+    internal void SetSettlementBounds(CellRect? bounds)
+    {
+        if (SettlementBounds == bounds) return;
+        SettlementBounds = bounds;
+        if (bounds is not null)
+            for (int index = 0; index < PathLayer.Length; index++)
+                if (!FootpathsAllowedAt(index % Width, index / Width) &&
+                    (PathLayer[index] != 0 || PathLinkLayer[index] != 0))
+                    SetPathWear(index % Width, index / Width, 0);
+        InvalidateTravel();
+    }
 
     public int BuildingAnchor(int index) => _buildingOwners.GetValueOrDefault(index, index);
     public bool IsBuildingAnchor(int index) => BuildingAnchor(index) == index;
@@ -82,8 +164,8 @@ public sealed class GameMap
             FeatureLayer[index] != 0 || RoadLayer[index] || !Content.Terrains[TerrainLayer[index]].Buildable)
             return -1;
         var cell = PosOf(index);
-        return JunctionRoadLayout?.AtCell(cell.X, cell.Y).Any(segment =>
-            Rendering.RoadMeshLayout.OverlapsCell(segment.Corridor, cell.X, cell.Y)) == true ? -1 : owner;
+        if (JunctionRoadLayout?.RoadOverlapsCell(cell.X, cell.Y, includeShoulders: true) == true) return -1;
+        return owner;
     }
 
     internal bool IsHouseYardCell(int index) => HouseYardOwner(index) >= 0;
@@ -97,7 +179,13 @@ public sealed class GameMap
         ArgumentOutOfRangeException.ThrowIfNegative(wear);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(wear, 12);
         int index = Index(x, y);
-        if ((PathLayer[index] >= 3) != (wear >= 3)) TravelCache.Clear();
+        static int Style(int value) => value >= 3 ? 2 : value > 0 ? 1 : 0;
+        if (Style(PathLayer[index]) != Style(wear)) FootpathVersion++;
+        if ((PathLayer[index] >= 3) != (wear >= 3))
+        {
+            TravelCache.Clear();
+            TravelStepCosts = null;
+        }
         PathLayer[index] = (byte)wear;
         if (wear == 0) ClearPathLinks(index);
     }
@@ -122,11 +210,13 @@ public sealed class GameMap
         bool changed = (PathLinkLayer[first] & mask) == 0 || (PathLinkLayer[last] & reverse) == 0;
         PathLinkLayer[first] |= (byte)mask;
         PathLinkLayer[last] |= (byte)reverse;
+        if (changed) FootpathVersion++;
         return changed;
     }
 
     private void ClearPathLinks(int index)
     {
+        if (PathLinkLayer[index] != 0) FootpathVersion++;
         var cell = PosOf(index);
         foreach (var (dx, dy) in Simulation.RoadNetwork.Neighbors)
         {
@@ -158,6 +248,8 @@ public sealed class GameMap
             SetBuilding(p.X, p.Y, building);
         }
         RegisterBuildingFootprint(area);
+        if (Fortifications is { } fortifications && area.Cells().All(fortifications.EstablishedAt))
+            foreach (var p in area.Cells()) SetZone(p.X, p.Y, building.Zone);
         if (yard is { } yardCell) RegisterHouseYard(owner, yardCell);
     }
 
@@ -170,13 +262,23 @@ public sealed class GameMap
         }
         _houseYardCells.Add(owner, cell);
         _houseYardOwners.Add(cell, owner);
-        PathRoutes = null;
+        RoadAccessChanged(cell);
         BuildingPaths = null;
+        InvalidateEntrances(CellRect.Single(PosOf(cell)));
     }
 
     private void RemoveHouseYard(int owner)
     {
-        if (_houseYardCells.Remove(owner, out int cell)) _houseYardOwners.Remove(cell);
+        if (_houseYardCells.Remove(owner, out int cell))
+        {
+            _houseYardOwners.Remove(cell);
+            RoadAccessChanged(cell);
+        }
+    }
+
+    private void RoadAccessChanged(int cell)
+    {
+        if (PathRoutes is not null) RoadAccessChanges.Add(cell);
     }
 
     internal void RegisterBuildingFootprint(CellRect area)
@@ -225,6 +327,27 @@ public sealed class GameMap
 
     public GameContent Content { get; }
     public int TerrainVersion { get; private set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public TerrainElevationProfile ElevationProfile { get; private set; } = TerrainElevationProfile.Current;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public TerrainElevationProfile PreviewElevationProfile => ElevationProfile;
+
+    public void SetPreviewElevationProfile(TerrainElevationProfile profile)
+    {
+        if (!CityGame.DebugToolsAvailable)
+            throw new InvalidOperationException("Terrain elevation comparisons require a Debug build.");
+        SetElevationProfile(profile);
+    }
+
+    internal void SetElevationProfile(TerrainElevationProfile profile)
+    {
+        if (!Enum.IsDefined(profile)) throw new ArgumentOutOfRangeException(nameof(profile));
+        if (ElevationProfile == profile) return;
+        ElevationProfile = profile;
+        CoastalHillCaps = null;
+        TerrainVersion++;
+        InvalidateTravel();
+    }
 
     public bool InBounds(int x, int y) => x >= 0 && y >= 0 && x < Width && y < Height;
 
@@ -305,9 +428,16 @@ public sealed class GameMap
 
     internal void InvalidateTravel()
     {
+        NavigationVersion++;
         TravelCache.Clear();
+        TravelStepCosts = null;
         PathRoutes = null;
+        RoadAccessChanges.Clear();
+        FootpathRoadTargets = null;
+        FootpathStepKnown = FootpathStepAllowed = null;
+        TravelWallKnown = TravelWallAllowed = null;
         BuildingPaths = null;
+        EntranceAccesses = null;
         JunctionDelays = null;
         TravelRoadPaths = null;
         JunctionRoadLayout = null;
@@ -325,11 +455,13 @@ public sealed class GameMap
     {
         int index = Index(x, y);
         if (FeatureLayer[index] == (feature?.Id ?? 0)) return;
+        NavigationVersion++;
         FeatureLayer[index] = feature?.Id ?? 0;
         if (_houseYardOwners.ContainsKey(index))
         {
-            PathRoutes = null;
+            RoadAccessChanged(index);
             BuildingPaths = null;
+            EntranceAccesses = null;
         }
     }
 
@@ -438,10 +570,12 @@ public sealed class GameMap
         }
 
         ZoneLayer[i] = zone;
+        NavigationVersion++;
         if (_houseYardOwners.ContainsKey(i))
         {
-            PathRoutes = null;
+            RoadAccessChanged(i);
             BuildingPaths = null;
+            EntranceAccesses = null;
         }
         _zoneCells[(int)old].Remove(i);
         _zoneCells[(int)zone].Add(i);
@@ -459,16 +593,20 @@ public sealed class GameMap
 
     public void SetBuilding(int x, int y, BuildingType? building)
     {
-        PathRoutes = null;
+        NavigationVersion++;
         BuildingPaths = null;
         int i = Index(x, y);
+        RoadAccessChanged(i);
+        InvalidateEntrances(CellRect.Single(new(x, y)));
         if (_buildingOwners.TryGetValue(i, out int owner))
         {
             var footprint = _buildingFootprints[owner];
+            InvalidateEntrances(footprint);
             _buildingFootprints.Remove(owner);
             foreach (var p in footprint.Cells())
             {
                 int cell = Index(p.X, p.Y);
+                RoadAccessChanged(cell);
                 _buildingOwners.Remove(cell);
                 BuildingLayer[cell] = 0;
                 HouseholdLayer[cell] = default;
@@ -491,6 +629,18 @@ public sealed class GameMap
         {
             _serviceCells.Remove(i);
         }
+    }
+
+    private void InvalidateEntrances(CellRect area)
+    {
+        if (EntranceAccesses is null) return;
+        for (int y = Math.Max(0, area.Y - 2); y <= Math.Min(Height - 1, area.Bottom + 2); y++)
+            for (int x = Math.Max(0, area.X - 2); x <= Math.Min(Width - 1, area.Right + 2); x++)
+            {
+                int cell = Index(x, y);
+                EntranceAccesses.Remove(BuildingAnchor(cell));
+                if (_houseYardOwners.TryGetValue(cell, out int owner)) EntranceAccesses.Remove(owner);
+            }
     }
 
     public ZoneRemoval? ZoneRemovalAt(int x, int y) => ZoneRemovals.GetValueOrDefault(Index(x, y));

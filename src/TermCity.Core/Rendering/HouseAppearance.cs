@@ -1,5 +1,6 @@
 using System.Numerics;
 using TermCity.Core.Util;
+using TermCity.Core.Buildings;
 
 namespace TermCity.Core.Rendering;
 
@@ -11,6 +12,9 @@ public enum HouseStyle
     Burgage,
     Longhouse,
     WeaversHouse,
+    Courtyard,
+    Shanty,
+    WallHouse,
 }
 
 public sealed record HouseAppearance(float Width, float Depth, float Height, float RoofRise,
@@ -51,7 +55,7 @@ public sealed record HouseAppearance(float Width, float Depth, float Height, flo
     }
 
     public static bool IsWallColor(int rgb) => rgb is 0xc9bf9f or 0xbaa98a or 0xd7c9aa or 0x9d947f;
-    public static bool IsRoofColor(int rgb) => rgb is 0xb2a273 or 0x9e875e or 0x8d6450 or 0x687574;
+    public static bool IsRoofColor(int rgb) => rgb is 0xb2a273 or 0x9e875e or 0x8d6450 or 0x687574 or 0x956b50;
     public static bool IsTexturedColor(int rgb) => IsWallColor(rgb) || IsRoofColor(rgb) || rgb == StoneColor;
 
     public static byte[] MaterialTexture(int rgb)
@@ -119,9 +123,35 @@ public sealed record HouseAppearance(float Width, float Depth, float Height, flo
         var style = (HouseStyle)shape;
         return new(shape switch { 0 => 0.66f, 1 => 0.64f, 2 => 0.70f, 3 => 0.66f, 4 => 0.72f, _ => 0.68f },
             shape switch { 0 => 0.64f, 1 => 0.72f, 2 => 0.64f, 3 => 0.70f, 4 => 0.60f, _ => 0.68f },
-            (floors == 1 ? 0.44f : 0.64f + (floors - 2) * 0.04f) + (shape % 2) * 0.04f,
+            (floors == 1 ? 0.48f : 0.96f) + (shape % 2) * 0.04f,
             shape is 1 or 3 or 5 ? 0.32f : 0.24f,
         wall, roof, style, shape is 3 or 5, shape is 2 or 5, level > 1 || shape is 3 or 4);
+    }
+
+    public static HouseAppearance At(BuildingType type, int x, int y)
+    {
+        var basis = At(x, y, type.Level);
+        return type.Name switch
+        {
+            "Timber Home" => basis with { Style = HouseStyle.TimberGable, WallColor = 0xbaa98a },
+            "Stone Home" => basis with { Style = HouseStyle.StoneCroft, WallColor = StoneColor, Chimney = true },
+            "Courtyard House" => basis with
+            {
+                Style = HouseStyle.Courtyard, Width = 0.82f, Depth = 0.80f, Height = 0.53f,
+                Wing = true, Chimney = true, RoofColor = 0x687574,
+            },
+            "Shanty Tower" => basis with
+            {
+                Style = HouseStyle.Shanty, Width = 0.80f, Depth = 0.78f, Height = 1.76f,
+                RoofRise = 0.18f, WallColor = TimberColor, Wing = false, Chimney = false,
+            },
+            "Wall House" => basis with
+            {
+                Style = HouseStyle.WallHouse, Width = 0.82f, Depth = 0.82f, Height = 1.32f,
+                RoofRise = 0.18f, WallColor = TimberColor, Wing = false, Chimney = false,
+            },
+            _ => basis,
+        };
     }
 
     public HouseDimensions OnPlot(int width, int depth, int level)
@@ -129,12 +159,23 @@ public sealed record HouseAppearance(float Width, float Depth, float Height, flo
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(depth);
         return new(width * Width, depth * Depth,
-            Height, RoofRise, level > 1 ? 2 : 1, Wing && width >= 2 && depth >= 2);
+            Height, RoofRise, Style == HouseStyle.Shanty ? 4 : Style == HouseStyle.WallHouse ? 3 :
+                level > 1 ? 2 : 1, Wing && width >= 2 && depth >= 2);
     }
 
     public IReadOnlyList<HouseBlock> BlocksOnPlot(int width, int depth, int level)
     {
         var dimensions = OnPlot(width, depth, level);
+        if (Style == HouseStyle.Courtyard)
+        {
+            float wing = dimensions.Width * 0.27f;
+            float back = dimensions.Depth * 0.30f;
+            return [
+                new(0, -(dimensions.Depth - back) / 2, dimensions.Width, back, Height, RoofRise, 1, false),
+                new(-(dimensions.Width - wing) / 2, back / 2, wing, dimensions.Depth - back, Height, RoofRise, 1, true),
+                new((dimensions.Width - wing) / 2, back / 2, wing, dimensions.Depth - back, Height, RoofRise, 1, true),
+            ];
+        }
         bool crosswise = depth > width || depth == width && CrosswiseRoof;
         if (!dimensions.Wing)
             return [new(0, 0, dimensions.Width, dimensions.Depth, dimensions.Height,
@@ -147,11 +188,57 @@ public sealed record HouseAppearance(float Width, float Depth, float Height, flo
             new(0, rearDepth / 2, dimensions.Width, frontDepth, dimensions.Height,
                 dimensions.RoofRise, dimensions.Stories, false),
             new(-dimensions.Width / 2 + wingWidth / 2, -frontDepth / 2, wingWidth,
-                rearDepth, 0.44f, 0.24f, 1, rearDepth > wingWidth),
+                rearDepth, 0.48f, 0.24f, 1, rearDepth > wingWidth),
         ];
     }
 
-    public IReadOnlyList<HouseModelPart> Parts(HouseBlock block)
+    public ModelEntrance EntranceOnPlot(int width, int depth, int level)
+    {
+        var block = BlocksOnPlot(width, depth, level)[0];
+        return new(new(block.X, block.WallPanel(0).Bottom, block.Z + block.Depth / 2),
+            Vector2.UnitY, BuildingDetailLayout.DoorWidth, BuildingAccessKind.Door);
+    }
+
+    public IReadOnlyList<HouseModelPart> BaseParts(int width, int depth, int level)
+    {
+        var parts = new List<HouseModelPart>();
+        void Add(float left, float back, float right, float front)
+        {
+            var pieces = new List<(float Left, float Back, float Right, float Front)> { (left, back, right, front) };
+            foreach (var existing in parts)
+            {
+                var next = new List<(float Left, float Back, float Right, float Front)>();
+                foreach (var piece in pieces)
+                {
+                    float x0 = Math.Max(piece.Left, existing.Center.X - existing.Size.X / 2);
+                    float x1 = Math.Min(piece.Right, existing.Center.X + existing.Size.X / 2);
+                    float z0 = Math.Max(piece.Back, existing.Center.Z - existing.Size.Z / 2);
+                    float z1 = Math.Min(piece.Front, existing.Center.Z + existing.Size.Z / 2);
+                    if (x1 <= x0 || z1 <= z0) { next.Add(piece); continue; }
+                    void Strip(float l, float b, float r, float f)
+                    {
+                        if (r - l > 0.000001f && f - b > 0.000001f) next.Add((l, b, r, f));
+                    }
+                    Strip(piece.Left, piece.Back, x0, piece.Front);
+                    Strip(x1, piece.Back, piece.Right, piece.Front);
+                    Strip(x0, piece.Back, x1, z0);
+                    Strip(x0, z1, x1, piece.Front);
+                }
+                pieces = next;
+            }
+            foreach (var piece in pieces)
+                parts.Add(new(new((piece.Left + piece.Right) / 2, 0.04f, (piece.Back + piece.Front) / 2),
+                    new(piece.Right - piece.Left, 0.08f, piece.Front - piece.Back), StoneColor, false));
+        }
+        foreach (var block in BlocksOnPlot(width, depth, level))
+            Add(block.X - (block.Width + 0.04f) / 2, block.Z - (block.Depth + 0.04f) / 2,
+                block.X + (block.Width + 0.04f) / 2, block.Z + (block.Depth + 0.04f) / 2);
+        float front = OnPlot(width, depth, level).Depth / 2;
+        Add(-0.1f, front - 0.02f, 0.1f, front + 0.1f);
+        return parts;
+    }
+
+    public IReadOnlyList<HouseModelPart> Parts(HouseBlock block, bool includeRoof = true)
     {
         const float blockSpan = VoxelSpan, postWidth = BuildingDetailLayout.HalfTimberPostWidth;
         const float beamHeight = BuildingDetailLayout.HalfTimberBeamHeight;
@@ -177,9 +264,9 @@ public sealed record HouseAppearance(float Width, float Depth, float Height, flo
                 : new(side * (block.Width - postWidth) / 2, y, along);
             Vector3 Size(float across, float tall, float thick) => alongX
                 ? new(across, tall, thick) : new(thick, tall, across);
-            for (int beam = 0; beam <= block.Stories; beam++)
+            for (int beam = 1; beam <= block.Stories; beam++)
             {
-                float y = beam == 0 ? beamHeight / 2 : beam == block.Stories
+                float y = beam == block.Stories
                     ? block.Height - beamHeight / 2 : beam * block.Height / block.Stories;
                 parts.Add(new(Position(0, y), Size(span - 2 * postWidth, beamHeight, postWidth), FrameColor, false));
             }
@@ -198,6 +285,7 @@ public sealed record HouseAppearance(float Width, float Depth, float Height, flo
             }
         }
         Wall(true, -1); Wall(true, 1); Wall(false, -1); Wall(false, 1);
+        if (!includeRoof) return parts;
         for (int step = 0; step < block.RoofSteps; step++)
         {
             var course = block.RoofCourse(step);

@@ -1,17 +1,21 @@
 using System.Text.Json.Nodes;
 using TermCity.Core.Persistence;
+using TermCity.Core.Session;
 using TermCity.Core.Simulation;
 using TermCity.Core.Util;
 using TermCity.Core.World;
+using TermCity.GodotApp;
 
 namespace TermCity.Tests;
 
 public class MapSizeTests
 {
     [Theory]
-    [InlineData("small", 160, 96)]
-    [InlineData("MEDIUM", 320, 192)]
-    [InlineData("large", 640, 384)]
+    [InlineData("small", 320, 320)]
+    [InlineData("MEDIUM", 480, 480)]
+    [InlineData("large", 640, 640)]
+    [InlineData("640x640", 640, 640)]
+    [InlineData("160x96", 160, 96)]
     [InlineData("640x384", 640, 384)]
     [InlineData("200X60", 200, 60)]
     [InlineData(" 640 x 384 ", 640, 384)]
@@ -31,7 +35,7 @@ public class MapSizeTests
     [InlineData("79x24")]
     [InlineData("80x23")]
     [InlineData("641x384")]
-    [InlineData("640x385")]
+    [InlineData("640x641")]
     [InlineData("640x192x3")]
     [InlineData("huge")]
     [InlineData("1280x384")]
@@ -45,7 +49,7 @@ public class MapSizeTests
     [Fact]
     public void StandardSizesAndCityScenariosArePresets()
     {
-        Assert.Equal(["CHI", "LA", "large", "medium", "SD", "SF", "small", "STL"],
+        Assert.Equal(["CHI", "LA", "large", "medium", "SD", "SF", "small", "STL", "TOP"],
             MapSize.Presets.Keys.OrderBy(k => k).ToArray());
         Assert.Equal(new MapSize(MapSize.MaxWidth, MapSize.MaxHeight), MapSize.Presets["large"]);
         Assert.DoesNotContain("huge", MapSize.Describe());
@@ -56,6 +60,46 @@ public class MapSizeTests
     {
         var config = new GameConfig();
         Assert.Equal(MapSize.Presets["small"], new MapSize(config.MapWidth, config.MapHeight));
+        var desktop = GodotOptions.Parse([]).Config;
+        Assert.Equal(MapSize.Presets["small"], new MapSize(desktop.MapWidth, desktop.MapHeight));
+    }
+
+    [Theory]
+    [InlineData("small", 320)]
+    [InlineData("medium", 480)]
+    [InlineData("large", 640)]
+    public void DesktopOptionsUseTheSquareRandomPresets(string preset, int side)
+    {
+        var config = GodotOptions.Parse(["--size", preset]).Config;
+        Assert.Equal(side, config.MapWidth);
+        Assert.Equal(side, config.MapHeight);
+        Assert.Equal(CityScenario.Random, config.Scenario);
+    }
+
+    [Theory]
+    [InlineData(320, 320)]
+    [InlineData(480, 480)]
+    [InlineData(640, 640)]
+    [InlineData(160, 96)]
+    [InlineData(640, 384)]
+    public void SavedDimensionsAndCurrentSizeRestartsAreIndependentOfNewGameDefaults(int width, int height)
+    {
+        var game = CityGame.New(new GameConfig { MapWidth = width, MapHeight = height, Seed = 42 });
+        string saved = SaveGameStore.Serialize(game);
+        var loaded = SaveGameStore.Deserialize(saved);
+        Assert.Equal(width, loaded.Map.Width);
+        Assert.Equal(height, loaded.Map.Height);
+        Assert.Equal(saved, SaveGameStore.Serialize(loaded));
+        var session = new GameSession(loaded, showGuide: false);
+        foreach (bool restart in new[] { true, false })
+        {
+            session.RequestNewCity(restart);
+            if (session.Prompt is not null) session.SelectPrompt(1);
+            Assert.Equal(width, session.Game.Map.Width);
+            Assert.Equal(height, session.Game.Map.Height);
+            Assert.Equal(width, session.Game.Config.MapWidth);
+            Assert.Equal(height, session.Game.Config.MapHeight);
+        }
     }
 }
 

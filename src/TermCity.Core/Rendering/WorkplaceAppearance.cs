@@ -4,11 +4,15 @@ using TermCity.Core.World;
 
 namespace TermCity.Core.Rendering;
 
-public enum WorkplaceForm { Stall, Shop, MarketHall, Smithy, Carpenter, Cooper, Mill, Forge }
+public enum WorkplaceForm { Stall, Shop, MarketHall, Smithy, Carpenter, Cooper, Mill, Forge, Armory, SupplyShop }
 
 public readonly record struct WorkplaceAppearance(WorkplaceForm Form, float Width, float Depth,
     float Height, float RoofRise, int WallColor, int RoofColor, int CanvasColor, bool CrosswiseRoof)
 {
+    public ModelEntrance Entrance => Form == WorkplaceForm.Stall
+        ? new(new(0, 0, Depth * .39f + .06f), System.Numerics.Vector2.UnitY, Width * .82f, BuildingAccessKind.OpenBay)
+        : new(new(0, BuildingDetailLayout.HalfTimberBeamHeight, Math.Max(.45f, Depth * .72f) / 2 - .06f),
+            System.Numerics.Vector2.UnitY, BuildingDetailLayout.DoorWidth, BuildingAccessKind.Door);
     public static WorkplaceAppearance At(BuildingType type, int x, int y, int plotWidth, int plotDepth)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(plotWidth);
@@ -17,11 +21,19 @@ public readonly record struct WorkplaceAppearance(WorkplaceForm Form, float Widt
             throw new ArgumentException("A workplace requires a commercial or industrial zone.", nameof(type));
         int variant = CellHash.Pick(x + 47, y - 13, 3);
         var palette = HouseAppearance.At(x + 3, y + 11, type.Level);
-        var form = type.Zone == ZoneType.Commercial
+        var form = type.Name switch
+        {
+            "Blacksmith" => WorkplaceForm.Smithy,
+            "Woodsmith" => WorkplaceForm.Carpenter,
+            "Armory" => WorkplaceForm.Armory,
+            "Supply Shop" => WorkplaceForm.SupplyShop,
+            "Market" => WorkplaceForm.Stall,
+            _ => type.Zone == ZoneType.Commercial
             ? type.Level switch { 1 => WorkplaceForm.Stall, 2 => WorkplaceForm.Shop, _ => WorkplaceForm.MarketHall }
             : type.Name == "Mill" || type.Level == 2 ? WorkplaceForm.Mill
             : type.Level >= 3 ? WorkplaceForm.Forge
-            : variant switch { 0 => WorkplaceForm.Smithy, 1 => WorkplaceForm.Carpenter, _ => WorkplaceForm.Cooper };
+            : variant switch { 0 => WorkplaceForm.Smithy, 1 => WorkplaceForm.Carpenter, _ => WorkplaceForm.Cooper },
+        };
         float height = form switch
         {
             WorkplaceForm.Stall => 0.38f, WorkplaceForm.Shop => 0.48f,

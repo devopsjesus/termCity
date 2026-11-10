@@ -54,7 +54,8 @@ public class MedievalTravelTests
         Assert.True(session.Zone(ZoneType.Residential).Success);
         Assert.Single(session.Game.VacantPlots(ZoneType.Residential));
         Assert.Equal(ZoneType.Residential, session.Game.Map.ZoneAt(10, 5));
-        Assert.Equal(ZoneType.None, session.Game.Map.ZoneAt(11, 5));
+        Assert.Equal(ZoneType.Residential, session.Game.Map.ZoneAt(14, 9));
+        Assert.Equal(ZoneType.None, session.Game.Map.ZoneAt(15, 5));
         TestCity.Advance(session.Game, 12);
         Assert.True(session.Game.Stats.Population > 0);
     }
@@ -66,11 +67,11 @@ public class MedievalTravelTests
         var session = new GameSession(game, showGuide: false);
         game.Paused = true;
         var location = Enumerable.Range(0, game.Map.Width * game.Map.Height).Select(game.Map.PosOf)
-            .First(p => new CellRect(p.X, p.Y, 8, 4).Cells().All(cell => game.CanBuildOn(cell.X, cell.Y)));
+            .First(p => new CellRect(p.X, p.Y, 16, 16).Cells().All(cell => game.CanBuildOn(cell.X, cell.Y)));
         var woodlot = game.Map.Content.Buildings.Get("Woodlot");
         var well = game.Map.Content.Buildings.Get("Town Well");
-        Assert.True(game.PlaceBuilding(woodlot, new(location.X, location.Y + 2, 1, 1)).Success);
-        Assert.True(game.PlaceBuilding(well, new(location.X + 4, location.Y + 2, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(woodlot, new(location.X, location.Y + 6, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(well, new(location.X + 11, location.Y + 6, 1, 1)).Success);
         session.PlaceCursor(location);
         Assert.True(session.Zone(ZoneType.Residential).Success);
         Assert.Single(game.VacantPlots(ZoneType.Residential));
@@ -84,25 +85,26 @@ public class MedievalTravelTests
     }
 
     [Fact]
-    public void IsolatedOneCellZoneIsACompleteCompactHomePlot()
+    public void IsolatedOneCellDesignationExplainsTheMissingCompletePlot()
     {
         var game = Small();
         game.Designate(new(10, 5, 1, 1), ZoneType.Residential);
-        Assert.Equal(GrowthStatus.Ready, GrowthDiagnostics.ForCell(game, 10, 5).Status);
-        Assert.Equal(new CellRect(10, 5, 1, 1), Assert.Single(game.VacantPlots(ZoneType.Residential)));
+        Assert.Equal(GrowthStatus.NeedsSpace, GrowthDiagnostics.ForCell(game, 10, 5).Status);
+        Assert.Contains("5x5", GrowthDiagnostics.ForCell(game, 10, 5).Message);
+        Assert.Empty(game.VacantPlots(ZoneType.Residential));
     }
 
     [Fact]
     public void MissingStarterDeliveriesExplainStalledGrowthAndSuppliesRestoreArrivals()
     {
         var game = Small(CityRules.Full);
-        game.Designate(new(10, 5, 20, 2), ZoneType.Residential);
+        game.Designate(new(10, 0, 20, 5), ZoneType.Residential);
         TestCity.Advance(game, 8);
         Assert.True(game.Stats.Population > 0);
         Assert.Equal(GrowthStatus.LowAttraction, GrowthDiagnostics.ForZone(game, ZoneType.Residential).Status);
         Assert.Contains("Woodlot", GrowthDiagnostics.ForZone(game, ZoneType.Residential).Message);
-        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Woodlot"), new(10, 8, 1, 1)).Success);
-        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Town Well"), new(14, 8, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Woodlot"), new(10, 6, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Town Well"), new(22, 6, 1, 1)).Success);
         int before = game.Stats.Population;
         TestCity.Advance(game, 12);
         Assert.True(game.Stats.Population > before);
@@ -114,10 +116,10 @@ public class MedievalTravelTests
         var game = Small();
         for (int x = 0; x < 80; x++) game.Map.SetRoad(x, 20, false);
         game.Touch();
-        game.Designate(new(10, 5, 30, 2), ZoneType.Residential);
+        game.Designate(new(10, 5, 30, 10), ZoneType.Residential);
         TestCity.Advance(game, 8);
         Assert.True(game.Stats.Households > 0);
-        Assert.All(game.Map.BuildingFootprints.Values, area => Assert.InRange(area.Area, 1, 4));
+        Assert.All(game.Map.BuildingFootprints.Values, area => Assert.InRange(area.Area, 25, 100));
         var a = game.Map.Index(10, 30);
         var b = game.Map.Index(30, 30);
         double walking = TravelRoutes.Compute(game.Map, [a]).Cost[b];
@@ -147,10 +149,7 @@ public class MedievalTravelTests
         var game = Small();
         var map = game.Map;
         var type = map.Content.Buildings.Get("Cottage");
-        map.SetZone(10, 14, ZoneType.Residential);
-        map.SetZone(11, 14, ZoneType.Residential);
-        map.SetBuildingFootprint(type, new(10, 14, 2, 1));
-        map.SetHousehold(10, 14, new(2, 2, 0));
+        TestCity.Stamp(game, type.Name, new(10, 14), new(2, 2, 0));
         game.Touch();
         int roads = map.RoadCount;
         game.AdvanceDay();
@@ -179,19 +178,22 @@ public class MedievalTravelTests
         var map = game.Map;
         foreach (int cell in map.RoadCells.ToArray()) map.SetRoad(cell % map.Width, cell / map.Width, false);
         var well = map.Content.Buildings.Get("Town Well");
-        map.SetBuildingFootprint(well, new(10, 10, 1, 1));
-        map.SetBuildingFootprint(well, new(18, 10, 1, 1));
+        TestCity.Stamp(game, well.Name, new(10, 10));
+        TestCity.Stamp(game, well.Name, new(20, 10));
         Assert.True(TravelRoutes.WearPaths(map));
         Assert.InRange(map.PathLayer.Count(w => w > 0), 1, 2);
-        for (int day = 0; day < 12; day++) TravelRoutes.WearPaths(map);
-        for (int x = 11; x < 18; x++)
+        for (int day = 0; day < 40; day++) TravelRoutes.WearPaths(map);
+        foreach (var path in TravelRoutes.FootpathJourneys(map))
         {
-            Assert.True(map.PathWearAt(x, 10) >= 3);
-            Assert.Equal(10, FootpathLayout.Connections(map, x, 10));
-            Assert.Equal("─", CellRenderer.Render(game, x, 10).Glyph);
+            foreach (int cell in path.Where(cell => map.BuildingLayer[cell] == 0))
+                Assert.True(map.PathLayer[cell] >= 3);
+            for (int step = 1; step < path.Length; step++)
+                Assert.True(map.HasPathLink(path[step - 1], path[step]));
         }
+        Assert.Contains(Enumerable.Range(0, map.PathLayer.Length), cell => map.PathLayer[cell] > 0 &&
+            CellRenderer.Render(game, cell % map.Width, cell / map.Width).Glyph == "─");
         Assert.Equal(0, map.PathWearAt(10, 10));
-        Assert.Equal(0, map.PathWearAt(18, 10));
+        Assert.Equal(0, map.PathWearAt(20, 10));
         Assert.Equal(0, map.RoadCount);
         var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
         Assert.Equal(map.PathLayer, loaded.Map.PathLayer);
@@ -204,20 +206,20 @@ public class MedievalTravelTests
         var map = game.Map;
         foreach (int cell in map.RoadCells.ToArray()) map.SetRoad(cell % map.Width, cell / map.Width, false);
         var well = map.Content.Buildings.Get("Town Well");
-        map.SetBuildingFootprint(well, new(10, 10, 1, 1));
-        map.SetBuildingFootprint(well, new(18, 10, 1, 1));
-        for (int y = 0; y < map.Height; y++) map.SetTerrain(14, y, map.Content.Terrains.Get("Water"));
+        TestCity.Stamp(game, well.Name, new(8, 10));
+        TestCity.Stamp(game, well.Name, new(22, 10));
+        for (int y = 0; y < map.Height; y++) map.SetTerrain(17, y, map.Content.Terrains.Get("Water"));
         Assert.False(TravelRoutes.WearPaths(map));
         Assert.All(map.PathLayer, wear => Assert.Equal(0, wear));
-        map.SetRoad(14, 10, true);
-        Assert.True(double.IsFinite(TravelRoutes.Compute(map, [map.Index(10, 10)]).Cost[map.Index(18, 10)]));
+        map.SetRoad(17, 10, true);
+        Assert.True(double.IsFinite(TravelRoutes.Compute(map, [map.Index(8, 10)]).Cost[map.Index(22, 10)]));
         Assert.False(TravelRoutes.WearPaths(map));
         Assert.All(map.PathLayer, wear => Assert.Equal(0, wear));
-        foreach (int x in new[] { 12, 13, 15, 16 }) map.SetRoad(x, 10, true);
+        foreach (int x in new[] { 15, 16, 18, 19 }) map.SetRoad(x, 10, true);
         for (int y = 0; y < 10; y++)
         {
-            map.SetRoad(12, y, true);
-            map.SetRoad(16, y, true);
+            map.SetRoad(15, y, true);
+            map.SetRoad(19, y, true);
         }
         for (int day = 0; day < 12; day++) TravelRoutes.WearPaths(map);
         Assert.Equal(2, TravelRoutes.FootpathJourneys(map).Count());
@@ -227,7 +229,7 @@ public class MedievalTravelTests
                 !TravelRoutes.IsFootpathBridgeCell(map, journey[^1])));
         Assert.All(Enumerable.Range(0, map.PathLayer.Length).Where(cell => map.PathLayer[cell] > 0),
             cell => Assert.False(TravelRoutes.IsFootpathBridgeCell(map, cell)));
-        for (int y = 0; y < map.Height; y++) Assert.Equal(0, map.PathWearAt(14, y));
+        for (int y = 0; y < map.Height; y++) Assert.Equal(0, map.PathWearAt(17, y));
     }
 
     [Fact]
@@ -254,7 +256,7 @@ public class MedievalTravelTests
         var game = Small(CityRules.Full);
         game.HighestMilestone = 250;
         var fire = game.Map.Content.Buildings.Get("Fire Watch");
-        Assert.True(game.PlaceBuilding(fire, new(5, 19, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(fire, new(5, 10, 1, 1)).Success);
         int target = game.Map.Index(65, 19);
         Assert.True(game.Services.ResponseDays(ServiceKind.Fire, target) > 1);
         Assert.False(game.Services.HasArrived(ServiceKind.Fire, target));
@@ -275,26 +277,22 @@ public class MedievalTravelTests
     {
         var game = Small(CityRules.Full);
         var apothecary = game.Map.Content.Buildings.Get("Apothecary");
-        game.Map.SetBuildingFootprint(apothecary, new(5, 19, 1, 1));
+        TestCity.Stamp(game, apothecary.Name, new(5, 5));
         var fuel = game.Map.Content.Buildings.Get("Charcoal Burners");
-        game.Map.SetBuildingFootprint(fuel, new(5, 17, fuel.Width, fuel.Height));
+        TestCity.Stamp(game, fuel.Name, new(20, 5));
         var water = game.Map.Content.Buildings.Get("Town Well");
-        for (int x = 10; x < 14; x++)
-            game.Map.SetBuildingFootprint(water, new(x, 17, 1, 1));
+        for (int x = 35; x < 55; x += 5)
+            TestCity.Stamp(game, water.Name, new(x, 5));
         game.Touch();
         int target = game.Map.Index(60, 19);
         double before = game.Services.ResponseDays(ServiceKind.Health, target);
-        for (int x = 20; x < 78; x++)
-        {
-            game.Map.SetZone(x, 19, ZoneType.Residential);
-            game.Map.SetBuilding(x, 19, game.Map.Content.Buildings.Get("Tenement"));
-            game.Map.SetHousehold(x, 19, new(160, 0, 0));
-        }
+        for (int i = 0; i < 16; i++)
+            TestCity.Stamp(game, "Tenement", new(i % 8 * 10, 25 + i / 8 * 10), new(160, 0, 0));
         game.Touch();
         Assert.True(game.Services.Workload(ServiceKind.Health) > 1);
         Assert.True(game.Services.ResponseDays(ServiceKind.Health, target) > before);
-        Assert.Contains("capacity", CellInspector.Status(game, new(5, 19))!.Text);
-        Assert.Contains(BuildingReport.Build(game, new(5, 19)).Groups[0].Rows,
+        Assert.Contains("capacity", CellInspector.Status(game, new(5, 5))!.Text);
+        Assert.Contains(BuildingReport.Build(game, new(5, 5)).Groups[0].Rows,
             row => row[0].Text == "Workload" && row[1].Text.Contains('%'));
     }
 
@@ -303,18 +301,15 @@ public class MedievalTravelTests
     {
         var session = new GameSession(Small());
         var map = session.Game.Map;
-        map.SetZone(10, 19, ZoneType.Residential);
-        map.SetZone(11, 19, ZoneType.Residential);
-        map.SetBuildingFootprint(map.Content.Buildings.Get("Cottage"), new(10, 19, 2, 1));
-        map.SetHousehold(10, 19, new(2, 2, 1));
+        TestCity.Stamp(session.Game, "Cottage", new(10, 21), new(2, 2, 1));
         session.Game.Touch();
-        session.Game.Dezone(new(11, 19, 1, 1));
+        session.Game.Dezone(new(11, 21, 1, 1));
         Assert.Equal(1, session.Game.Stats.Residential.AwaitingRemoval);
         Assert.Equal(5, session.Game.Stats.Population);
-        session.Game.Designate(new(11, 19, 1, 1), ZoneType.Residential);
+        session.Game.Designate(new(11, 21, 1, 1), ZoneType.Residential);
         Assert.Empty(map.ZoneRemovals);
-        Assert.Equal(ZoneType.Residential, map.ZoneAt(10, 19));
-        session.PlaceCursor(new(11, 19));
+        Assert.Equal(ZoneType.Residential, map.ZoneAt(10, 21));
+        session.PlaceCursor(new(11, 21));
         session.PreviewDemolish();
         Assert.True(session.ConfirmPreview().Success);
         Assert.Equal(0, session.Game.Stats.Population);

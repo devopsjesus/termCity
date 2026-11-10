@@ -9,45 +9,40 @@ namespace TermCity.Tests;
 public class ResidentialPlotTests
 {
     [Fact]
-    public void FullRulesResidentialClickReservesOneCellIncludingAtTheMapEdge()
+    public void FullRulesResidentialClickReservesACompletePlotIncludingAtTheMapEdge()
     {
         var game = TestCity.Flat(rules: CityRules.Full);
         var session = new GameSession(game, showGuide: false);
-        session.PlaceCursor(new(game.Map.Width - 1, game.Map.Height - 1));
+        session.PlaceCursor(new(game.Map.Width - 5, game.Map.Height - 5));
         Assert.True(session.Zone(ZoneType.Residential).Success);
-        Assert.Equal(new CellRect(game.Map.Width - 1, game.Map.Height - 1, 1, 1),
+        Assert.Equal(new CellRect(game.Map.Width - 5, game.Map.Height - 5, 5, 5),
             Assert.Single(game.VacantPlots(ZoneType.Residential)));
     }
 
     [Fact]
-    public void NarrowResidentialStripsSupportCompactHomes()
+    public void NarrowResidentialStripsExplainMissingSpaceInsteadOfSqueezingHomes()
     {
         var game = TestCity.Flat(rules: CityRules.Full);
         Assert.True(game.Designate(new(10, 19, 20, 1), ZoneType.Residential).Success);
-        Assert.Equal(20, game.VacantPlots(ZoneType.Residential).Count);
-        Assert.Equal(GrowthStatus.Ready, GrowthDiagnostics.ForZone(game, ZoneType.Residential).Status);
+        Assert.Empty(game.VacantPlots(ZoneType.Residential));
+        Assert.Equal(GrowthStatus.NeedsSpace, GrowthDiagnostics.ForZone(game, ZoneType.Residential).Status);
         TestCity.Advance(game, 8);
-        Assert.NotEmpty(game.Map.BuildingFootprints);
-        Assert.All(game.Map.BuildingFootprints.Values, plot =>
-        {
-            Assert.InRange(plot.Width, 1, 2);
-            Assert.Equal(1, plot.Height);
-        });
+        Assert.Empty(game.Map.BuildingFootprints);
     }
 
     [Theory]
     [InlineData(1)]
     [InlineData(42)]
-    public void FullRulesHomesAreMostlyOneCellWithCompactVarietyAndRoundTrip(int seed)
+    public void FullRulesHomesUseMostlyMinimumPlotsWithHorizontalVarietyAndRoundTrip(int seed)
     {
         var game = TestCity.Flat(seed: seed, rules: CityRules.Full);
-        Assert.True(game.Designate(new(10, 5, 40, 12), ZoneType.Residential).Success);
+        Assert.True(game.Designate(new(10, 5, 40, 15), ZoneType.Residential).Success);
         var fuel = game.Map.Content.Buildings.Get("Woodlot");
         game.Map.SetBuildingFootprint(fuel, fuel.FootprintAt(52, 5));
         var water = game.Map.Content.Buildings.Get("Town Well");
-        game.Map.SetBuildingFootprint(water, water.FootprintAt(52, 10));
-        game.Designate(new(10, 17, 40, 2), ZoneType.Commercial);
-        game.Designate(new(60, 17, 20, 2), ZoneType.Industrial);
+        game.Map.SetBuildingFootprint(water, water.FootprintAt(52, 15));
+        game.Designate(new(10, 31, 40, 5), ZoneType.Commercial);
+        game.Designate(new(60, 31, 20, 5), ZoneType.Industrial);
         game.Touch();
         TestCity.Advance(game, 16);
         var plots = game.Map.BuildingFootprints.Values.Where(area =>
@@ -55,10 +50,10 @@ public class ResidentialPlotTests
         Assert.NotEmpty(plots);
         Assert.All(plots, area =>
         {
-            Assert.InRange(area.Width, 1, 2);
-            Assert.InRange(area.Height, 1, 2);
+            Assert.InRange(area.Width, 5, 10);
+            Assert.InRange(area.Height, 5, 10);
         });
-        Assert.True(plots.Count(area => area.Area == 1) > plots.Length / 2);
+        Assert.True(plots.Count(area => area.Area == 25) > plots.Length / 2);
         Assert.True(plots.Select(area => (area.Width, area.Height)).Distinct().Count() > 1);
         var restored = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
         Assert.Equal(plots.OrderBy(area => area.Y).ThenBy(area => area.X),
@@ -70,17 +65,17 @@ public class ResidentialPlotTests
     public void FullRulesHomesFitTheMinimumWhenNoLargerPlotFits()
     {
         var game = TestCity.Flat(rules: CityRules.Full);
-        var area = new CellRect(10, 18, 1, 1);
+        var area = new CellRect(10, 10, 5, 5);
         Assert.True(game.Designate(area, ZoneType.Residential).Success);
         TestCity.Advance(game, 8);
         Assert.Equal(area, Assert.Single(game.Map.BuildingFootprints.Values));
     }
 
     [Fact]
-    public void FourByFourHomesRoundTripWithoutChangingTheirCapacity()
+    public void ExpandedHomesRoundTripWithoutChangingTheirCapacity()
     {
         var game = TestCity.Flat(rules: CityRules.Full);
-        var area = new CellRect(10, 5, 4, 4);
+        var area = new CellRect(10, 25, 20, 20);
         var cottage = game.Map.Content.Buildings.Get("Cottage");
         game.Designate(area, ZoneType.Residential);
         game.Map.SetBuildingFootprint(cottage, area);
@@ -91,14 +86,13 @@ public class ResidentialPlotTests
     }
 
     [Fact]
-    public void ExistingNarrowHomesRemainLoadable()
+    public void PreScaleNarrowHomeLayoutsAreRejectedRatherThanSilentlyExpanded()
     {
         var game = TestCity.Flat(rules: CityRules.Full);
         var area = new CellRect(10, 19, 2, 1);
         game.Designate(area, ZoneType.Residential);
         game.Map.SetBuildingFootprint(game.Map.Content.Buildings.Get("Cottage"), area);
         game.Touch();
-        var restored = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
-        Assert.Equal(area, Assert.Single(restored.Map.BuildingFootprints.Values));
+        Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(SaveGameStore.Serialize(game)));
     }
 }

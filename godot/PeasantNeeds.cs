@@ -21,12 +21,6 @@ public static class PeasantNeeds
         var message = Describe(indicators, variation, complaintIndex);
         if (message is null) return null;
         ServiceKind kind = ServiceForComplaint(message.Reason);
-        if (message.Reason == "Slow journeys")
-            return message with
-            {
-                Text = "Sire, journeys on foot are taking too long.",
-                Hint = "Buildings gradually wear paths to nearby roads. Add roads to speed walking and deliveries.",
-            };
         if (kind == ServiceKind.None) return message;
         string name = CityReport.ServiceName(kind).ToLowerInvariant();
         double load = game.Services.Workload(kind);
@@ -56,7 +50,9 @@ public static class PeasantNeeds
 
     public static PeasantNeed? Describe(CityIndicators indicators, int variation, int complaintIndex = 0)
     {
-        var complaints = indicators.Complaints.OrderByDescending(c => c.Points).ToArray();
+        var complaints = indicators.Complaints
+            .Where(c => c.Reason is not ("Slow journeys" or "Road access"))
+            .OrderByDescending(c => c.Points).ToArray();
         if (complaints.Length == 0) return null;
         var complaint = complaints[Math.Abs((long)complaintIndex) % complaints.Length];
         string need = complaint.Reason switch
@@ -67,7 +63,7 @@ public static class PeasantNeeds
             "Commons" => "common ground", "Unguarded" => "a lord's protection",
             "Solace" => "a place of worship", "Hunger" => "bread and grain",
             "Cart traffic" => "clearer roads", "Idleness" => "work",
-            "Tithes" => "lighter taxes", "Road access" => "roads to their homes",
+            "Tithes" => "lighter taxes",
             _ => $"relief from {complaint.Reason.ToLowerInvariant()}",
         };
         string text = (variation % 4) switch
@@ -96,7 +92,6 @@ public static class PeasantNeeds
             "Cart traffic" => "Upgrade busy roads and improve routes between homes and workplaces. Check Growth and Services reports.",
             "Idleness" => "Provide commercial and industrial workplaces with timely fuel and water deliveries; inspect Growth.",
             "Tithes" => "Reduce residential taxes in the economy menu, while keeping enough income for upkeep.",
-            "Road access" or "Slow journeys" => "Add roads as walking speed boosts; paths gradually form from buildings.",
             _ => "Open the Services report to inspect complaints, coverage and funding.",
         };
         return new(complaint.Reason, text, Rgb.Hex(dire ? 0xff7777 : 0xffe066), hint);

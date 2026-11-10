@@ -10,6 +10,7 @@ public partial class ConstructionIcon : Control
     public ServiceKind Kind { get; init; }
     public Color MainColor { get; init; }
     public MapOverlay? Overlay { get; init; }
+    public bool Monument { get; init; }
     internal float Glow { get; private set; }
     internal float WiggleAngle { get; private set; }
     private Tween? _pulse;
@@ -62,7 +63,26 @@ public partial class ConstructionIcon : Control
         DrawSetTransform(center, WiggleAngle, Vector2.One * scale);
         var shadow = MainColor.Darkened(0.55f);
         var light = MainColor.Lightened(0.5f);
-        if (Overlay == MapOverlay.Off)
+        if (Monument)
+        {
+            DrawRect(new Rect2(-14, 13, 28, 5), new Color("#9b9e90"));
+            DrawRect(new Rect2(-11, 4, 22, 10), MainColor);
+            DrawRect(new Rect2(-8, -11, 16, 19), MainColor);
+            DrawRect(new Rect2(-6, -9, 12, 13), light);
+            DrawRect(new Rect2(-9, -17, 18, 6), new Color("#79634b"));
+            DrawRect(new Rect2(-5, -19, 10, 3), new Color("#a4a599"));
+            DrawRect(new Rect2(-13, -9, 5, 12), MainColor);
+            DrawRect(new Rect2(8, -9, 5, 12), MainColor);
+            DrawRect(new Rect2(-13, -13, 5, 6), light);
+            DrawRect(new Rect2(8, -13, 5, 6), light);
+            DrawRect(new Rect2(-5, -6, 3, 4), Colors.Black);
+            DrawRect(new Rect2(3, -7, 3, 4), Colors.Black);
+            DrawRect(new Rect2(-5, 0, 12, 4), new Color("#d88c35"));
+            DrawRect(new Rect2(-3, 1, 8, 1), shadow);
+            DrawRect(new Rect2(-7, 6, 4, 6), light);
+            DrawRect(new Rect2(4, 6, 4, 6), shadow);
+        }
+        else if (Overlay == MapOverlay.Off)
         {
             DrawArc(Vector2.Zero, 15, 0, Mathf.Tau, 32, light, 2);
             DrawLine(new(-10, -10), new(10, 10), MainColor, 4);

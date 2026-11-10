@@ -24,7 +24,7 @@ public class SidebarReportTests
     {
         var game = TestCity.Flat(rules: CityRules.Full);
         game.HighestMilestone = 500;
-        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Woodlot"), new(80, 18, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Woodlot"), new(80, 5, 1, 1)).Success);
         Assert.Contains("300 / 0 units", SidebarReport.ServiceStatusDetails(game, ServiceKind.Power));
         Assert.Contains("0% of residents", SidebarReport.ServiceStatusDetails(game, ServiceKind.Police));
         Assert.Equal("Grain storage and reserves", SidebarReport.ServiceStatus(game, ServiceKind.Granary).Text);
@@ -105,7 +105,7 @@ public class SidebarReportTests
         game.Map.SetZone(10, 21, ZoneType.Residential);
         game.Map.SetBuilding(10, 21, game.Map.Content.Buildings.ForZone(ZoneType.Residential));
         game.Map.SetHousehold(10, 21, new Household(2, 1, 0));
-        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Watch House"), new(10, 19, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Watch House"), new(10, 10, 1, 1)).Success);
         game.Money = -1;
         game.Hunger = 0.5;
         game.Touch();
@@ -141,7 +141,7 @@ public class SidebarReportTests
     {
         var game = TestCity.Flat(rules: CityRules.Full);
         game.HighestMilestone = 250;
-        var area = new CellRect(10, 19, 1, 1);
+        var area = new CellRect(10, 10, 1, 1);
         Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Watch House"), area).Success);
         Assert.DoesNotContain(SidebarReport.CityRows(game), row => row[0].Text == "Services");
         game.Money = -1;
@@ -198,8 +198,8 @@ public class SidebarReportTests
     public void CityRowsKeepSuppliesAndRemoveRedundantOrFinancialMetrics()
     {
         var game = TestCity.Flat(rules: CityRules.Full);
-        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Woodlot"), new(80, 18, 1, 1)).Success);
-        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Town Well"), new(85, 18, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Woodlot"), new(80, 5, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Town Well"), new(92, 5, 1, 1)).Success);
         var rows = SidebarReport.CityRows(game);
 
         Assert.Equal(SidebarReport.WarningColor, Assert.Single(rows, row => row[0].Text == "Fuel")[1].Color);

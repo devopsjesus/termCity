@@ -8,6 +8,104 @@ namespace TermCity.GodotApp;
 
 internal sealed class RoadSurfaceMeshes
 {
+    internal sealed record MeshData(Vector3[] Points, Color[] Colors, Vector2[]? Uvs, Vector3[]? Normals)
+    {
+        private readonly record struct Vertex(Vector3 Point, Color Color, Vector2 Uv, Vector3 Normal);
+        internal int[]? Indices { get; init; }
+        internal static Vector3[] TrianglePoints(ArrayMesh mesh, int surface = 0)
+        {
+            using var arrays = mesh.SurfaceGetArrays(surface);
+            var points = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            return arrays[(int)Mesh.ArrayType.Index].VariantType == Variant.Type.Nil ? points :
+                arrays[(int)Mesh.ArrayType.Index].AsInt32Array().Select(index => points[index]).ToArray();
+        }
+        internal MeshData Indexed()
+        {
+            if (Indices is not null || Points.Length == 0) return this;
+            if (Points.Length % 3 != 0 || Colors.Length != Points.Length ||
+                Uvs is not null && Uvs.Length != Points.Length || Normals is not null && Normals.Length != Points.Length)
+                throw new InvalidOperationException("Indexed surfaces require complete triangles and matching attributes.");
+            var lookup = new Dictionary<Vertex, int>();
+            var vertices = new List<Vertex>();
+            var indices = new int[Points.Length];
+            for (int i = 0; i < Points.Length; i++)
+            {
+                var vertex = new Vertex(Points[i], Colors[i], Uvs?[i] ?? default, Normals?[i] ?? default);
+                if (!lookup.TryGetValue(vertex, out int index))
+                {
+                    index = vertices.Count;
+                    vertices.Add(vertex);
+                    lookup.Add(vertex, index);
+                }
+                indices[i] = index;
+            }
+            long stride = 28 + (Uvs is null ? 0 : 8) + (Normals is null ? 0 : 12);
+            if (vertices.Count * stride + indices.LongLength * sizeof(int) >= Points.LongLength * stride) return this;
+            return new(vertices.Select(vertex => vertex.Point).ToArray(), vertices.Select(vertex => vertex.Color).ToArray(),
+                Uvs is null ? null : vertices.Select(vertex => vertex.Uv).ToArray(),
+                Normals is null ? null : vertices.Select(vertex => vertex.Normal).ToArray()) { Indices = indices };
+        }
+
+        internal static MeshData Combine(IReadOnlyList<MeshData> packets)
+        {
+            var points = packets.SelectMany(packet => packet.Points).ToArray();
+            var indices = new List<int>();
+            int offset = 0;
+            foreach (var packet in packets)
+            {
+                indices.AddRange((packet.Indices ?? Enumerable.Range(0, packet.Points.Length).ToArray()).Select(index => index + offset));
+                offset += packet.Points.Length;
+            }
+            return new(points, packets.SelectMany(packet => packet.Colors).ToArray(),
+                packets.All(packet => packet.Uvs is not null) ? packets.SelectMany(packet => packet.Uvs!).ToArray() : null,
+                packets.All(packet => packet.Normals is not null) ? packets.SelectMany(packet => packet.Normals!).ToArray() : null)
+                { Indices = packets.Any(packet => packet.Indices is not null) ? indices.ToArray() : null };
+        }
+
+        internal ArrayMesh Upload()
+        {
+            var mesh = new ArrayMesh();
+            AppendTo(mesh);
+            return mesh;
+        }
+
+        internal void AppendTo(ArrayMesh mesh)
+        {
+            if (Points.Length == 0) return;
+            using var arrays = new Godot.Collections.Array();
+            arrays.Resize((int)Mesh.ArrayType.Max);
+            arrays[(int)Mesh.ArrayType.Vertex] = Points;
+            arrays[(int)Mesh.ArrayType.Color] = Colors;
+            if (Uvs is not null) arrays[(int)Mesh.ArrayType.TexUV] = Uvs;
+            if (Normals is not null) arrays[(int)Mesh.ArrayType.Normal] = Normals;
+            if (Indices is not null) arrays[(int)Mesh.ArrayType.Index] = Indices;
+            mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
+        }
+    }
+
+    internal sealed record PreparedChunk(MeshData Ground, MeshData? Roads, MeshData? Banks,
+        Dictionary<int, Vector3[]> Faces, List<(Vector2 A, Vector2 B)> CutEdges, List<Vector3> CutCenters,
+        List<Vector3> WallSamples, List<(Vector3 Top, Vector3 Bottom)> ShoreSamples,
+        List<(Vector3 Top, Vector3 Bottom)> BridgeSideSamples)
+    {
+        internal GroundTexturePacket? Textures { get; init; }
+        internal double PreparationMilliseconds { get; init; }
+        internal double TexturePreparationMilliseconds { get; init; }
+        internal int RoadBorderTriangles { get; init; }
+        internal double RoadBorderMilliseconds { get; init; }
+        internal IReadOnlyList<Vector3> PreviewTriangles { get; init; } = [];
+        internal IReadOnlyList<Vector2[]> PreviewFootprint { get; init; } = [];
+        internal Dictionary<int, Vector3[]> LandFaces { get; init; } = [];
+
+        internal Chunk Upload(bool geometry = true) => new(geometry ? Ground.Upload() : new ArrayMesh(),
+            geometry ? Roads?.Upload() : null, geometry ? Banks?.Upload() : null,
+            Faces, CutEdges, CutCenters, WallSamples, ShoreSamples, BridgeSideSamples)
+        {
+            RoadBorderTriangles = RoadBorderTriangles, RoadBorderMilliseconds = RoadBorderMilliseconds,
+            PreviewTriangles = PreviewTriangles, PreviewFootprint = PreviewFootprint, LandFaces = LandFaces,
+        };
+    }
+
     internal sealed record Chunk(ArrayMesh Ground, ArrayMesh? Roads, ArrayMesh? Banks,
         Dictionary<int, Vector3[]> Faces, List<(Vector2 A, Vector2 B)> CutEdges, List<Vector3> CutCenters,
         List<Vector3> WallSamples, List<(Vector3 Top, Vector3 Bottom)> ShoreSamples,
@@ -21,12 +119,18 @@ internal sealed class RoadSurfaceMeshes
     }
 
     private readonly RoadMeshLayout _layout;
+    private readonly bool _litGround;
+    private readonly bool _litInfrastructure;
+    private readonly bool _edgeRelief;
     private readonly Dictionary<RoadMeshLayout.Segment, (Vector2[] Road, Vector2[] Corridor, Rect2 Bounds)> _polygons = [];
     private readonly Dictionary<int, List<Vector2[]>> _remnants = [];
     private readonly Dictionary<int, bool> _bridgeCuts = [];
     private readonly Dictionary<int, float> _landLevels = [];
     private readonly Dictionary<int, IReadOnlyList<ShorelineLayout.Patch>> _shorelines = [];
     private readonly Dictionary<int, bool> _beachCells = [];
+    private readonly Dictionary<(RoadMeshLayout.Segment Segment, bool Left), Vector2[]> _borderBands = [];
+    private readonly Dictionary<NumericsVector2, RoadMeshLayout.Segment?> _roadSamples = [];
+    private readonly Dictionary<(int Cell, byte Type), Vector2[][]> _cellBorderBands = [];
     private static readonly List<Vector2[]> NoRemnants = [];
     private sealed class FlatBorder
     {
@@ -38,15 +142,40 @@ internal sealed class RoadSurfaceMeshes
         public List<int> Cells { get; } = [];
     }
     internal int RoundedJoinCount { get; private set; }
+    private long _memoryEstimate = -1;
+    internal long EstimatedManagedBytes => _memoryEstimate >= 0 ? _memoryEstimate : _memoryEstimate = _polygons.Values.Sum(value =>
+        128L + (value.Road.LongLength + value.Corridor.LongLength) * 8) +
+        _remnants.Values.Sum(values => 64L + values.Sum(points => 24L + points.LongLength * 8)) +
+        (_bridgeCuts.Count + _landLevels.Count + _beachCells.Count) * 48L +
+        _shorelines.Sum(pair => 64L + pair.Value.Count * 128L) +
+        _borderBands.Values.Sum(points => 64L + points.LongLength * 8) + _roadSamples.Count * 64L +
+        _cellBorderBands.Values.Sum(bands => 64L + bands.Sum(points => 24L + points.LongLength * 8));
+
+    internal void ReleasePreparationCache()
+    {
+        _remnants.Clear();
+        _bridgeCuts.Clear();
+        _landLevels.Clear();
+        _shorelines.Clear();
+        _beachCells.Clear();
+        _borderBands.Clear();
+        _roadSamples.Clear();
+        _cellBorderBands.Clear();
+        _memoryEstimate = -1;
+    }
     internal int NarrowCutFacesClosed { get; private set; }
     internal static float BorderHeight(TermCity.Core.Roads.RoadType type, bool timber = false) =>
         type.Rank >= 3 ? 0.045f : type.Rank == 2 || timber ? 0.035f : 0.016f;
     private static float BorderWidth(TermCity.Core.Roads.RoadType type) =>
         type.Rank >= 3 ? 0.1f : type.Rank == 2 ? 0.075f : 0.12f;
 
-    public RoadSurfaceMeshes(RoadMeshLayout layout)
+    public RoadSurfaceMeshes(RoadMeshLayout layout, bool litGround = false,
+        bool litInfrastructure = false, bool edgeRelief = false)
     {
         _layout = layout;
+        _litGround = litGround;
+        _litInfrastructure = litInfrastructure;
+        _edgeRelief = edgeRelief;
         foreach (var segment in layout.Segments)
         {
             var road = Convert(segment.Road); var corridor = Convert(segment.Corridor);
@@ -56,8 +185,37 @@ internal sealed class RoadSurfaceMeshes
         }
     }
 
-    public Chunk Build(GameSession session, int chunkX, int chunkY, RoadMeshLayout? previewBaseline = null)
+    internal RoadSurfaceMeshes Fork(RoadMeshLayout layout)
     {
+        var fork = new RoadSurfaceMeshes(layout, _litGround, _litInfrastructure, _edgeRelief);
+        foreach (var pair in _remnants) fork._remnants.Add(pair.Key, pair.Value);
+        foreach (var pair in _bridgeCuts) fork._bridgeCuts.Add(pair.Key, pair.Value);
+        foreach (var pair in _landLevels) fork._landLevels.Add(pair.Key, pair.Value);
+        foreach (var pair in _shorelines) fork._shorelines.Add(pair.Key, pair.Value);
+        foreach (var pair in _beachCells) fork._beachCells.Add(pair.Key, pair.Value);
+        fork.ReusePreparedDependencies(this);
+        return fork;
+    }
+
+    internal RoadSurfaceMeshes Fresh() => new(_layout, _litGround, _litInfrastructure, _edgeRelief);
+
+    internal void ReusePreparedDependencies(RoadSurfaceMeshes prepared)
+    {
+        if (_cellBorderBands.Count + prepared._cellBorderBands.Count > 16_384) _cellBorderBands.Clear();
+        if (_borderBands.Count + prepared._borderBands.Count > 32_768) _borderBands.Clear();
+        if (_roadSamples.Count + prepared._roadSamples.Count > 100_000) _roadSamples.Clear();
+        foreach (var pair in prepared._cellBorderBands) _cellBorderBands.TryAdd(pair.Key, pair.Value);
+        foreach (var pair in prepared._borderBands) _borderBands.TryAdd(pair.Key, pair.Value);
+        foreach (var pair in prepared._roadSamples) _roadSamples.TryAdd(pair.Key, pair.Value);
+        _memoryEstimate = -1;
+    }
+
+    public Chunk Build(GameSession session, int chunkX, int chunkY, RoadMeshLayout? previewBaseline = null)
+        => Prepare(session, chunkX, chunkY, previewBaseline).Upload();
+
+    internal PreparedChunk Prepare(GameSession session, int chunkX, int chunkY, RoadMeshLayout? previewBaseline = null)
+    {
+        _memoryEstimate = -1;
         var map = session.Game.Map;
         if (_remnants.Count > 100_000) _remnants.Clear();
         if (_landLevels.Count > 100_000) _landLevels.Clear();
@@ -97,7 +255,7 @@ internal sealed class RoadSurfaceMeshes
                 ground.SetUV(new((point.X - x) / span, (point.Y - y) / span));
                 ground.AddVertex(new(point.X, level, point.Y));
             }
-            return new(ground.Commit(), null, null, faces, cutEdges, cutCenters, wallSamples, shoreSamples, bridgeSideSamples);
+            return new(ground.Prepare(_litGround), null, null, faces, cutEdges, cutCenters, wallSamples, shoreSamples, bridgeSideSamples);
         }
         var waterCorners = new Dictionary<(int X, int Y), float>();
         var waterHeights = new Dictionary<Vector2, float>();
@@ -543,6 +701,12 @@ internal sealed class RoadSurfaceMeshes
                 {
                     borderBands ??= [];
                     if (borderBands.TryGetValue(type, out var cached)) return cached;
+                    var key = (map.Index(x, y), type.Id);
+                    if (_cellBorderBands.TryGetValue(key, out var prepared))
+                    {
+                        borderBands[type] = prepared;
+                        return prepared;
+                    }
                     var bands = new List<Vector2[]>();
                     float width = BorderWidth(type);
                     Vector2[] tile = [new(x, y), new(x + 1, y), new(x + 1, y + 1), new(x, y + 1)];
@@ -552,7 +716,8 @@ internal sealed class RoadSurfaceMeshes
                     foreach (var segment in nearby.Where(segment => segment.Type == type))
                     foreach (bool left in new[] { true, false })
                     {
-                        var source = Convert(_layout.BorderBand(segment, left, width));
+                        if (!_borderBands.TryGetValue((segment, left), out var source))
+                            _borderBands[(segment, left)] = source = Convert(_layout.BorderBand(segment, left, width));
                         var delta = source[1] - source[0];
                         float length = delta.LengthSquared();
                         if (length < 0.000001f) continue;
@@ -582,8 +747,11 @@ internal sealed class RoadSurfaceMeshes
                             bands.Add(band);
                         }
                     }
-                    borderBands.Add(type, bands);
-                    return bands;
+                    var result = bands.ToArray();
+                    if (_cellBorderBands.Count >= 16_384) _cellBorderBands.Clear();
+                    _cellBorderBands[key] = result;
+                    borderBands.Add(type, result);
+                    return result;
                 }
 
                 float SurfaceMarker(Vector2 point, float height, bool? waterSurface)
@@ -640,11 +808,11 @@ internal sealed class RoadSurfaceMeshes
                             var normal = new Vector2(-delta.Y, delta.X).Normalized();
                             var middle = (a + b) / 2;
                             // A wider probe can jump over narrow intersection fragments.
-                            bool left = _layout.RoadAt(ToNumerics(middle + normal * 0.001f)) is not null;
-                            bool right = _layout.RoadAt(ToNumerics(middle - normal * 0.001f)) is not null;
+                            bool left = CachedRoadAt(ToNumerics(middle + normal * 0.001f)) is not null;
+                            bool right = CachedRoadAt(ToNumerics(middle - normal * 0.001f)) is not null;
                             if (left == right) continue;
                             var inward = left ? normal : -normal;
-                            bool timber = type.Rank == 1 && _layout.RoadAt(ToNumerics(middle + inward * 0.01f))?.Bridge == true;
+                            bool timber = type.Rank == 1 && CachedRoadAt(ToNumerics(middle + inward * 0.01f))?.Bridge == true;
                             float width = BorderWidth(type);
                             float lift = BorderHeight(type, timber);
                             int shade = TermCity.Core.Util.CellHash.Pick(x, y, 3);
@@ -713,10 +881,10 @@ internal sealed class RoadSurfaceMeshes
                                     {
                                         var capMiddle = (cleaned[i] + cleaned[(i + 1) % cleaned.Length]) / 2;
                                         var forward = delta.Normalized() * (capMiddle.Dot(delta) > middle.Dot(delta) ? 0.01f : -0.01f);
-                                        var continuation = _layout.RoadAt(ToNumerics(capMiddle + forward));
+                                        var continuation = CachedRoadAt(ToNumerics(capMiddle + forward));
                                         if (continuation is { } next && next.Type == type &&
                                             (type.Rank != 1 || next.Bridge == timber) &&
-                                            _layout.RoadAt(ToNumerics(capMiddle + forward - inward * (width / 2 + 0.01f))) is null)
+                                            CachedRoadAt(ToNumerics(capMiddle + forward - inward * (width / 2 + 0.01f))) is null)
                                             continue;
                                     }
                                     var start = cleaned[i]; var end = cleaned[(i + 1) % cleaned.Length];
@@ -941,7 +1109,7 @@ internal sealed class RoadSurfaceMeshes
                         wallSamples.Add(high.Lerp(low, 0.75f));
                     }
                     var normal = (topB - topA).Cross(lowA - topA).Normalized();
-                    float shade = normal.X + normal.Z < 0 ? 1 : 0.78f;
+                    float shade = _litInfrastructure || normal.X + normal.Z < 0 ? 1 : 0.78f;
                     float bottom = Math.Min(lowA.Y, lowB.Y), top = Math.Max(topA.Y, topB.Y);
                     for (int band = (int)Math.Floor(bottom / 0.24f); band * 0.24f < top; band++)
                     {
@@ -952,14 +1120,54 @@ internal sealed class RoadSurfaceMeshes
                         var bHigh = new Vector3(b.X, Math.Clamp(upper, lowB.Y, topB.Y), b.Y);
                         if (aHigh.Y - aLow.Y < 0.00001f && bHigh.Y - bLow.Y < 0.00001f) continue;
                         float stratum = band % 2 == 0 ? 1 : 0.94f;
-                        banks.SetColor(new Color(0x72 / 255f * shade * stratum,
-                            0x5b / 255f * shade * stratum, 0x40 / 255f * shade * stratum));
-                        banks.AddVertex(aHigh); banks.AddVertex(bHigh); banks.AddVertex(bLow);
-                        banks.AddVertex(aHigh); banks.AddVertex(bLow); banks.AddVertex(aLow);
-                        bankVertices += 6;
+                        var color = new Color(0x72 / 255f * shade * stratum,
+                            0x5b / 255f * shade * stratum, 0x40 / 255f * shade * stratum);
+                        if (_edgeRelief && kind != "cut" && map.TerrainAt(x, y).Buildable)
+                        {
+                            float cap = .07f * (int)map.ElevationProfile;
+                            var aTurf = new Vector3(a.X,
+                                Math.Clamp(topA.Y - Math.Min(cap, (topA.Y - lowA.Y) * .24f), aLow.Y, aHigh.Y), a.Y);
+                            var bTurf = new Vector3(b.X,
+                                Math.Clamp(topB.Y - Math.Min(cap, (topB.Y - lowB.Y) * .24f), bLow.Y, bHigh.Y), b.Y);
+                            if (aHigh.Y > aTurf.Y + .00001f || bHigh.Y > bTurf.Y + .00001f)
+                                Face(aHigh, bHigh, bTurf, aTurf, new Color("#4a6d37"));
+                            aHigh = aTurf;
+                            bHigh = bTurf;
+                            if (aHigh.Y - aLow.Y < .00001f && bHigh.Y - bLow.Y < .00001f) continue;
+                        }
+                        bool inset = _edgeRelief && kind != "cut" && band % 3 == 1 &&
+                            lower > bottom + .01f && upper < top - .01f;
+                        if (inset)
+                        {
+                            var along = (b - a).Normalized();
+                            var inwardUnit = new Vector2(-along.Y, along.X);
+                            if (inwardUnit.Dot(new Vector2(x + .5f, y + .5f) - (a + b) / 2) < 0)
+                                inwardUnit = -inwardUnit;
+                            var inward = inwardUnit * .045f;
+                            var shift = new Vector3(inward.X, 0, inward.Y);
+                            Face(aHigh + shift, bHigh + shift, bLow + shift, aLow + shift, color);
+                            Face(aHigh, bHigh, bHigh + shift, aHigh + shift, color);
+                            Face(aLow + shift, bLow + shift, bLow, aLow, color);
+                            // Equal-height neighbors can turn or lack this recess; keep each band closed.
+                            Face(aHigh, aHigh + shift, aLow + shift, aLow, color);
+                            Face(bHigh + shift, bHigh, bLow, bLow + shift, color);
+                        }
+                        else Face(aHigh, bHigh, bLow, aLow, color);
                     }
                     if (!belowRoad && kind != "shore") cutEdges.Add((a, b));
                     if (kind == "cut") cutCenters.Add((topA + topB + lowA + lowB) / 4);
+
+                    void Face(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Color color)
+                    {
+                        banks.SetColor(color);
+                        Vertex(a); Vertex(b); Vertex(c); Vertex(a); Vertex(c); Vertex(d);
+                        bankVertices += 6;
+                        void Vertex(Vector3 vertex)
+                        {
+                            banks.AddVertex(vertex);
+                            if (_litInfrastructure) cellFaces.Add(vertex);
+                        }
+                    }
                 }
             }
         long flatBorderStarted = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -1012,8 +1220,8 @@ internal sealed class RoadSurfaceMeshes
         borderMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(flatBorderStarted).TotalMilliseconds;
         emittedBorderVertices += roads.Vertices.Count - beforeFlatBorders;
         foreach (var (cell, buffer) in faceBuffers) faces.Add(cell, buffer.ToArray());
-        return new(ground.Commit(), roads.Vertices.Count > 0 ? roads.Commit() : null,
-            bankVertices > 0 ? banks.Commit() : null, faces, cutEdges, cutCenters, wallSamples, shoreSamples, bridgeSideSamples)
+        return new(ground.Prepare(_litGround), roads.Vertices.Count > 0 ? roads.Prepare(_litInfrastructure, upwardOnly: false) : null,
+            bankVertices > 0 ? banks.Prepare(_litInfrastructure, upwardOnly: false) : null, faces, cutEdges, cutCenters, wallSamples, shoreSamples, bridgeSideSamples)
             {
                 RoadBorderTriangles = (previewFootprint is null ? borderVertices : emittedBorderVertices) / 3,
                 RoadBorderMilliseconds = borderMilliseconds,
@@ -1065,6 +1273,12 @@ internal sealed class RoadSurfaceMeshes
     }
 
     private float RoadHeight(Vector2 point) => _layout.HeightAt(ToNumerics(point));
+    private RoadMeshLayout.Segment? CachedRoadAt(NumericsVector2 point)
+    {
+        if (_roadSamples.TryGetValue(point, out var cached)) return cached;
+        if (_roadSamples.Count >= 100_000) _roadSamples.Clear();
+        return _roadSamples[point] = _layout.RoadAt(point);
+    }
 
     internal bool IsRemnant(GameMap map, Vector2 point)
     {
@@ -1159,7 +1373,7 @@ internal sealed class RoadSurfaceMeshes
             _bridgeCuts.Add(index, false);
             return false;
         }
-        float bankMargin = TerrainSprite.HillStepHeight / 2 + 0.06f;
+        float bankMargin = TerrainSprite.HillStepFor(map) / 2 + 0.06f;
         Vector2[] tile = [new(x, y), new(x + 1, y), new(x + 1, y + 1), new(x, y + 1)];
         bool cut = false;
         foreach (var segment in nearby)
@@ -1503,25 +1717,30 @@ internal sealed class RoadSurfaceMeshes
             if (_hasUv) _uvs.Add(uv);
         }
 
-        public ArrayMesh Commit()
+        public MeshData Prepare(bool normals = false, bool upwardOnly = true)
         {
             if (_vertices.Count % 3 != 0 || _hasUv && _uvs.Count != _vertices.Count)
                 throw new InvalidOperationException("Terrain meshes require complete triangles with matching vertex attributes.");
-            var mesh = new ArrayMesh();
-            if (_vertices.Count == 0) return mesh;
-            using var arrays = new Godot.Collections.Array();
-            arrays.Resize((int)Mesh.ArrayType.Max);
-            using Variant vertices = _vertices.ToArray();
-            using Variant colors = _colors.ToArray();
-            arrays[(int)Mesh.ArrayType.Vertex] = vertices;
-            arrays[(int)Mesh.ArrayType.Color] = colors;
-            if (_hasUv)
+            Vector3[]? values = null;
+            if (normals)
             {
-                using Variant uvs = _uvs.ToArray();
-                arrays[(int)Mesh.ArrayType.TexUV] = uvs;
+                values = new Vector3[_vertices.Count];
+                for (int i = 0; i < _vertices.Count; i += 3)
+                {
+                    var normal = (_vertices[i + 1] - _vertices[i]).Cross(_vertices[i + 2] - _vertices[i]).Normalized();
+                    // Legacy unshaded terrain is double-sided. Lit tops need clockwise
+                    // front faces as well as upward normals, or Godot lights their undersides.
+                    if (upwardOnly && normal.Y > 0)
+                    {
+                        (_vertices[i + 1], _vertices[i + 2]) = (_vertices[i + 2], _vertices[i + 1]);
+                        (_colors[i + 1], _colors[i + 2]) = (_colors[i + 2], _colors[i + 1]);
+                        if (_hasUv) (_uvs[i + 1], _uvs[i + 2]) = (_uvs[i + 2], _uvs[i + 1]);
+                    }
+                    else normal = -normal;
+                    values[i] = values[i + 1] = values[i + 2] = normal;
+                }
             }
-            mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
-            return mesh;
+            return new MeshData(_vertices.ToArray(), _colors.ToArray(), _hasUv ? _uvs.ToArray() : null, values).Indexed();
         }
     }
 }

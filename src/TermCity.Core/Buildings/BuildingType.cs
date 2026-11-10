@@ -34,8 +34,30 @@ public sealed class BuildingType : RegisteredType
     /// <summary>Cost per complete building when placed by the player.</summary>
     public int Cost { get; init; }
 
-    public int Width { get; init; } = 1;
-    public int Height { get; init; } = 1;
+    private int _width = WorldScale.ArchitectureScale, _height = WorldScale.ArchitectureScale;
+    public int Width { get => _width; init => _width = value; }
+    public int Height { get => _height; init => _height = value; }
+    public int ModelScale { get; private set; } = WorldScale.ArchitectureScale;
+    public int ModelWidth => Math.Max(1, Width / ModelScale);
+    public int ModelDepth => Math.Max(1, Height / ModelScale);
+
+    internal void RetainLegacyLayout()
+    {
+        _width /= ModelScale;
+        _height /= ModelScale;
+        ModelScale = 1;
+    }
+
+    internal BuildingType WithModelScale(int scale)
+    {
+        if (Width % ModelScale != 0 || Height % ModelScale != 0)
+            throw new InvalidDataException($"Building '{Name}' requires its original world layout.");
+        var copy = (BuildingType)MemberwiseClone();
+        copy._width = ModelWidth * scale;
+        copy._height = ModelDepth * scale;
+        copy.ModelScale = scale;
+        return copy;
+    }
 
     public CellRect FootprintAt(int x, int y, int rotation = 0)
     {
@@ -49,6 +71,7 @@ public sealed class BuildingType : RegisteredType
     public bool PlayerPlaceable { get; init; }
     public bool IsMonument { get; init; }
     public bool DebugOnly { get; init; }
+    public bool SettlementOnly { get; init; }
     public string CatalogName => IsMonument ? Name.Replace(" Monument", "", StringComparison.Ordinal) : Name;
 
     /// <summary>Souls the town needs before the player may raise this (great works are not built for a hamlet).</summary>
@@ -97,7 +120,10 @@ public sealed class BuildingType : RegisteredType
     public string FootprintGlyphAt(CellRect footprint, int x, int y)
     {
         if (footprint.Area == 1 || FootprintArt.Count == 0) return GlyphAt(x, y);
-        int column = (x - footprint.X) * 2, row = (y - footprint.Y) * 2;
+        int column = (x - footprint.X) * 2 / ModelScale;
+        int row = (y - footprint.Y) * 2 / ModelScale;
+        column = Math.Min(column, FootprintArt[0].Length - 2);
+        row = Math.Min(row, FootprintArt.Count - 2);
         return FootprintArt[row].Substring(column, 2) + "\n" + FootprintArt[row + 1].Substring(column, 2);
     }
 }
@@ -123,7 +149,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
 
     public IEnumerable<BuildingType> ServiceBuildings(ServiceKind kind) => this.Where(b => b.Service == kind);
 
-    public static BuildingRegistry CreateDefault()
+    public static BuildingRegistry CreateDefault(bool retainLegacyLayout = false)
     {
         var registry = new BuildingRegistry();
         registry.Register(new BuildingType
@@ -164,7 +190,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Burgage House",
-            Height = 2,
+            Height = 10,
             PowerUse = 6,
             WaterUse = 6,
             Glyphs = ["▥", "▥", "▧"],
@@ -178,7 +204,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Merchant House",
-            Width = 2,
+            Width = 10,
             PowerUse = 9,
             WaterUse = 5,
             Glyphs = ["▥", "▧", "▥"],
@@ -192,7 +218,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Mill",
-            Width = 2, Height = 2,
+            Width = 10, Height = 10,
             PowerUse = 14,
             WaterUse = 10,
             Glyphs = ["▥", "▨", "▥"],
@@ -208,7 +234,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Tenement",
-            Width = 2, Height = 2,
+            Width = 10, Height = 10,
             PowerUse = 14,
             WaterUse = 14,
             Glyphs = ["█", "▐", "█"],
@@ -222,7 +248,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Market Hall",
-            Width = 2, Height = 2,
+            Width = 10, Height = 10,
             PowerUse = 28,
             WaterUse = 12,
             Glyphs = ["█", "▐", "▌"],
@@ -236,7 +262,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         registry.Register(new BuildingType
         {
             Name = "Great Forge",
-            Width = 2, Height = 2,
+            Width = 10, Height = 10,
             PowerUse = 30,
             WaterUse = 20,
             Glyphs = ["▓", "▒", "▓"],
@@ -255,19 +281,56 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
             Name = "Bewildered Duck Monument",
             Glyphs = ["♙"],
             Foreground = Rgb.Hex(0xe3be48),
-            Width = 8, Height = 6,
+            Width = 40, Height = 30,
             IsMonument = true, DebugOnly = true, PlayerPlaceable = true,
             MinPopulation = 100_000,
             Cost = 0,
             Description = "An original colossal golden-yellow stone duck, clasping its helmet in bewilderment; a debug-only monument.",
         });
+        RegisterSettlementBuildings(registry);
+        registry.Register(Civic("Archer Barracks", ServiceKind.Defence, "A", 0x8fc7d4,
+            cost: 900, upkeep: 12, radius: 9, minPopulation: 100,
+            text: "Recruits four archers who walk to wall positions and defend nearby approaches; click defenders to command them"));
+        registry.Register(Civic("Guard Post", ServiceKind.Defence, "G", 0xa4a599,
+            cost: 650, upkeep: 10, radius: 2, minPopulation: 100,
+            text: "Recruits four soldiers who guard the gate and engage approaching Orcs; casualties replenish through upkeep"));
+        if (retainLegacyLayout)
+            foreach (var building in registry) building.RetainLegacyLayout();
         return registry;
+    }
+
+    private static void RegisterSettlementBuildings(BuildingRegistry registry)
+    {
+        Add("Timber Home", ZoneType.Residential, 6, 1, 1, "A modest timber-framed family home");
+        Add("Stone Home", ZoneType.Residential, 8, 1, 1, "A comfortable stone croft");
+        Add("Courtyard House", ZoneType.Residential, 12, 2, 2, "A prosperous household with broad wings and a private courtyard", value: 3);
+        Add("Shanty Tower", ZoneType.Residential, 24, 1, 1, "Stacked wooden rooms on a crowded low-value site", value: 0.7);
+        Add("Wall House", ZoneType.Residential, 18, 1, 1, "Timber rooms attached to the inner wall face; defenses remain intact", value: 0.8);
+        Add("Blacksmith", ZoneType.Industrial, 14, 1, 1, "A hearth, anvil and smith's working yard", pollution: 2);
+        Add("Woodsmith", ZoneType.Industrial, 14, 1, 1, "A carpenter's shop with benches and stacked timber");
+        Add("Armory", ZoneType.Industrial, 14, 1, 1, "An arms workshop and racks of shields near the defenses", pollution: 1);
+        Add("Supply Shop", ZoneType.Commercial, 14, 1, 1, "Crates, barrels and everyday supplies beside the bailey's foot traffic");
+        Add("Market", ZoneType.Commercial, 14, 2, 1, "A small open market of awnings and trading stalls");
+
+        void Add(string name, ZoneType zone, int capacity, int width, int height, string description,
+            double value = 1, int pollution = 0)
+        {
+            var basis = registry.ForZone(zone)!;
+            registry.Register(new BuildingType
+            {
+                Name = name, Zone = zone, Capacity = capacity,
+                Width = width * WorldScale.ArchitectureScale, Height = height * WorldScale.ArchitectureScale,
+                Glyphs = basis.Glyphs, Foreground = basis.Foreground, Description = description,
+                PowerUse = basis.PowerUse, WaterUse = basis.WaterUse, ValueMultiplier = value,
+                Pollution = pollution, SettlementOnly = true,
+            });
+        }
     }
 
     private static void RegisterServices(BuildingRegistry registry)
     {
         registry.Register(Civic("Charcoal Burners", ServiceKind.Power, "Ψ", 0xff8c5a, cost: 34_000, upkeep: 100,
-            capacity: 1_200, pollution: 8, text: "Cheap, plentiful fuel for hearths and forges; the smoke carries a long way"));
+            capacity: 1_200, pollution: 8, text: "Plentiful fuel for hearths and forges; strong smoke stays within six cells, fading out by eight"));
         registry.Register(Civic("Woodlot", ServiceKind.Power, "☼", 0xffe066, cost: 8_000, upkeep: 40,
             capacity: 300, text: "A fenced yard of stacked firewood: clean fuel, but each lot supplies far less"));
         registry.Register(Civic("Aqueduct", ServiceKind.Water, "◍", 0x66c7ff, cost: 14_000, upkeep: 60,
@@ -301,7 +364,7 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         // The lord's seat: a castle anchors a settlement. It garrisons the surrounding land (defence), lifts land value and
         // the tithe, draws settlers, and a town cannot grow tall without one.
         registry.Register(Civic("Motte and Bailey", ServiceKind.Defence, "♙", 0xd9b48f, cost: 14_000, upkeep: 150,
-            radius: 30, strength: 70, seat: 1, text: "An earth mound, palisade and hall: the lord's first seat; a hamlet becomes a manor"));
+            radius: 30, strength: 70, seat: 1, text: "Found a bailey by drawing its enclosure: automatic towers, a right-facing gate and naturally settling homes and workplaces"));
         registry.Register(Civic("Stone Keep", ServiceKind.Defence, "♜", 0xc8c8d0, cost: 38_000, upkeep: 200,
             radius: 42, strength: 85, seat: 2, minPopulation: 400, text: "A tower of stone and a walled bailey: burghers dare to build taller and richer"));
         registry.Register(Civic("Castle", ServiceKind.Defence, "♚", 0xf2f2f8, cost: 85_000, upkeep: 280,
@@ -332,22 +395,24 @@ public sealed class BuildingRegistry : TypeRegistry<BuildingType>
         MinPopulation = minPopulation,
         SeatRank = seat,
         Pilgrims = pilgrims,
-        Width = name switch
+        Width = WorldScale.ArchitectureScale * (name switch
         {
             "Castle" => 4,
+            "Archer Barracks" or "Guard Post" => 2,
             "Stone Keep" or "Cathedral" or "Monastery" or "Infirmary" => 3,
             "Charcoal Burners" or "Woodlot" or "Aqueduct" or "Fire Watch" or "Sheriff's Hall" or
                 "Gaol" or "Hospice" or "Chantry School" or "Village Green" or "Motte and Bailey" or
                 "Parish Church" or "Guildhall" or "Granary" or "Watch House" or "Apothecary" or
                 "Chapel" or "Tavern" => 2,
             _ => 1,
-        },
-        Height = name switch
+        }),
+        Height = WorldScale.ArchitectureScale * (name switch
         {
             "Castle" or "Cathedral" or "Monastery" => 3,
+            "Archer Barracks" => 2,
             "Stone Keep" or "Infirmary" or "Woodlot" or "Gaol" or "Village Green" or "Parish Church" => 2,
             _ => 1,
-        },
+        }),
         Name = name,
         Glyphs = [glyph],
         FootprintArt = name switch

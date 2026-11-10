@@ -11,10 +11,6 @@ public partial class Main
 
     public EffectLevel EffectsLevel { get; private set; } = EffectLevel.High;
 
-    private double _effectRedrawClock;
-
-    private const double AmbientRedrawSeconds = 1.0 / 15;
-
     public bool CelebrationsEnabled { get; private set; }
 
     private void CreateEffects()
@@ -68,13 +64,6 @@ public partial class Main
     {
         if (_focused) Director.Update(delta);
         if (!Effects.NeedsRedraw) return;
-        _effectRedrawClock += delta;
-        // One-shot effects and shakes redraw every frame; ambient life alone redraws at a calmer rate to save CPU.
-        if (Effects.ActiveOneShots > 0 || Effects.Shake != default || !Effects.HasVisuals ||
-            _effectRedrawClock >= AmbientRedrawSeconds)
-        {
-            _effectRedrawClock = 0;
-            Map.QueueRedraw();
-        }
+        Map.QueueRedraw();
     }
 }

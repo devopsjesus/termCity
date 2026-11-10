@@ -10,16 +10,16 @@ namespace TermCity.Tests;
 public class CompactBuildingTests
 {
     [Fact]
-    public void ZonedTypesStartAtOneCellAndNeverRequireMoreThanTwoByTwo()
+    public void ZonedTypesStartAtAFullPlotAndExpandHorizontally()
     {
         var buildings = BuildingRegistry.CreateDefault();
         foreach (var zone in Zones.Placeable)
         {
-            Assert.Equal(new CellRect(4, 5, 1, 1), buildings.ForZone(zone)!.FootprintAt(4, 5));
+            Assert.Equal(new CellRect(4, 5, 5, 5), buildings.ForZone(zone)!.FootprintAt(4, 5));
             foreach (var type in buildings.Where(type => type.Zone == zone))
             {
-                Assert.InRange(type.Width, 1, 2);
-                Assert.InRange(type.Height, 1, 2);
+                Assert.InRange(type.Width, 5, 10);
+                Assert.InRange(type.Height, 5, 10);
             }
         }
         Assert.Equal(6, buildings.Get("Cottage").Capacity);
@@ -36,13 +36,13 @@ public class CompactBuildingTests
         var session = new GameSession(TestCity.Flat(rules: CityRules.Full));
         session.PlaceCursor(new(10, 10));
         Assert.True(session.Zone(zone).Success);
-        Assert.Equal(CellRect.Single(new(10, 10)), Assert.Single(session.Game.VacantPlots(zone)));
+        Assert.Equal(new CellRect(10, 10, 5, 5), Assert.Single(session.Game.VacantPlots(zone)));
     }
 
     [Theory]
     [InlineData(ZoneType.Commercial)]
     [InlineData(ZoneType.Industrial)]
-    public void BusinessesGrowMostlyInSingleCellsWithNoFootprintLargerThanTwoByTwo(ZoneType zone)
+    public void BusinessesGrowMostlyInMinimumPlotsWithBoundedHorizontalExpansion(ZoneType zone)
     {
         var game = TestCity.Flat(config: new GameConfig
         {
@@ -50,23 +50,24 @@ public class CompactBuildingTests
             MaxNewCommercialPerWeek = 50, MaxNewIndustrialPerWeek = 50,
         });
         var home = game.Map.Content.Buildings.ForZone(ZoneType.Residential)!;
-        for (int x = 0; x < 50; x++)
+        for (int i = 0; i < 50; i++)
         {
-            game.Map.SetZone(x, 5, ZoneType.Residential);
-            game.Map.SetBuildingFootprint(home, new(x, 5, 1, 1));
-            game.Map.SetHousehold(x, 5, new(2, 2, 1));
+            int x = i % 25 * 5, y = 5 + i / 25 * 5;
+            foreach (var p in home.FootprintAt(x, y).Cells()) game.Map.SetZone(p.X, p.Y, ZoneType.Residential);
+            game.Map.SetBuildingFootprint(home, home.FootprintAt(x, y));
+            game.Map.SetHousehold(x, y, new(2, 2, 1));
         }
         game.Touch();
-        Assert.True(game.Designate(new(10, 21, 100, 10), zone).Success);
+        Assert.True(game.Designate(new(10, 21, 100, 30), zone).Success);
         game.AdvanceWeek();
         var plots = game.Map.BuildingFootprints.Values.Where(area =>
             game.Map.BuildingAt(area.X, area.Y)!.Zone == zone).ToArray();
         Assert.True(plots.Length >= 20);
-        Assert.True(plots.Count(area => area.Area == 1) >= plots.Length * 0.65);
+        Assert.True(plots.Count(area => area.Area == 25) >= plots.Length * 0.65);
         Assert.All(plots, area =>
         {
-            Assert.InRange(area.Width, 1, 2);
-            Assert.InRange(area.Height, 1, 2);
+            Assert.InRange(area.Width, 5, 10);
+            Assert.InRange(area.Height, 5, 10);
         });
         var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
         Assert.Equal(game.Stats, loaded.Stats);

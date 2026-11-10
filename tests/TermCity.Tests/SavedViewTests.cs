@@ -8,9 +8,10 @@ public class SavedViewTests
     [Theory]
     [InlineData(-2)]
     [InlineData(-1)]
+    [InlineData(GameSession.ThreeQuarterZoom)]
     [InlineData(0)]
     [InlineData(1)]
-    public void PerspectivePanningCanCenterAllMapEdgesWithoutMovingCursorOutsideMap(int zoom)
+    public void PerspectivePanningCanCenterAllMapEdgesWithoutMovingCursorOutsideMap(double zoom)
     {
         var session = new GameSession(TestCity.Flat());
         session.SetViewport(30, 16);
@@ -58,9 +59,10 @@ public class SavedViewTests
 
     [Theory]
     [InlineData(-1)]
+    [InlineData(GameSession.ThreeQuarterZoom)]
     [InlineData(0)]
     [InlineData(1)]
-    public void SaveAndLoadRestoreCameraAndZoom(int zoom)
+    public void SaveAndLoadRestoreCameraAndZoom(double zoom)
     {
         string path = Path.Combine(Path.GetTempPath(), $"termcity-view-{Guid.NewGuid():N}.json");
         try
@@ -94,6 +96,13 @@ public class SavedViewTests
     public void InvalidViewIsRejected()
     {
         string json = SaveGameStore.Serialize(TestCity.Flat(), new SavedView(-1, 0, 0));
+        Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(json));
+    }
+
+    [Fact]
+    public void UnsupportedFractionalSavedZoomIsRejected()
+    {
+        string json = SaveGameStore.Serialize(TestCity.Flat(), new SavedView(0, 0, -.25));
         Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(json));
     }
 }

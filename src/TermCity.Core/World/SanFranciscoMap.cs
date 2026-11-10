@@ -40,8 +40,8 @@ public static class SanFranciscoMap
 
     public static GameMap Generate(GameConfig config, GameContent content)
     {
-        if (config.MapWidth != 640 || config.MapHeight != 384)
-            throw new ArgumentException("The SF scenario requires the large 640x384 map dimensions.", nameof(config));
+        if (config.MapWidth != MapSize.ScenarioWidth || config.MapHeight != MapSize.ScenarioHeight)
+            throw new ArgumentException($"The SF scenario requires {MapSize.ScenarioWidth}x{MapSize.ScenarioHeight} map dimensions.", nameof(config));
         var map = new GameMap(config.MapWidth, config.MapHeight, content);
         var grass = content.Terrains.Get(DefaultTerrains.GrassName);
         var hill = content.Terrains.Get(DefaultTerrains.HillName);

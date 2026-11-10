@@ -193,8 +193,8 @@ public class InterfaceArtworkTests
         var map = game.Map;
         foreach (int cell in map.RoadCells.ToArray()) map.SetRoad(cell % map.Width, cell / map.Width, false);
         var well = map.Content.Buildings.Get("Town Well");
-        map.SetBuildingFootprint(well, new(10, 10, 1, 1));
-        map.SetBuildingFootprint(well, new(16, 13, 1, 1));
+        TestCity.Stamp(game, well.Name, new(10, 10));
+        TestCity.Stamp(game, well.Name, new(22, 16));
         for (int day = 0; day < 24; day++) TravelRoutes.WearPaths(map);
         var original = FootpathLayout.Strokes(map);
         Assert.NotEmpty(original);
@@ -279,7 +279,10 @@ public class InterfaceArtworkTests
         Assert.Contains(houses, house => !house.CrosswiseRoof);
         Assert.Contains(houses, house => house.Wing);
         Assert.Contains(houses, house => house.Chimney);
-        Assert.Equal(Enum.GetValues<HouseStyle>().Order(), houses.Select(house => house.Style).Distinct().Order());
+        var styles = houses.Select(house => house.Style).ToHashSet();
+        foreach (var type in new GameContent().Buildings.Where(type => type.Zone == ZoneType.Residential))
+            styles.Add(HouseAppearance.At(type, 0, 0).Style);
+        Assert.Equal(Enum.GetValues<HouseStyle>().Order(), styles.Order());
         Assert.Equal(HouseAppearance.At(10, 12, 1), HouseAppearance.At(10, 12, 1));
         Assert.True(HouseAppearance.At(10, 12, 3).Height > HouseAppearance.At(10, 12, 1).Height);
         Assert.All(houses, house =>

@@ -12,10 +12,10 @@ public class FullRulesTests
     private static CityGame Town(int seed = 1)
     {
         var game = TestCity.Flat(seed, new GameConfig { StartingMoney = 5_000_000, DefaultTaxRate = 0.09 }, CityRules.Full);
-        Assert.True(game.Designate(new CellRect(10, 18, 50, 2), ZoneType.Residential).Success);
-        Assert.True(game.Designate(new CellRect(10, 21, 50, 2), ZoneType.Residential).Success);
-        Assert.True(game.Designate(new CellRect(60, 18, 10, 2), ZoneType.Commercial).Success);
-        Assert.True(game.Designate(new CellRect(60, 21, 10, 2), ZoneType.Industrial).Success);
+        Assert.True(game.Designate(new CellRect(10, 10, 50, 10), ZoneType.Residential).Success);
+        Assert.True(game.Designate(new CellRect(10, 21, 50, 10), ZoneType.Residential).Success);
+        Assert.True(game.Designate(new CellRect(60, 10, 10, 10), ZoneType.Commercial).Success);
+        Assert.True(game.Designate(new CellRect(60, 21, 10, 10), ZoneType.Industrial).Success);
         return game;
     }
 
@@ -23,9 +23,9 @@ public class FullRulesTests
 
     private static void Power(CityGame game)
     {
-        Assert.True(game.PlaceBuilding(Civic(game, "Charcoal Burners"), new CellRect(80, 19, 1, 1)).Success);
-        Assert.True(game.PlaceBuilding(Civic(game, "Town Well"), new CellRect(82, 19, 1, 1)).Success);
-        Assert.True(game.PlaceBuilding(Civic(game, "Town Well"), new CellRect(84, 19, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(Civic(game, "Charcoal Burners"), new CellRect(80, 10, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(Civic(game, "Town Well"), new CellRect(92, 10, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(Civic(game, "Town Well"), new CellRect(98, 10, 1, 1)).Success);
     }
 
     [Fact]
@@ -39,7 +39,7 @@ public class FullRulesTests
     public void ClassicRulesIgnoreUtilitiesAndExpenses()
     {
         var game = TestCity.Flat();
-        game.Designate(new CellRect(10, 17, 20, 3), ZoneType.Residential);
+        game.Designate(new CellRect(10, 10, 20, 10), ZoneType.Residential);
         TestCity.Advance(game, 10);
         Assert.Equal(0, game.Finance.Expenses);
         Assert.Equal(CityIndicators.Neutral.Happiness, game.Indicators.Happiness);
@@ -64,16 +64,16 @@ public class FullRulesTests
         var game = TestCity.Flat(config: new GameConfig(), rules: CityRules.Full);
         var woodlot = Civic(game, "Woodlot");
         var well = Civic(game, "Town Well");
-        Assert.True(game.PlaceBuilding(woodlot, new CellRect(10, 18, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(woodlot, new CellRect(10, 8, 1, 1)).Success);
         Assert.True(game.PlaceBuilding(well, new CellRect(30, 5, 1, 1)).Success);
-        Assert.True(game.Designate(new CellRect(40, 18, 20, 2), ZoneType.Residential).Success);
+        Assert.True(game.Designate(new CellRect(40, 10, 20, 10), ZoneType.Residential).Success);
         TestCity.Advance(game, 10);
         Assert.True(game.Stats.Population > 0);
         Assert.Equal(well.Capacity, game.Services.Water.Supply);
         Assert.True(game.Finance.Income > 0);
         Assert.Equal(60, game.Finance.ServiceUpkeep);
 
-        Assert.True(game.BuildRoad(new CellRect(30, 7, 1, 14)).Success);
+        Assert.True(game.BuildRoad(new CellRect(30, 10, 1, 11)).Success);
         Assert.Equal(well.Capacity, game.Services.Water.Supply);
         Assert.True(game.Finance.Income > 0);
     }
@@ -149,7 +149,7 @@ public class FullRulesTests
         var pump = Civic(game, "Aqueduct");
         Assert.False(game.CanPlaceBuilding(pump, 40, 40));
         var water = game.Map.Content.Terrains.Get("Water");
-        game.Map.SetTerrain(42, 40, water);
+        game.Map.SetTerrain(40 + pump.Width, 40, water);
         Assert.True(game.CanPlaceBuilding(pump, 40, 40));
     }
 
@@ -161,7 +161,7 @@ public class FullRulesTests
         TestCity.Advance(game, 40);
         game.HighestPopulation = Math.Max(game.HighestPopulation, CityProgression.CareUnlockPopulation);
         double before = game.Indicators.Crime;
-        Assert.True(game.PlaceBuilding(Civic(game, "Sheriff's Hall"), new CellRect(70, 19, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(Civic(game, "Sheriff's Hall"), new CellRect(70, 10, 1, 1)).Success);
         game.Map.BuildingEstablishedDays.Clear();
         game.Touch();
         Assert.True(game.Indicators.Crime <= before);
@@ -173,7 +173,7 @@ public class FullRulesTests
     {
         var game = Town();
         game.HighestMilestone = 250;
-        Assert.True(game.PlaceBuilding(Civic(game, "Fire Watch"), new CellRect(70, 19, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(Civic(game, "Fire Watch"), new CellRect(70, 10, 1, 1)).Success);
         game.Map.BuildingEstablishedDays.Clear();
         game.Touch();
         int full = game.Finance.ServiceUpkeep;

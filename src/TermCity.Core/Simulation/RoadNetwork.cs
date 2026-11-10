@@ -30,6 +30,9 @@ public sealed class RoadNetwork
 
     public int ConnectedRoadCount { get; }
 
+    internal RoadNetwork ForkForMap(GameMap map) => new(_connected, _served, _access,
+        ConnectedRoadCount, TrafficCapacity, _geometry.ForkForMap(map), _width, DrawnPaths);
+
     /// <summary>Total trip capacity of every connected road (bigger road types carry more).</summary>
     public int TrafficCapacity { get; }
 

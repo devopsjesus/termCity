@@ -20,10 +20,10 @@ public enum CityRules
 /// <summary>All tunable rules and starting values. Serialized into save files so a loaded game keeps its rules.</summary>
 public sealed record GameConfig
 {
-    /// <summary>The default map is 160x96 logical cells.</summary>
-    public int MapWidth { get; init; } = 160;
+    /// <summary>The default map is 320x320 logical cells.</summary>
+    public int MapWidth { get; init; } = 320;
 
-    public int MapHeight { get; init; } = 96;
+    public int MapHeight { get; init; } = 320;
 
     public int Seed { get; init; } = 1;
     [System.Text.Json.Serialization.JsonRequired]

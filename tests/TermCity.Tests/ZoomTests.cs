@@ -25,6 +25,10 @@ public class ZoomTests
         Assert.Equal(80, s.ViewRect.Width);
 
         s.ZoomBy(-1);
+        Assert.Equal("0.75x", s.ZoomLabel);
+        Assert.Equal(1, s.Stride);
+        Assert.Equal(80, s.ViewRect.Width);
+        s.ZoomBy(-1);
         Assert.Equal(2, s.Stride);
         Assert.Equal(160, s.ViewRect.Width);
         Assert.Equal(48, s.ViewRect.Height);
@@ -58,6 +62,38 @@ public class ZoomTests
         Assert.Equal(4, s.Stride);
         for (int i = 0; i < 10; i++) s.ZoomBy(1);
         Assert.Equal(GameSession.MaxZoom, s.ZoomLevel);
+    }
+
+    [Fact]
+    public void ZoomControlsTraverseTheThreeQuarterStepInBothDirections()
+    {
+        var s = NewSession(640, 192);
+        s.SetZoom(GameSession.MinZoom);
+        foreach (string label in new[] { "0.5x", "0.75x", "1x", "2x" })
+        {
+            s.ZoomBy(1);
+            Assert.Equal(label, s.ZoomLabel);
+        }
+        foreach (string label in new[] { "1x", "0.75x", "0.5x", "0.25x" })
+        {
+            s.ZoomBy(-1);
+            Assert.Equal(label, s.ZoomLabel);
+        }
+        s.SetZoom(GameSession.ThreeQuarterZoom);
+        s.SelectCell(new(120, 60));
+        Assert.Equal(CellRect.Single(new(120, 60)), s.Selection);
+        s.SetZoom(0);
+        Assert.Equal("1x", s.ZoomLabel);
+    }
+
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(-.25)]
+    public void UnsupportedZoomLevelsAreRejected(double level)
+    {
+        var s = NewSession();
+        Assert.Throws<ArgumentOutOfRangeException>(() => s.SetZoom(level));
     }
 
     [Fact]
@@ -145,7 +181,7 @@ public class ZoomTests
     [Fact]
     public void PanKeepsTheGrabbedCellUnderThePointerWhenZoomedInAndOut()
     {
-        foreach (int level in new[] { -2, -1, 0, 1 })
+        foreach (double level in new[] { -2, -1, GameSession.ThreeQuarterZoom, 0, 1 })
         {
             var s = NewSession(640, 192);
             s.SetZoom(level);

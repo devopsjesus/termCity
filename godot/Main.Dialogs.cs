@@ -75,6 +75,11 @@ public partial class Main
 
     private void UpdateModal()
     {
+        if (Session.Prompt?.Title == "Garrison" && !ConstructionMenuVisible)
+        {
+            ShowConstructionMenu(TermCity.Core.Buildings.ServiceKind.Defence, fromContextMenu: ConstructionContextCell is not null);
+            return;
+        }
         _linePreview.Visible = Session.RoadToolActive && Session.Prompt is null;
         bool nextStroke = Session.Preview is { RoadStroke.Count: 1, Quote.Cells: 0, Road: { } type } preview &&
             Session.Game.Map.RoadTypeAt(preview.RoadStroke[0].X, preview.RoadStroke[0].Y)?.Rank >= type.Rank;
@@ -107,6 +112,7 @@ public partial class Main
         _modalShield.Visible = _modal.Visible;
         if (state is null)
         {
+            ClearConstructionContext();
             return;
         }
         StopPointerGesture();
@@ -662,12 +668,14 @@ public partial class Main
 
     private void SelectPromptChoice(int index)
     {
+        var context = ConstructionMenuVisible ? null : ConstructionContextCell;
         if (index >= 0 && index < _promptButtons.Count)
         {
             _promptIndex = index;
             _promptButtons[index].GrabFocus();
         }
         Session.SelectPrompt(index);
+        ConfirmContextConstruction(context);
     }
 
     private void ShowChoiceHelp(int index, bool focusChoice = true)
@@ -743,6 +751,13 @@ public partial class Main
         if (focus is LineEdit || code == Key.Tab) return false;
         if (focus is Slider && code is Key.Left or Key.Right or Key.Home or Key.End)
             return false;
+        if (ConstructionMenuVisible && (focus is not Button focusedButton ||
+            _promptButtons.Contains(focusedButton) || focusedButton == _constructionAdd) &&
+            code is Key.Enter or Key.KpEnter)
+        {
+            if (!key.Echo && !_constructionAdd.Disabled) _constructionAdd.EmitSignal(Button.SignalName.Pressed);
+            return true;
+        }
         if (code is Key.Enter or Key.KpEnter or Key.Space)
         {
             if (!key.Echo)

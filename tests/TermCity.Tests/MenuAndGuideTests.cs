@@ -153,7 +153,9 @@ public class MenuAndGuideTests
             Assert.DoesNotContain("at current funding", help.Details);
             Assert.DoesNotContain("Operation:", help.Details);
             if (building.Capacity > 0) Assert.Contains($"Capacity: {ChoiceHelpContent.CapacityText(building)}", help.Details);
-            if (building.Radius > 0)
+            if (SettlementState.RosterCapacity(building) > 0)
+                Assert.Contains($"Roster: {SettlementState.RosterCapacity(building)}", help.Details);
+            else if (building.Radius > 0)
             {
                 Assert.Contains("Response target:", help.Details);
                 Assert.Contains($"strength: {building.Strength}/100", help.Details);

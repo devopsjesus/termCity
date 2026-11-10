@@ -143,23 +143,23 @@ public class SessionFeatureTests
             Cost = 1_000,
             PlayerPlaceable = true,
         });
-        game.Map.SetTerrain(11, 18, game.Map.Content.Terrains.Get("Hill"));
+        game.Map.SetTerrain(15, 10, game.Map.Content.Terrains.Get("Hill"));
         game.Touch();
-        session.BeginDrag(new Pos(10, 18));
-        session.UpdateDrag(new Pos(11, 18));
+        session.BeginDrag(new Pos(10, 10));
+        session.UpdateDrag(new Pos(11, 10));
         session.EndSelection();
         string before = SaveGameStore.Serialize(game);
         session.PreviewBuilding(building);
         Assert.Null(session.Selection);
-        Assert.Equal(new CellRect(11, 18, 1, 1), session.Preview!.Area);
-        Assert.Equal(new Quote(1, 1_500, 0), session.Preview.Quote);
+        Assert.Equal(new CellRect(11, 10, 5, 5), session.Preview!.Area);
+        Assert.Equal(new Quote(25, 1_020, 0), session.Preview.Quote);
         session.MoveCursor(-1, 0);
-        Assert.Equal(new CellRect(10, 18, 1, 1), session.Preview.Area);
+        Assert.Equal(new CellRect(10, 10, 5, 5), session.Preview.Area);
         Assert.Null(session.BuildingPlacementError);
         Assert.Equal(50_000, game.Money);
         Assert.True(session.ConfirmPreview().Success);
         Assert.Equal(49_000, game.Money);
-        Assert.Same(building, game.Map.BuildingAt(10, 18));
+        Assert.Same(building, game.Map.BuildingAt(10, 10));
         session.Game.Paused = true;
         session.RequestUndo();
         session.SelectPrompt(0);
@@ -220,7 +220,7 @@ public class SessionFeatureTests
     public void ConnectedUtilitiesPlaceWithoutAnInactiveWarning()
     {
         var session = new GameSession(TestCity.Flat(config: new GameConfig(), rules: CityRules.Full));
-        session.PlaceCursor(new Pos(10, 18));
+        session.PlaceCursor(new Pos(10, 10));
         var type = session.Game.Map.Content.Buildings.Get("Woodlot");
         session.PreviewBuilding(type);
         Assert.Null(session.BuildingPlacementWarning);
@@ -420,7 +420,7 @@ public class SessionFeatureTests
     }
 
     [Fact]
-    public void RoadLineClearlyIdentifiesGapsAndQuotesUpgrades()
+    public void RoadLineRejectsWideningThroughBlockedClearanceAtomically()
     {
         var session = Session();
         var game = session.Game;
@@ -430,8 +430,10 @@ public class SessionFeatureTests
         session.PlaceCursor(new Pos(10, 18));
         session.BeginRoadLine(game.Map.Content.Roads.Get(DefaultRoads.CobbledName));
         session.UpdateDrag(new Pos(12, 18));
-        Assert.Equal(new Quote(2, 1_300, 1), session.Preview!.Quote);
-        Assert.Contains("gaps", session.Preview.Name);
+        Assert.Equal(new Quote(0, 0, 3), session.Preview!.Quote);
+        Assert.False(session.ConfirmPreview().Success);
+        Assert.False(game.Map.HasRoad(10, 18));
+        Assert.Equal(game.DefaultRoad, game.Map.RoadTypeAt(12, 18));
     }
 
     [Fact]
@@ -569,7 +571,7 @@ public class SessionFeatureTests
     }
 
     [Fact]
-    public void AutosaveRunsAfterSixtySecondsAndSkipsUnchangedPausedCity()
+    public async Task AutosaveRunsAfterSixtySecondsAndSkipsUnchangedPausedCity()
     {
         using var files = new SaveFiles();
         var session = files.Session();
@@ -577,13 +579,85 @@ public class SessionFeatureTests
         session.Update(59);
         Assert.False(File.Exists(session.AutosavePath(1)));
         session.Update(1);
+        Assert.True(session.BackgroundAutosavePending);
+        await session.WaitForAutosaveAsync();
         Assert.True(File.Exists(session.AutosavePath(1)));
         session.Update(60);
+        await session.WaitForAutosaveAsync();
         Assert.False(File.Exists(session.AutosavePath(2)));
         session.Game.Money--;
         session.Game.Touch();
         session.Update(60);
+        await session.WaitForAutosaveAsync();
         Assert.True(File.Exists(session.AutosavePath(2)));
+    }
+
+    [Fact]
+    public async Task QuickSaveIncludesOrderedSimulationInputsThatHaveNotYetPublished()
+    {
+        using var files = new SaveFiles();
+        await using var session = files.Session();
+        session.Game.Paused = false;
+        var serial = session.Game.CreateSimulationSnapshot();
+        for (int step = 0; step < 4; step++)
+        {
+            session.UpdateResponsive(.05);
+            serial.Update(.05);
+        }
+        Assert.True(session.HasUnsavedChanges);
+        Assert.True(session.QuickSave());
+        Assert.False(session.BackgroundSimulationPending);
+        Assert.Equal(0, session.PendingSimulationSeconds);
+        Assert.False(session.HasUnsavedChanges);
+        Assert.Equal(SaveGameStore.Serialize(serial), SaveGameStore.Serialize(SaveGameStore.Load(session.SavePath)));
+    }
+
+    [Fact]
+    public async Task BackgroundAutosaveCapturesOneConsistentStateAndRotatesLaterChanges()
+    {
+        using var files = new SaveFiles();
+        await using var session = files.Session();
+        session.Game.Paused = true;
+        session.Game.Money = 100;
+        session.Game.Touch();
+        session.Update(60);
+        session.Game.Money = 200;
+        session.Game.Touch();
+        await session.WaitForAutosaveAsync();
+        Assert.Equal(100, SaveGameStore.Load(session.AutosavePath(1)).Money);
+        Assert.Equal(200, session.Game.Money);
+        session.Update(60);
+        Assert.True(session.BackgroundAutosavePending);
+        await session.WaitForAutosaveAsync();
+        Assert.Equal(200, SaveGameStore.Load(session.AutosavePath(1)).Money);
+        Assert.Equal(100, SaveGameStore.Load(session.AutosavePath(2)).Money);
+        Assert.Empty(Directory.GetFiles(files.DirectoryPath, "*.pending*"));
+    }
+
+    [Fact]
+    public async Task BackgroundAutosaveFailureIsVisibleAndPreservesTheNewestBackup()
+    {
+        using var files = new SaveFiles();
+        await using var session = files.Session();
+        session.Game.Paused = true;
+        Assert.True(session.Autosave());
+        session.Game.Money = 42;
+        Assert.True(session.Autosave());
+        string newest = File.ReadAllText(session.AutosavePath(1));
+        string blocker = session.AutosavePath(3);
+        Directory.CreateDirectory(blocker);
+        try
+        {
+            session.Game.Money = 43;
+            session.Game.Touch();
+            session.Update(60);
+            await session.WaitForAutosaveAsync();
+            Assert.Equal(MessageKind.Error, session.MessageKind);
+            Assert.Contains("Autosave failed", session.Message);
+            Assert.Equal(newest, File.ReadAllText(session.AutosavePath(1)));
+            Assert.Empty(Directory.GetFiles(files.DirectoryPath, "*.pending*"));
+        }
+        finally { Directory.Delete(blocker); }
     }
 
     [Fact]
@@ -841,18 +915,18 @@ public class SessionFeatureTests
     public void GrowthDiagnosticsUseExactUnlockAndCapacityThresholds(ZoneType zone, int homes, int next)
     {
         var game = TestCity.Flat();
-        game.Designate(new CellRect(0, 19, 3, 1), zone);
+        game.Designate(new CellRect(0, 10, 15, 5), zone);
         FillHomes(game, 9);
-        Assert.Equal(GrowthStatus.NeedsHomes, GrowthDiagnostics.ForCell(game, 1, 19).Status);
+        Assert.Equal(GrowthStatus.NeedsHomes, GrowthDiagnostics.ForCell(game, 6, 10).Status);
         FillHomes(game, 10);
-        Assert.Equal(GrowthStatus.Ready, GrowthDiagnostics.ForCell(game, 1, 19).Status);
-        game.Map.SetBuilding(0, 19, game.Map.Content.Buildings.ForZone(zone)!);
+        Assert.Equal(GrowthStatus.Ready, GrowthDiagnostics.ForCell(game, 6, 10).Status);
+        game.Map.SetBuildingFootprint(game.Map.Content.Buildings.ForZone(zone)!, new(0, 10, 5, 5));
         FillHomes(game, homes);
-        var diagnostic = GrowthDiagnostics.ForCell(game, 1, 19);
+        var diagnostic = GrowthDiagnostics.ForCell(game, 6, 10);
         Assert.Equal(GrowthStatus.CapacityReached, diagnostic.Status);
         Assert.Contains($"at {next} occupied homes", diagnostic.Message);
         FillHomes(game, next);
-        Assert.Equal(GrowthStatus.Ready, GrowthDiagnostics.ForCell(game, 1, 19).Status);
+        Assert.Equal(GrowthStatus.Ready, GrowthDiagnostics.ForCell(game, 6, 10).Status);
     }
 
     [Fact]
@@ -865,7 +939,7 @@ public class SessionFeatureTests
         game.Paused = true;
         game.Touch();
         string before = SaveGameStore.Serialize(game);
-        Assert.Equal(GrowthStatus.Ready, GrowthDiagnostics.ForCell(game, 10, 18).Status);
+        Assert.Equal(GrowthStatus.NeedsSpace, GrowthDiagnostics.ForCell(game, 10, 18).Status);
         Assert.True(GrowthDiagnostics.ForCell(game, 10, 18).Paused);
         Assert.Contains("Paused", CellInspector.Summary(game, new Pos(10, 18)));
         var diagnostic = GrowthDiagnostics.ForZone(game, ZoneType.Residential);
@@ -881,7 +955,7 @@ public class SessionFeatureTests
         game.Designate(new CellRect(10, 21, 2, 1), ZoneType.Residential);
         game.Designate(new CellRect(0, 30, 5, 1), ZoneType.Residential);
         Assert.Equal(7, GrowthDiagnostics.ForZone(game, ZoneType.Residential).EligibleVacancies);
-        game.Designate(new CellRect(0, 19, 2, 1), ZoneType.Commercial);
+        game.Designate(new CellRect(0, 10, 10, 5), ZoneType.Commercial);
         Assert.True(game.Demand.Commercial > 0);
         Assert.Equal(GrowthStatus.Ready, GrowthDiagnostics.ForZone(game, ZoneType.Commercial).Status);
     }
@@ -893,10 +967,10 @@ public class SessionFeatureTests
         game.Map.SetRoad(0, 20, false);
         game.Map.SetRoad(game.Map.Width - 1, 20, false);
         game.Touch();
-        game.Designate(new CellRect(10, 21, 2, 1), ZoneType.Residential);
+        game.Designate(new CellRect(10, 21, 5, 5), ZoneType.Residential);
         var diagnostic = GrowthDiagnostics.ForZone(game, ZoneType.Residential);
         Assert.Equal(GrowthStatus.Ready, diagnostic.Status);
-        Assert.Equal(2, diagnostic.EligibleVacancies);
+        Assert.Equal(25, diagnostic.EligibleVacancies);
         Assert.Contains("walking", diagnostic.Message);
     }
 

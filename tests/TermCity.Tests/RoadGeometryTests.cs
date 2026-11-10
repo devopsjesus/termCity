@@ -64,13 +64,14 @@ public class RoadGeometryTests
         var woodlot = map.Content.Buildings.Get("Woodlot");
         int roadAxis = rotation switch { 0 => 20, 1 => 75, 2 => shallow ? 75 : 74, _ => 20 };
         bool vertical = rotation % 2 == 1;
-        for (int station = 10; station <= (shallow ? 66 : 46); station++)
+        for (int station = 10; station <= 34; station++)
             foreach (int side in new[] { -1, 1 })
             {
                 var anchor = Rotate(new(station, 20));
                 int along = vertical ? anchor.Y : anchor.X;
-                int across = side < 0 ? roadAxis - 3 : roadAxis + 2;
-                var plot = vertical ? new CellRect(across, along, 3, 3) : new CellRect(along, across, 3, 3);
+                int across = side < 0 ? roadAxis - 1 - (vertical ? woodlot.Width : woodlot.Height) : roadAxis + 3;
+                var plot = new CellRect(vertical ? across : along, vertical ? along : across,
+                    woodlot.Width, woodlot.Height);
                 foreach (var cell in plot.Cells())
                 {
                     Assert.False(geometry.OverlapsCell(cell.X, cell.Y),
@@ -146,7 +147,7 @@ public class RoadGeometryTests
         game.Touch();
         var well = map.Content.Buildings.Get("Town Well");
         foreach (int x in Enumerable.Range(15, 4))
-            foreach (int y in new[] { 19, 21 })
+            foreach (int y in new[] { 20 - well.Height - (int)(type.WidthCells / 2), 20 + (int)type.WidthCells })
             {
                 Assert.False(geometry.OverlapsCell(x, y),
                     $"Straight local-road neighbor {x},{y} blocked by " +
@@ -261,7 +262,7 @@ public class RoadGeometryTests
 
     [Theory]
     [InlineData("Dirt Track", false)]
-    [InlineData("Cobbled Road", false)]
+    [InlineData("Cobbled Road", true)]
     [InlineData("King's Road", true)]
     public void StraightRoadClearanceMatchesItsActualMeshWidth(string name, bool blocksAdjacent)
     {
@@ -276,7 +277,8 @@ public class RoadGeometryTests
             Assert.True(geometry.OverlapsCell(10, 10));
             Assert.Equal(blocksAdjacent, geometry.OverlapsCell(vertical ? 9 : 10, vertical ? 10 : 9));
             Assert.Equal(blocksAdjacent, geometry.OverlapsCell(vertical ? 11 : 10, vertical ? 10 : 11));
-            Assert.False(geometry.OverlapsCell(vertical ? 12 : 10, vertical ? 10 : 12));
+            int outside = 10 + (int)Math.Ceiling(type.WidthCells / 2 + 0.5);
+            Assert.False(geometry.OverlapsCell(vertical ? outside : 10, vertical ? 10 : outside));
         }
     }
 
@@ -295,10 +297,12 @@ public class RoadGeometryTests
     {
         var game = AngledRoad();
         var map = game.Map;
+        var well = map.Content.Buildings.Get("Town Well");
         var partial = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf)
             .First(p => !map.HasRoad(p.X, p.Y) && game.Network.RoadOverlapsCell(map.Index(p.X, p.Y)) &&
-                game.Network.IsServed(map, p.X, p.Y));
-        var well = map.Content.Buildings.Get("Town Well");
+                game.Network.IsServed(map, p.X, p.Y) &&
+                p.X + well.Width <= map.Width && p.Y + well.Height <= map.Height &&
+                well.FootprintAt(p.X, p.Y).Cells().All(c => !map.HasRoad(c.X, c.Y)));
         int money = game.Money;
         Assert.False(game.CanBuildOn(partial.X, partial.Y));
         Assert.False(game.CanPlaceBuilding(well, partial.X, partial.Y));

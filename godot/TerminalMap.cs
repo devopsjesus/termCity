@@ -1,4 +1,5 @@
 using Godot;
+using TermCity.Core.Simulation;
 using TermCity.Core.Effects;
 using TermCity.Core.Rendering;
 using TermCity.Core.Session;
@@ -16,12 +17,15 @@ public partial class TerminalMap : Control
     public GameSession Session { get; set; } = null!;
     public Font CellFont { get; set; } = null!;
     private bool _cellsDirty = true;
+    private int _siegeAnimationRevision = -1;
     private readonly List<GlyphDraw> _overlays = [];
     private Vector2 _shakeOffset;
     private readonly RoadVectorLayer _roads = new();
     private readonly Dictionary<(int X, int Y, int Scale, int Stride), ImageTexture?> _roadChunks = [];
     private readonly List<GlyphDraw> _mains = [];
     private ImageTexture? _areaFade;
+    private readonly CanvasTexture _perspectiveComposite = new() { TextureFilter = TextureFilterEnum.Linear };
+    internal bool SmoothPerspectiveComposite => _perspectiveComposite.TextureFilter == TextureFilterEnum.Linear;
     private readonly Dictionary<(byte Type, int Width, int Height, int Variant), (ImageTexture Texture, BuildingSprite Sprite)> _buildings = [];
     private readonly Dictionary<(int X, int Y, int Stride, int Phase), ImageTexture> _terrain = [];
     private readonly HashSet<(int X, int Y, int Stride)> _waterChunks = [];
@@ -46,13 +50,32 @@ public partial class TerminalMap : Control
     public int BuildingsDrawn { get; private set; }
     public bool PerspectiveEnabled { get; private set; }
     public PerspectiveCity? Perspective { get; private set; }
+    internal bool MinimapJumpPending => PerspectiveEnabled && Perspective is { MinimapJumpPending: true };
+    internal void JumpFromMinimap(Pos target)
+    {
+        if (PerspectiveEnabled && Perspective is { } perspective) perspective.BeginMinimapJump(Session);
+        Session.CenterOn(target);
+        QueueRedraw();
+    }
+    internal DepthTreatment DepthStudyTreatment { get; init; } = DepthStudyArtwork.DefaultTreatment;
+    internal TerrainStudyTreatment TerrainStudyTreatment { get; init; } = TerrainStudyTreatment.Balanced;
+    internal bool OverviewLodEnabled { get; init; }
+    internal bool PersistentResidencyEnabled { get; init; }
+    internal DiagnosticRenderQuality RenderQuality { get; init; }
 
     public void SetPerspective(bool enabled)
     {
         if (enabled && Perspective is null)
         {
-            Perspective = new PerspectiveCity();
+            Perspective = new PerspectiveCity { DepthTreatment = DepthStudyTreatment, TerrainTreatment = TerrainStudyTreatment,
+                OverviewLodEnabled = OverviewLodEnabled, RenderQuality = RenderQuality };
             AddChild(Perspective);
+            if (PersistentResidencyEnabled)
+            {
+                Perspective.ConfigureCacheExperiment(CacheExperiment.PersistentScene);
+                GD.Print("TERMCITY_PERSISTENT_RESIDENCY_ENABLED policy=bounded cpu=256MiB gpu=128MiB quality=unchanged");
+            }
+            if (OverviewLodEnabled) GD.Print("TERMCITY_OVERVIEW_LOD_ENABLED activation=max-zoom-only previews=detailed");
         }
         PerspectiveEnabled = enabled;
         Session.SetCameraEdgePadding(enabled);
@@ -65,6 +88,7 @@ public partial class TerminalMap : Control
     {
         RefreshCells();
         position = default;
+        if (MinimapJumpPending) return false;
         if (!Grid.TryCell(pointer.X, pointer.Y, out var screen)) return false;
         if (PerspectiveEnabled && Perspective is { } perspective)
         {
@@ -73,6 +97,16 @@ public partial class TerminalMap : Control
         }
         else position = Session.ScreenToMap(screen.X, screen.Y);
         return Session.Game.Map.InBounds(position);
+    }
+
+    public bool TryPickFeature(Vector2 pointer, out Pos position)
+    {
+        position = default;
+        if (MinimapJumpPending) return false;
+        if (!PerspectiveEnabled || Perspective is not { } perspective) return false;
+        RefreshCells();
+        perspective.Sync(Session, Size);
+        return perspective.PickNaturalFeature(pointer, out position);
     }
 
     public void TiltMap()
@@ -96,7 +130,7 @@ public partial class TerminalMap : Control
         RefreshCells();
         if (Perspective is not { } perspective)
             throw new InvalidOperationException("Perspective panning requires an active perspective renderer.");
-        perspective.Sync(Session, Size);
+        perspective.SyncCamera(Session, Size);
         return perspective.GroundPlanePoint(pointer);
     }
 
@@ -104,7 +138,7 @@ public partial class TerminalMap : Control
     {
         if (!PerspectiveEnabled || Perspective is not { } perspective) return;
         RefreshCells();
-        perspective.Sync(Session, Size);
+        perspective.SyncCamera(Session, Size);
         var current = perspective.GroundPlanePoint(pointer);
         var target = new Vector2(Session.CameraX, Session.CameraY) + perspective.CameraOffset +
             new Vector2(anchor.X - current.X, anchor.Z - current.Z);
@@ -117,7 +151,7 @@ public partial class TerminalMap : Control
         Session.ScrollCamera((int)Math.Round(target.X) - Session.CameraX,
             (int)Math.Round(target.Y) - Session.CameraY);
         perspective.SetCameraOffset(Session, target - new Vector2(Session.CameraX, Session.CameraY));
-        perspective.Sync(Session, Size);
+        perspective.SyncCamera(Session, Size);
         QueueRedraw();
     }
 
@@ -129,6 +163,7 @@ public partial class TerminalMap : Control
 
     public override void _ExitTree()
     {
+        _perspectiveComposite.Dispose();
         foreach (var cached in _buildings.Values) cached.Texture.Dispose();
         _buildings.Clear();
         foreach (var texture in _roadChunks.Values) texture?.Dispose();
@@ -159,7 +194,15 @@ public partial class TerminalMap : Control
 
     public void AdvanceAnimation(double delta, bool focused)
     {
-        if (Grid.AdvanceAnimation(delta, focused))
+        Session.AdvancePresentation(delta, focused);
+        int siegeRevision = Session.Game.Settlement?.Revision ?? -1;
+        bool siegeChanged = siegeRevision != _siegeAnimationRevision;
+        _siegeAnimationRevision = siegeRevision;
+        bool siegeMoving = focused && !Session.ClockSuspended &&
+            Session.Game.Settlement is { } siege && (siege.Enemies.Count > 0 || siege.Projectiles.Count > 0 ||
+                siege.Defenders.Count > 0 || siege.Deaths.Count > 0 ||
+                siege.VisibleRepairingWall is not null || siege.UpgradingWall is not null || siege.Walls.Any(WallDamageLayout.IsBurning));
+        if (!PerspectiveEnabled && Grid.AdvanceAnimation(delta, focused) || siegeChanged || siegeMoving)
         {
             QueueRedraw();
         }
@@ -169,12 +212,20 @@ public partial class TerminalMap : Control
     {
         Session.SetCameraEdgePadding(PerspectiveEnabled);
         if (Perspective is { } perspective)
+        {
             perspective.WaterMotionEnabled = Effects?.Settings.ReducedMotion != true && Effects?.Settings.Level != EffectLevel.Off;
+            perspective.SiegeAnimationEnabled = Effects?.Settings.ReducedMotion != true;
+        }
         if (!_cellsDirty)
         {
             return;
         }
 
+        if (PerspectiveEnabled)
+        {
+            Grid.PrepareViewport(Session);
+            return;
+        }
         Grid.Fill(Session);
         _cellsDirty = false;
     }
@@ -182,13 +233,21 @@ public partial class TerminalMap : Control
     public void ZoomBy(int delta, Vector2? pointer = null)
     {
         if (delta == 0) return;
+        ChangeZoom((x, y) => Session.ZoomBy(delta, x, y), pointer);
+    }
+
+    public void SetZoom(double level, Vector2? pointer = null) =>
+        ChangeZoom((x, y) => Session.SetZoom(level, x, y), pointer);
+
+    private void ChangeZoom(Action<int?, int?> change, Vector2? pointer)
+    {
         RefreshCells();
         var anchor = pointer ?? Size / 2;
         if (PerspectiveEnabled && Perspective is { } perspective)
         {
             perspective.Sync(Session, Size);
             var beforeWorld = perspective.GroundCell(anchor);
-            Session.ZoomBy(delta);
+            change(null, null);
             RefreshCells();
             perspective.Sync(Session, Size);
             var afterWorld = perspective.GroundCell(anchor);
@@ -197,7 +256,7 @@ public partial class TerminalMap : Control
         }
         if (!Grid.TryCell(anchor.X, anchor.Y, out var before)) return;
         var world = Session.ScreenToMap(before.X, before.Y);
-        Session.ZoomBy(delta, before.X, before.Y);
+        change(before.X, before.Y);
         RefreshCells();
         if (Grid.TryCell(anchor.X, anchor.Y, out var after))
             Session.PanCamera(world, after.X, after.Y);
@@ -217,9 +276,15 @@ public partial class TerminalMap : Control
         if (PerspectiveEnabled && Perspective is { } perspective)
         {
             perspective.Sync(Session, Size);
+            perspective.PrepareCompleteFrame();
             TextureFilter = TextureFilterEnum.Nearest;
-            DrawTextureRect(perspective.Texture, new Rect2(Vector2.Zero, Size), false);
+            if (_perspectiveComposite.DiffuseTexture != perspective.PresentedTexture)
+                _perspectiveComposite.DiffuseTexture = perspective.PresentedTexture;
+            DrawTextureRect(_perspectiveComposite, new Rect2(Vector2.Zero, Size), false);
+            if (MinimapJumpPending) return;
             DrawPerspectiveAreas(perspective);
+            DrawSiegeOverlay();
+            DrawDefenderSelection();
             BuildingsDrawn = perspective.BuildingsDrawn;
             return;
         }
@@ -292,7 +357,8 @@ public partial class TerminalMap : Control
                 if (Session.Game.Map.InBounds(world))
                 {
                     var map = Session.Game.Map;
-                    bool natural = map.BuildingAt(world.X, world.Y) is null && map.ZoneAt(world.X, world.Y) == ZoneType.None;
+                    bool natural = map.BuildingAt(world.X, world.Y) is null &&
+                        (!Session.AreaOverlaysVisible || map.ZoneAt(world.X, world.Y) == ZoneType.None);
                     if (natural && (map.FeatureAt(world.X, world.Y) is { Name: DefaultFeatures.TreeName or DefaultFeatures.RockName } ||
                         map.FeatureAt(world.X, world.Y) is null &&
                         map.TerrainAt(world.X, world.Y).Name is DefaultTerrains.GrassName or DefaultTerrains.HillName or DefaultTerrains.WaterName))
@@ -308,6 +374,7 @@ public partial class TerminalMap : Control
         DrawRoadCurves(scale, cellWidth, cellHeight);
         DrawPaths(cellWidth, cellHeight);
         DrawBuildingFootprints(cellWidth, cellHeight);
+        DrawSiegeOverlay();
         DrawAreas(cellWidth, cellHeight, fontSize);
         foreach (var mainDraw in _mains)
         {
@@ -335,11 +402,15 @@ public partial class TerminalMap : Control
             }
         }
         DrawSetTransform(Vector2.Zero, 0f, Vector2.One);
+        DrawDefenderSelection();
         EffectGlyphsDrawn = drawn;
     }
 
     private void DrawPerspectiveAreas(PerspectiveCity perspective)
     {
+        AreasDrawn = 0;
+        _perspectiveRangeBounds.Clear();
+        if (!Session.AreaOverlaysVisible) return;
         IEnumerable<EffectArea> areas = Session.HasCursor && !Session.FixedPlacementToolActive
             ? AreaOfEffect.InView(Session.Game, perspective.RenderedView, Session.ActiveArea) : [];
         if (Session.Preview is { Building: { } type } preview && Session.BuildingPlacementError is null)
@@ -457,7 +528,9 @@ public partial class TerminalMap : Control
             TextureFilter = TextureFilterEnum.Nearest;
             var rect = new Rect2(position - new Vector2(0, cached.Sprite.Lift * pixelScale),
                 new Vector2(cached.Sprite.Width, cached.Sprite.Height) * pixelScale);
-            DrawTextureRect(cached.Texture, rect, false);
+            bool selected = !Session.FixedPlacementToolActive && Session.Selection is not null && Session.HasCursor &&
+                Session.ActiveArea == Session.BlockAt(Session.Cursor) && area.Contains(Session.Cursor);
+            DrawTextureRect(cached.Texture, rect, false, selected ? new Color(1.18f, 1.14f, 1.05f) : Colors.White);
             BuildingsDrawn++;
             var center = new Pos((area.X - origin.X) / Session.Stride, (area.Y - origin.Y) / Session.Stride);
             if (center.X >= 0 && center.Y >= 0 && center.X < Grid.Columns && center.Y < Grid.Rows &&
@@ -500,21 +573,72 @@ public partial class TerminalMap : Control
                     yield return new(x, y, 1, 1);
     }
 
+    public bool TryPickSiegeActor(Vector2 pointer, out bool friendly, out int id)
+    {
+        friendly = false; id = 0;
+        if (MinimapJumpPending) return false;
+        if (!new Rect2(Vector2.Zero, Size).HasPoint(pointer) || Session.PresentedSiege is not { } siege) return false;
+        if (PerspectiveEnabled && Perspective is { } view)
+        {
+            view.Sync(Session, Size);
+            return view.PickSiegeActor(pointer, out friendly, out id);
+        }
+        foreach (var unit in siege.Defenders.Reverse())
+        {
+            var center = SiegeScreenPoint(
+                unit.PreviousX + (unit.X - unit.PreviousX) * siege.InterpolationFraction,
+                unit.PreviousY + (unit.Y - unit.PreviousY) * siege.InterpolationFraction);
+            if (!new Rect2(center - new Vector2(2, 5), new Vector2(4, 8)).HasPoint(pointer) &&
+                !new Rect2(center + new Vector2(2.25f, -4), new Vector2(1.5f, 6)).HasPoint(pointer)) continue;
+            friendly = true; id = unit.Id; return true;
+        }
+        foreach (var enemy in siege.Enemies.Reverse())
+        {
+            var pose = SiegeMotion.Enemy(siege, enemy);
+            var center = SiegeScreenPoint(pose.Position.X, pose.Position.Y);
+            float scale = enemy.Kind == SiegeEnemyKind.Orc ? 1.5f : 1;
+            if (!new Rect2(center - new Vector2(3, 5) * scale, new Vector2(6, 9) * scale).HasPoint(pointer)) continue;
+            id = enemy.Id; return true;
+        }
+        return false;
+    }
+
+    public int? PickedWallId { get; private set; }
+
     public bool TryPickBuilding(Vector2 pointer, out Pos anchor)
     {
         anchor = default;
+        PickedWallId = null;
+        if (MinimapJumpPending) return false;
         if (!new Rect2(Vector2.Zero, Size).HasPoint(pointer)) return false;
         RefreshCells();
         if (PerspectiveEnabled && Perspective is { } perspective)
         {
             perspective.Sync(Session, Size);
-            return perspective.PickBuilding(pointer, out anchor);
+            bool hit = perspective.PickBuilding(pointer, out anchor);
+            PickedWallId = perspective.PickedWallId;
+            return hit;
         }
         var origin = Session.ScreenToMap(0, 0);
         double worldX = origin.X * RoadCurves.CellWidth +
             (pointer.X - _shakeOffset.X) * RoadCurves.CellWidth * Session.Stride / Grid.PixelWidth;
         double worldY = origin.Y * RoadCurves.CellHeight +
             (pointer.Y - _shakeOffset.Y) * RoadCurves.CellHeight * Session.Stride / Grid.PixelHeight;
+        var wallPoint = new System.Numerics.Vector2((float)(worldX / RoadCurves.CellWidth), (float)(worldY / RoadCurves.CellHeight));
+        var pickedWall = Session.Game.Settlement?.Walls.Reverse().FirstOrDefault(wall =>
+        {
+            var delta = wallPoint - wall.Center;
+            float along = System.Numerics.Vector2.Dot(delta, wall.Tangent);
+            float across = -delta.X * wall.Tangent.Y + delta.Y * wall.Tangent.X;
+            return WallDamageLayout.Fragments(wall).Any(part =>
+                Math.Abs(along - part.Center.X) <= part.Size.X / 2 && Math.Abs(across - part.Center.Z) <= part.Size.Z / 2);
+        });
+        if (pickedWall is not null)
+        {
+            anchor = pickedWall.Cell;
+            PickedWallId = pickedWall.Id;
+            return true;
+        }
         foreach (var area in BuildingAreasInView().OrderByDescending(a => a.Bottom).ThenByDescending(a => a.X))
         {
             if (worldX < area.X * RoadCurves.CellWidth || worldX >= (area.Right + 1) * RoadCurves.CellWidth + 4 ||
@@ -547,20 +671,41 @@ public partial class TerminalMap : Control
             for (int x = Math.Max(0, origin.X); x < Math.Min(map.Width, origin.X + Grid.Columns * Session.Stride); x++)
             {
                 int wear = map.PathWearAt(x, y);
-                if (wear == 0 || map.HasRoad(x, y) || map.BuildingAt(x, y) is not null) continue;
+                if (wear == 0 || !map.FootpathsAllowedAt(x, y) || map.HasRoad(x, y) || map.BuildingAt(x, y) is not null) continue;
                 var center = new Vector2((x - origin.X + 0.5f) * sx, (y - origin.Y + 0.5f) * sy);
                 var color = new Color("#b19564") with { A = Math.Min(0.85f, 0.25f + wear * 0.05f) };
                 float thickness = Math.Max(1, sx * 0.2f);
                 DrawRect(new Rect2(center - Vector2.One * thickness / 2, Vector2.One * thickness), color);
                 foreach (var (dx, dy) in TermCity.Core.Simulation.RoadNetwork.Neighbors)
-                    if (map.InBounds(x + dx, y + dy) && (map.PathWearAt(x + dx, y + dy) > 0 ||
+                    if (map.FootpathsAllowedAt(x + dx, y + dy) && (map.PathWearAt(x + dx, y + dy) > 0 ||
                         map.HasRoad(x + dx, y + dy) || map.BuildingAt(x + dx, y + dy) is not null))
                         DrawLine(center, center + new Vector2(dx * sx, dy * sy) / 2, color, thickness);
             }
+        foreach (var bridge in map.Footbridges)
+        {
+            var cells = bridge.Cells().ToArray();
+            int visible = bridge.Complete ? cells.Length : Math.Max(1, (int)Math.Ceiling(
+                cells.Length * bridge.Progress / (double)TermCity.Core.Simulation.SettlementFootbridge.ConstructionDays));
+            bool horizontal = bridge.Start.Y == bridge.End.Y;
+            foreach (var p in cells.Take(visible))
+            {
+                var at = new Vector2((p.X - origin.X + .5f) * sx, (p.Y - origin.Y + .5f) * sy);
+                var size = horizontal ? new Vector2(sx, sy * .8f) : new Vector2(sx * .8f, sy);
+                DrawRect(new(at - size / 2, size), new Color("#967a56"));
+                foreach (int side in new[] { -1, 1 })
+                {
+                    var offset = horizontal ? new Vector2(0, side * size.Y / 2) : new Vector2(side * size.X / 2, 0);
+                    var length = horizontal ? new Vector2(size.X / 2, 0) : new Vector2(0, size.Y / 2);
+                    DrawLine(at + offset - length, at + offset + length, new Color("#594a35"), 1);
+                }
+            }
+        }
     }
 
     private void DrawAreas(int cellWidth, int cellHeight, int fontSize)
     {
+        AreasDrawn = 0;
+        if (!Session.AreaOverlaysVisible) return;
         var origin = Session.ScreenToMap(0, 0);
         var view = new CellRect(origin.X, origin.Y, Grid.Columns * Session.Stride, Grid.Rows * Session.Stride);
         IEnumerable<EffectArea> areas = Session.HasCursor && !Session.FixedPlacementToolActive

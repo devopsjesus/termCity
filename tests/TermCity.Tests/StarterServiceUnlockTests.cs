@@ -15,7 +15,7 @@ public class StarterServiceUnlockTests
         Assert.Equal(27, building.Radius);
         Assert.Equal(9_000, building.Cost);
         Assert.Equal(160, building.WeeklyUpkeep);
-        Assert.True(game.PlaceBuilding(building, new(80, 18, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(building, new(80, 10, 1, 1)).Success);
         game.Map.BuildingEstablishedDays.Clear();
         game.Touch();
         Assert.True(game.Services.Coverage(ServiceKind.Fire, game.Map.Index(97, 18)) > 0);

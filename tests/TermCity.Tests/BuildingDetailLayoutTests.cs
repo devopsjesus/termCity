@@ -75,23 +75,24 @@ public class BuildingDetailLayoutTests
     [InlineData("Apothecary")]
     [InlineData("Chapel")]
     [InlineData("Tavern")]
-    public void CrampedCivicBuildingsUseRoomierPlotsAndKeepTheirLegacySaves(string name)
+    public void RoomyCivicBuildingsKeepTheirCompletePlotsAcrossSaveLoad(string name)
     {
         var game = TestCity.Flat(rules: CityRules.Full);
         game.HighestMilestone = 1000;
         var type = game.Map.Content.Buildings.Get(name);
-        Assert.Equal(2, type.Width);
-        Assert.Equal(1, type.Height);
-        game.Map.SetBuildingFootprint(type, new(30, 19, 1, 1));
-        game.Map.SetTerrain(31, 19, game.Map.Content.Terrains.Get("Water"));
+        Assert.Equal(10, type.Width);
+        Assert.Equal(5, type.Height);
+        var original = type.FootprintAt(20, 5);
+        game.Map.SetBuildingFootprint(type, original);
+        game.Map.SetTerrain(30, 5, game.Map.Content.Terrains.Get("Water"));
         game.Touch();
         var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
-        Assert.Equal(new CellRect(30, 19, 1, 1), loaded.Map.BuildingFootprintAt(30, 19));
-        Assert.Null(loaded.Map.BuildingAt(31, 19));
-        Assert.Equal("Water", loaded.Map.TerrainAt(31, 19).Name);
+        Assert.Equal(original, loaded.Map.BuildingFootprintAt(29, 9));
+        Assert.Null(loaded.Map.BuildingAt(30, 5));
+        Assert.Equal("Water", loaded.Map.TerrainAt(30, 5).Name);
         Assert.Single(loaded.Map.ServiceCells);
-        Assert.True(loaded.PlaceBuilding(loaded.Map.Content.Buildings.Get(name), new(40, 19, 1, 1)).Success);
-        Assert.Equal(new CellRect(40, 19, 2, 1), loaded.Map.BuildingFootprintAt(41, 19));
+        Assert.True(loaded.PlaceBuilding(loaded.Map.Content.Buildings.Get(name), new(40, 5, 1, 1)).Success);
+        Assert.Equal(new CellRect(40, 5, 10, 5), loaded.Map.BuildingFootprintAt(49, 9));
         Assert.Equal(2, loaded.Services.BuildingCounts[(int)type.Service]);
     }
 

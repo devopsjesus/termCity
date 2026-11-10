@@ -16,7 +16,7 @@ public partial class Main
 
     private double _trackpadX, _trackpadY, _trackpadZoom;
 
-    private int _trackpadZoomLevel = int.MinValue;
+    private double _trackpadZoomLevel = double.NaN;
 
     private Vector2 _pointer;
 
@@ -25,6 +25,8 @@ public partial class Main
     private string _lastInput = "";
 
     private bool _selecting;
+    private bool _defenderLasso;
+    private readonly List<Vector2> _defenderLassoPoints = [];
     private bool _roadPointerPlacement, _roadPointerMoved;
     private Vector2 _roadPressPosition;
 
@@ -36,7 +38,30 @@ public partial class Main
     public override void _Input(InputEvent input)
     {
         if (!_started) return;
-        if (!_editingName && Session.Prompt is null && _viewsBar.Visible &&
+        if (_defenderLasso)
+        {
+            if (input is InputEventKey { Pressed: true, Keycode: Key.Escape })
+            {
+                StopPointerGesture();
+                GetViewport().SetInputAsHandled();
+                return;
+            }
+            if (input is InputEventMouseMotion lassoMotion)
+            {
+                if (Session.MapNavigationAllowed && !_editingName)
+                    UpdateDefenderLasso(lassoMotion.Position - Map.GlobalPosition);
+                else StopPointerGesture();
+                GetViewport().SetInputAsHandled();
+                return;
+            }
+            if (input is InputEventMouseButton { Pressed: false, ButtonIndex: MouseButton.Left })
+            {
+                StopPointerGesture(confirmDefenders: true);
+                GetViewport().SetInputAsHandled();
+                return;
+            }
+        }
+        if (!_editingName && !DebugSiegeControlHasFocus && Session.Prompt is null && _viewsBar.Visible &&
             input is InputEventKey { Pressed: true, Keycode: Key.Escape })
         {
             _viewsBar.Visible = false;
@@ -46,6 +71,15 @@ public partial class Main
         if (input is InputEventKey pauseKey && HandlePauseKey(pauseKey))
         {
             GetViewport().SetInputAsHandled();
+            return;
+        }
+        if (DebugSiegeControlHasFocus && Session.Prompt is null && input is InputEventKey debugKey)
+        {
+            if (debugKey.Pressed && debugKey.Keycode == Key.Escape)
+            {
+                ClearDebugSiegeFocus();
+                GetViewport().SetInputAsHandled();
+            }
             return;
         }
         if (input is InputEventKey dialogKey && Session.Prompt is not null && HandleDialogKey(dialogKey))
@@ -134,7 +168,7 @@ public partial class Main
     public override void _UnhandledInput(InputEvent input)
     {
         if (_started && input is InputEventKey pauseKey && HandlePauseKey(pauseKey)) return;
-        if (!_started || _editingName || input is not InputEventKey { Pressed: true } key)
+        if (!_started || _editingName || DebugSiegeControlHasFocus || input is not InputEventKey { Pressed: true } key)
         {
             return;
         }
@@ -180,17 +214,38 @@ public partial class Main
             HandleDialogKey(key);
             return true;
         }
+        if (code == Key.Escape && Session.SelectedEnemy is not null && Session.Preview is null)
+        {
+            Session.ClearSelection();
+            return true;
+        }
+        if (code == Key.Escape && Session.SelectedDefenderIds.Count > 0 && Session.Preview is null)
+        {
+            Session.ClearDefenderSelection();
+            return true;
+        }
         bool undo = (OS.HasFeature("macos") ? key.MetaPressed : key.CtrlPressed) &&
             !key.ShiftPressed && !key.AltPressed && code == Key.Z;
-        if (undo && (Session.Preview is null || Session.RoadToolActive || Session.Preview.Template is not null))
+        if (undo && (Session.Preview is null || Session.RoadToolActive || Session.WallToolActive || Session.Preview.Template is not null))
         {
             Session.RequestUndo();
             return true;
         }
         if (Session.MapNavigationAllowed && HandleMapNavigationKey(key, code)) return true;
+        if (Map.MinimapJumpPending && code is Key.Enter or Key.M or Key.S or Key.Y or Key.C or Key.R or Key.I or
+            Key.U or Key.D or Key.Delete or Key.Left or Key.Right or Key.Up or Key.Down or
+            Key.Pageup or Key.Pagedown or Key.Home or Key.End)
+        {
+            Session.SetMessage(PerspectiveCity.JumpLoadingMessage);
+            return true;
+        }
         if (Session.Preview is not null)
         {
-            if (Session.BuildingToolActive && !key.ShiftPressed && code is Key.Bracketleft or Key.Bracketright)
+            if (Session.WallDefenseToolActive && code == Key.R)
+                Session.FlipWallDefenseFacing();
+            else if (Session.Preview.Kind == PlacementKind.Gate && code is Key.Bracketleft or Key.Bracketright or Key.R)
+                Session.RotateGatePlacement(code == Key.Bracketleft ? -1 : 1);
+            else if (Session.BuildingToolActive && !key.ShiftPressed && code is Key.Bracketleft or Key.Bracketright)
             {
                 Session.RotateBuildingPlacement(code == Key.Bracketleft ? -1 : 1);
             }
@@ -209,6 +264,7 @@ public partial class Main
             }
             else if (!key.CtrlPressed && !key.MetaPressed && !key.AltPressed && code is Key.Enter or Key.Y or Key.C)
             {
+                UpdateSettlementGateFacing();
                 Session.ConfirmPreview();
             }
             else if (code is Key.Escape or Key.N or Key.A)
@@ -270,6 +326,7 @@ public partial class Main
             case Key.I: Session.Zone(ZoneType.Industrial); break;
             case Key.B: Session.PreviewRoad(); break;
             case Key.T: Session.BeginRoadLine(); break;
+            case Key.G: Session.ShowGarrisonMenu(); break;
             case Key.U: Session.Dezone(); break;
             case Key.D or Key.Delete: Session.PreviewDemolish(); break;
             case Key.S: Session.ToggleSelectionMode(); break;
@@ -289,6 +346,16 @@ public partial class Main
         return true;
     }
 
+    private void UpdateSettlementGateFacing()
+    {
+        if (!Session.SettlementToolActive) return;
+        float angle = Mathf.DegToRad(Map.PerspectiveEnabled ? Map.Perspective!.Azimuth : 90);
+        float x = Mathf.Sin(angle), y = Mathf.Cos(angle);
+        Session.SettlementGateSide = x > 0.25f ? BaileyGateSide.Right :
+            Math.Abs(y) >= Math.Abs(x) ? y >= 0 ? BaileyGateSide.Bottom : BaileyGateSide.Top
+            : BaileyGateSide.Left;
+    }
+
     private bool HandleMapNavigationKey(InputEventKey key, Key code)
     {
         if (key.Echo) return false;
@@ -297,6 +364,7 @@ public partial class Main
             Map.ZoomBy(1);
             return true;
         }
+
         if (key.Unicode is '-' or '_' || code is Key.Minus or Key.KpSubtract)
         {
             Map.ZoomBy(-1);
@@ -304,7 +372,7 @@ public partial class Main
         }
         if (code == Key.Key0 || key.Unicode == '0')
         {
-            Map.ZoomBy(-Session.ZoomLevel);
+            Map.SetZoom(0);
             return true;
         }
         if (key.CtrlPressed || key.MetaPressed || key.AltPressed) return false;
@@ -347,10 +415,18 @@ public partial class Main
 
     private void OnMapInput(InputEvent input)
     {
+        if (input is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left or MouseButton.Right or MouseButton.Middle })
+            ClearDebugSiegeFocus();
         Map.RefreshCells();
         if (_editingName || !Session.MapNavigationAllowed)
         {
             StopPointerGesture();
+            return;
+        }
+        if (Map.MinimapJumpPending)
+        {
+            StopPointerGesture();
+            Map.AcceptEvent();
             return;
         }
         if (input is InputEventMagnifyGesture magnify)
@@ -410,7 +486,8 @@ public partial class Main
             {
                 if (button.ButtonIndex is MouseButton.Left or MouseButton.Middle)
                 {
-                    StopPointerGesture(confirmRoad: button.ButtonIndex == MouseButton.Left);
+                    StopPointerGesture(confirmRoad: button.ButtonIndex == MouseButton.Left,
+                        confirmDefenders: button.ButtonIndex == MouseButton.Left);
                 }
                 return;
             }
@@ -420,14 +497,82 @@ public partial class Main
             }
             Map.TryMapPosition(button.Position, out var gridPosition);
             var position = gridPosition;
-            if (!Session.FixedPlacementToolActive && !Session.RoadToolActive &&
+            if (Session.Preview is null && button.ButtonIndex is MouseButton.Left or MouseButton.Right)
+            {
+                bool actor = Map.TryPickSiegeActor(button.Position, out bool friendly, out int actorId);
+                if (button.ButtonIndex == MouseButton.Left && button.ShiftPressed &&
+                    !button.CtrlPressed && !button.AltPressed && !button.MetaPressed &&
+                    Session.Game.Settlement?.Defenders.Any(unit => unit.Health > 0) == true)
+                {
+                    StopPointerGesture();
+                    _defenderLasso = true;
+                    _defenderLassoPoints.Add(button.Position);
+                    Map.DefenderSelectionPath = _defenderLassoPoints;
+                    if (actor && friendly) Session.SelectDefender(actorId, additive: true);
+                    Map.QueueRedraw();
+                    Map.AcceptEvent();
+                    return;
+                }
+                if (button.ButtonIndex == MouseButton.Left && actor && (friendly || !button.ShiftPressed))
+                {
+                    if (friendly) Session.SelectDefender(actorId, button.ShiftPressed);
+                    else Session.SelectEnemy(actorId);
+                    Map.AcceptEvent();
+                    return;
+                }
+                if (button.ButtonIndex == MouseButton.Right && actor && !friendly)
+                {
+                    Session.CommandSelectedDefenders(enemyId: actorId);
+                    Map.AcceptEvent();
+                    return;
+                }
+                if (button.ButtonIndex == MouseButton.Right && Session.SelectedDefenderIds.Count > 0)
+                {
+                    if (Map.TryMapPosition(button.Position, out var target)) Session.CommandSelectedDefenders(target);
+                    else Session.SetMessage("Choose reachable ground or a visible enemy.", MessageKind.Error);
+                    Map.AcceptEvent();
+                    return;
+                }
+                if (button.ButtonIndex == MouseButton.Left && !button.ShiftPressed && Session.SelectedDefenderIds.Count > 0)
+                    Session.ClearDefenderSelection();
+            }
+            Session.RememberWallPick(null);
+            if (Session.Preview?.Kind == PlacementKind.WallRun &&
+                Map.TryPickBuilding(button.Position, out _) &&
+                Session.Game.Settlement?.Walls.FirstOrDefault(wall => wall.Id == Map.PickedWallId) is { IsTower: true } tower)
+            {
+                position = tower.Cell;
+                Session.RememberWallPick(tower.Id);
+            }
+            else if ((!Session.FixedPlacementToolActive || Session.WallDefenseToolActive ||
+                Session.Preview?.Kind is PlacementKind.RemoveWall or PlacementKind.Gate) && !Session.RoadToolActive &&
                 button.ButtonIndex is MouseButton.Left or MouseButton.Right &&
                 !button.ShiftPressed && !button.CtrlPressed && !button.AltPressed && !button.MetaPressed &&
                 Map.TryPickBuilding(button.Position, out var buildingAnchor))
+            {
                 position = buildingAnchor;
+                Session.RememberWallPick(Map.PickedWallId);
+            }
+            else if (Session.Preview is null && !Session.FixedPlacementToolActive && !Session.RoadToolActive &&
+                button.ButtonIndex is MouseButton.Left or MouseButton.Right &&
+                !button.ShiftPressed && !button.CtrlPressed && !button.AltPressed && !button.MetaPressed &&
+                Map.TryPickFeature(button.Position, out var feature))
+            {
+                position = feature;
+            }
             if (!Session.Game.Map.InBounds(position) &&
                 button.ButtonIndex is MouseButton.Left or MouseButton.Middle or MouseButton.Right)
             {
+                return;
+            }
+            bool pendingObject = Map.PerspectiveEnabled && Map.Perspective is { } objectView &&
+                !objectView.IsMapObjectPresented(position);
+            if (pendingObject && button.ButtonIndex is MouseButton.Left or MouseButton.Right &&
+                !(button.ButtonIndex == MouseButton.Right && Session.FixedPlacementToolActive) &&
+                (Session.Preview is not null || button.ButtonIndex == MouseButton.Right))
+            {
+                Session.SetMessage("This plot's objects are updating; try again when the view is ready.", MessageKind.Info);
+                Map.AcceptEvent();
                 return;
             }
             switch (button.ButtonIndex)
@@ -454,6 +599,7 @@ public partial class Main
                     }
                     if (Session.FixedPlacementToolActive)
                     {
+                        UpdateSettlementGateFacing();
                         Session.MoveFixedPlacement(position);
                         Session.ConfirmPreview();
                         break;
@@ -468,7 +614,8 @@ public partial class Main
                         {
                             perspective.RememberSelectionSurface(position);
                         }
-                        Session.SelectCell(position);
+                        if (!pendingObject) Session.SelectCell(position);
+                        else Session.SetMessage("This area's objects are updating; dragging remains available.", MessageKind.Info);
                         _panAnchor = gridPosition;
                         if (Map.PerspectiveEnabled) _perspectivePanAnchor = Map.BeginPerspectivePan(button.Position);
                     }
@@ -484,8 +631,17 @@ public partial class Main
                         Session.BeginDrag(position);
                         break;
                     }
+                    if (Session.FixedPlacementToolActive)
+                    {
+                        Session.CancelPreview();
+                        break;
+                    }
                     Session.PrepareContextMenuAt(position);
-                    if (Session.Game.Map.BuildingAt(position.X, position.Y) is not null)
+                    _constructionContextCell = position;
+                    _constructionContextGame = Session.Game;
+                    if (Session.WallStatus(position) is not null)
+                        Session.ShowWallStatus(position);
+                    else if (Session.Game.Map.BuildingAt(position.X, position.Y) is not null)
                         Session.ShowBuildingStatus(position);
                     else Session.ShowAreaMenu();
                     break;
@@ -510,17 +666,44 @@ public partial class Main
         }
         else if (input is InputEventMouseMotion motion)
         {
+            if (_defenderLasso)
+            {
+                UpdateDefenderLasso(motion.Position);
+                Map.AcceptEvent();
+                return;
+            }
             _pointer = motion.Position;
             _hover = new Rect2(Vector2.Zero, Map.Size).HasPoint(motion.Position);
-            var cell = PointerCell(motion.Position);
             if (_panning)
             {
                 if (Map.PerspectiveEnabled) Map.PanPerspective(_perspectivePanAnchor, motion.Position);
-                else Session.PanCamera(_panAnchor, cell.X, cell.Y);
+                else
+                {
+                    var cell = PointerCell(motion.Position);
+                    Session.PanCamera(_panAnchor, cell.X, cell.Y);
+                }
             }
             else if (Session.FixedPlacementToolActive)
             {
-                if (Map.TryMapPosition(motion.Position, out var world)) Session.MoveFixedPlacement(world);
+                if (Session.WallPlacementStartTower is { } startTower && Map.PerspectiveEnabled &&
+                    Map.Perspective is { } view && Map.TryPickBuilding(motion.Position, out _) &&
+                    Map.PickedWallId == startTower.Id)
+                {
+                    var point = view.GroundPlanePoint(motion.Position, view.WallTop(startTower).Y);
+                    Session.RememberWallPick(startTower.Id);
+                    Session.MoveFixedPlacement(new((int)Math.Floor(point.X), (int)Math.Floor(point.Z)));
+                }
+                else if ((Session.WallDefenseToolActive || Session.Preview?.Kind is PlacementKind.RemoveWall or PlacementKind.Gate) &&
+                    Map.TryPickBuilding(motion.Position, out var wall))
+                {
+                    Session.RememberWallPick(Map.PickedWallId);
+                    Session.MoveFixedPlacement(wall);
+                }
+                else if (Map.TryMapPosition(motion.Position, out var world))
+                {
+                    Session.RememberWallPick(null);
+                    Session.MoveFixedPlacement(world);
+                }
             }
             else if (_selecting)
             {
@@ -534,8 +717,32 @@ public partial class Main
         }
     }
 
-    private void StopPointerGesture(bool confirmRoad = false)
+    private void UpdateDefenderLasso(Vector2 point)
     {
+        if (_defenderLassoPoints.Count == 0 || _defenderLassoPoints[^1].DistanceSquaredTo(point) >= 9)
+            _defenderLassoPoints.Add(point);
+        Map.QueueRedraw();
+    }
+
+    private void StopPointerGesture(bool confirmRoad = false, bool confirmDefenders = false)
+    {
+        if (_defenderLasso)
+        {
+            if (confirmDefenders && Session.Prompt is null && Session.Preview is null && _defenderLassoPoints.Count >= 3)
+            {
+                var polygon = _defenderLassoPoints.ToArray();
+                var ids = Session.Game.Settlement?.Defenders.Where(unit => unit.Health > 0 &&
+                    Map.DefenderSelectionPoint(unit) is { } point &&
+                    new Rect2(Vector2.Zero, Map.Size).HasPoint(point) &&
+                    Geometry2D.IsPointInPolygon(point, polygon)).Select(unit => unit.Id).ToArray() ?? [];
+                if (ids.Length > 0) Session.SelectDefenders(ids, additive: true);
+                else Session.SetMessage("No defenders inside the selection circle.", MessageKind.Info);
+            }
+            _defenderLasso = false;
+            _defenderLassoPoints.Clear();
+            Map.DefenderSelectionPath = [];
+            Map.QueueRedraw();
+        }
         bool selecting = _selecting;
         bool commitRoad = confirmRoad && selecting && Session.RoadToolActive &&
             (!_roadPointerPlacement || _roadPointerMoved);
@@ -566,8 +773,8 @@ public partial class Main
     internal void EdgeScroll(double delta)
     {
         Session.RecordLoopGap((long)(delta * 1000));
-        if (!Session.MapNavigationAllowed ||
-            _panning || !_selecting && (!Session.EdgeScrollEnabled || !_hover))
+        if (Map.MinimapJumpPending || !Session.MapNavigationAllowed ||
+            _panning || _defenderLasso || !_selecting && (!Session.EdgeScrollEnabled || !_hover))
         {
             _scroller.Reset();
             return;

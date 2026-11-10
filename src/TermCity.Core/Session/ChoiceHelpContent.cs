@@ -38,12 +38,24 @@ public static class ChoiceHelpContent
             $"Upkeep: {Fmt.Money(game.Config.FullRules ? (int)Math.Round(building.WeeklyUpkeep * game.Budget.Funding(building.Service)) : 0)}/week",
         };
         if (building.Capacity > 0) details.Add($"Capacity: {CapacityText(building)}");
-        if (building.StaffingCapacity > 0) details.Add($"Staffing: {building.StaffingCapacity:N0} residents at full funding");
-        if (building.Radius > 0)
+        int roster = SettlementState.RosterCapacity(building);
+        if (roster > 0)
+        {
+            details.Add($"Roster: {roster} {(building.Name == "Archer Barracks" ? "archers" : "soldiers")}; upkeep funds replacements");
+            details.Add("Recruitment: one defender every 2 siege seconds; casualty replacement cooldown 18 seconds");
+            var profile = CombatProfiles.Fighter(building.Name == "Archer Barracks" ? DefenderKind.Archer : DefenderKind.Soldier);
+            details.Add($"Attack: {profile.Damage} damage / {profile.Interval:0.#}s; " +
+                (building.Name == "Archer Barracks" ? "maximum reach 9; supported firing post and clear shot required" :
+                    "melee; living target, reach, height and cover rechecked at blade contact"));
+            details.Add("Combat: defenders must travel to their positions. Click/Shift-click selects; right-click moves or attacks; completed orders resume automatic defense.");
+        }
+        else if (building.StaffingCapacity > 0) details.Add($"Staffing: {building.StaffingCapacity:N0} residents at full funding");
+        if (building.Radius > 0 && roster == 0)
             details.Add($"Response target: {building.ResponseTargetDays:0.00} game days; strength: {building.Strength}/100. Longer journeys and excess workload delay service; no distance cutoff.");
         if (building.SeatRank > 0) details.Add($"Seat of power: rank {building.SeatRank}");
         if (building.Pilgrims > 0) details.Add($"Pilgrims: {building.Pilgrims} per feast");
         details.Add("Placement: buildable, unzoned ground with a clear whole-cell footprint and enough gold");
+        if (roster > 0) details.Add("Place inside the bailey; leave the gate approach clear. Distant troops cannot defend instantly.");
         if (building.MinPopulation > 0)
         {
             int required = CityProgression.RequiredPopulation(building);
@@ -64,6 +76,20 @@ public static class ChoiceHelpContent
         if (building.Pollution != 0)
             details.Add(building.Pollution < 0 ? "Cleans nearby air" : "Produces smoke pollution");
         return new(Icons(building.Glyphs), building.Description, string.Join("\n\n", details));
+    }
+
+    public static ChoiceHelp WallDefense(WallDefenseKind kind)
+    {
+        var definition = WallDefenses.Get(kind);
+        string coverage = kind is WallDefenseKind.OilCauldron or WallDefenseKind.Rocks
+            ? $"Ground footprint: {Rendering.DropAttackLayout.Size(kind):0.#} x {Rendering.DropAttackLayout.Size(kind):0.#} cells per station; exterior only"
+            : kind == WallDefenseKind.Trebuchet ? "Impact: 360 center, tapering to 90 at 2.5 cells; cover blocks damage"
+            : "Impact: first enemy physically struck; blocked shots are withheld";
+        return new("^", "Mounted on an intact wall top; damage resolves at visible impact, not on firing.",
+            $"Cost: {Fmt.Money(definition.Cost)}\n\nDamage: {definition.Damage}\n\n" +
+            $"{coverage}\n\nMaximum reach: {definition.MinimumRange}-{definition.Range} cells; obstruction applies\n\n" +
+            $"Reload: {definition.ReloadSeconds}s\n\nUnlock: {definition.RequiredPopulation:N0} souls\n\n" +
+            "Placement: choose an intact wall or tower top inside the Garrison.");
     }
 
     public static ChoiceHelp RoadTemplate(CityGame game, TermCity.Core.Roads.RoadTemplate template)

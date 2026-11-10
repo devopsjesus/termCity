@@ -141,7 +141,7 @@ public class DemandFeedbackTests
         game.Touch();
         double before = game.Demand.For(zone);
         Assert.True(before > 0);
-        Assert.True(game.Designate(new(35, 21, 18, 4), zone).Success);
+        Assert.True(game.Designate(new(35, 21, 20, 10), zone).Success);
         Assert.Equal(before, game.Demand.For(zone));
         for (int week = 0; week < 8 && game.Demand.For(zone) > 0; week++) game.AdvanceWeek();
         Assert.Equal(game.SupportedCells(zone), game.Stats.For(zone).Occupied);
@@ -184,26 +184,21 @@ public class DemandFeedbackTests
     {
         var game = TestCity.Flat(rules: CityRules.Full);
         var home = game.Map.Content.Buildings.ForZone(ZoneType.Residential)!;
-        for (int x = 10; x < 30; x += 2)
-        {
-            var plot = new CellRect(x, 21, 2, 2);
-            foreach (var cell in plot.Cells()) game.Map.SetZone(cell.X, cell.Y, ZoneType.Residential);
-            game.Map.SetBuildingFootprint(home, plot);
-            game.Map.SetHousehold(x, 21, new(4, 2, 0));
-        }
+        for (int x = 10; x < 60; x += 5)
+            TestCity.Stamp(game, home.Name, new(x, 21), new(4, 2, 0));
         var fuel = game.Map.Content.Buildings.Get("Woodlot");
         var water = game.Map.Content.Buildings.Get("Town Well");
-        for (int x = 10; x < 40; x += 6)
+        for (int x = 10; x < 60; x += 12)
         {
-            game.Map.SetBuildingFootprint(fuel, fuel.FootprintAt(x, 10));
-            game.Map.SetBuildingFootprint(water, water.FootprintAt(x, 16));
+            game.Map.SetBuildingFootprint(fuel, fuel.FootprintAt(x, 5));
+            game.Map.SetBuildingFootprint(water, water.FootprintAt(x, 15));
         }
         game.Touch();
         for (int day = 0; day < 14; day++) game.AdvanceDay();
         Assert.True(game.Indicators.BusinessClimate > 0);
         double before = game.Demand.Commercial;
         Assert.True(before > 0);
-        game.Designate(new(40, 21, 18, 4), ZoneType.Commercial);
+        game.Designate(new(65, 21, 20, 10), ZoneType.Commercial);
         Assert.Equal(before, game.Demand.Commercial);
         for (int week = 0; week < 16 && game.Stats.Commercial.Filled == 0; week++) game.AdvanceWeek();
         Assert.True(game.Stats.Commercial.Filled > 0,

@@ -107,11 +107,22 @@ public sealed class TerminalGrid
 
     public void Fill(GameSession session)
     {
+        PrepareViewport(session);
+        FillCells(session);
+    }
+
+    public void PrepareViewport(GameSession session)
+    {
         Resize(_width, _height, session.ZoomLevel > 0 ? 2 : 1);
         session.SetViewport(Math.Max(1, (int)(_width / PixelWidth)), Math.Max(1, (int)(_height / PixelHeight)));
+    }
+
+    private void FillCells(GameSession session)
+    {
         VectorRoads = true;
         var sampler = new BlockSampler(session.Game)
-            { Overlay = session.Overlay, VectorRoads = VectorRoads, BuildingSprites = true };
+            { Overlay = session.Overlay, VectorRoads = VectorRoads, BuildingSprites = true,
+                ShowAreas = session.AreaOverlaysVisible };
         var hillGlyphs = session.Game.Map.Content.Terrains
             .Where(terrain => terrain.Generator is HillGenerator)
             .SelectMany(terrain => terrain.Glyphs).ToHashSet();
@@ -126,12 +137,12 @@ public sealed class TerminalGrid
                 var position = session.ScreenToMap(x, y);
                 bool road = false;
                 _cells[y * Columns + x] = session.Game.Map.InBounds(position)
-                    ? session.ZoomLevel < 0
+                    ? session.Stride > 1
                         ? sampler.Sample(position.X, position.Y, session.Stride, out road)
                         : CellRenderer.Render(session.Game, position.X, position.Y, session.Overlay, VectorRoads,
-                            buildingSprites: true)
+                            buildingSprites: true, showAreas: session.AreaOverlaysVisible)
                     : null;
-                if (session.ZoomLevel >= 0)
+                if (session.Stride == 1)
                 {
                     road = VectorRoads && _cells[y * Columns + x] is not null && session.Game.Map.HasRoad(position.X, position.Y);
                 }

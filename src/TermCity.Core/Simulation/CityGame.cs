@@ -73,7 +73,7 @@ public sealed class TaxRates
 /// The whole simulation: money, calendar, player actions and weekly growth. Has no knowledge of any user interface.
 /// Drive it with <see cref="Update"/> (real time) or <see cref="AdvanceWeek"/> (deterministic tests).
 /// </summary>
-public sealed class CityGame
+public sealed partial class CityGame
 {
 #if DEBUG
     public static bool DebugToolsAvailable => true;
@@ -82,7 +82,7 @@ public sealed class CityGame
 #endif
     // Real time is never allowed to jump the simulation forward by more than this in one update, so a stall (the
     // window in the background, a slow frame) does not fast-forward the game when it comes back.
-    private const double MaxSecondsPerUpdate = 0.5;
+    internal const double MaxSecondsPerUpdate = 0.5;
 
     private double _dayProgress;
     private bool _planned;
@@ -122,11 +122,14 @@ public sealed class CityGame
     public static CityGame New(GameConfig config, GameContent? content = null, DateTime? startingDate = null)
     {
         config = config with { StartingYear = config.StartingYear ?? DateTime.Now.Year - 800 };
+        if (config.Scenario == CityScenario.Top)
+            return TopSettlementScenario.Create(config, content, startingDate);
         if (config.Scenario != CityScenario.Random)
-            config = config with { MapWidth = MapSize.MaxWidth, MapHeight = MapSize.MaxHeight };
-        content ??= new GameContent();
+            config = config with { MapWidth = MapSize.ScenarioWidth, MapHeight = MapSize.ScenarioHeight };
+        content ??= GameContent.ForScenario(config.Scenario);
         var map = config.Scenario != CityScenario.Random ? CityScenarioMap.Generate(config, content)
             : MapGenerator.Generate(config.MapWidth, config.MapHeight, config.Seed, content);
+        if (config.Scenario == CityScenario.Random) map.SetElevationProfile(TerrainElevationProfile.Triple);
         RoadSeparation.Apply(map);
         var names = GameRandom.ForStage(config.Seed, "city-name");
         string[] prefixes = ["Oak", "Cedar", "Maple", "Willow", "Pine", "Silver", "Clear", "River"];
@@ -193,6 +196,13 @@ public sealed class CityGame
     public GameSpeed Speed { get; set; } = GameSpeed.Medium;
 
     public bool Paused { get; set; }
+    public bool ProfileUpdates { get; set; }
+    public double LastSiegeUpdateMilliseconds { get; private set; }
+    public double LastDayUpdateMilliseconds { get; private set; }
+    public double LastPatrolAssignmentMilliseconds { get; internal set; }
+    public double LastPathWearMilliseconds { get; private set; }
+    public double LastPopulationWeekMilliseconds { get; private set; }
+    public double LastWeekFinishMilliseconds { get; private set; }
 
     public TaxRates Taxes { get; }
 
@@ -215,6 +225,8 @@ public sealed class CityGame
             _weekHomes = value.WeekHomes;
             _weekShops = value.WeekShops;
             _weekFactories = value.WeekFactories;
+            SimulationStarted |= value.Planned || value.Homes > 0 || value.Shops > 0 || value.Factories > 0 ||
+                value.WeekHomes > 0 || value.WeekShops > 0 || value.WeekFactories > 0;
         }
     }
 
@@ -325,7 +337,7 @@ public sealed class CityGame
     public int TributeArrears { get; internal set; }
 
     /// <summary>The town's standing in the realm: see <see cref="Settlement"/>.</summary>
-    public TownRank Rank => Config.FullRules ? Settlement.RankOf(this) : TownRank.Hamlet;
+    public TownRank Rank => Config.FullRules ? Simulation.Settlement.RankOf(this) : TownRank.Hamlet;
 
     internal WeekTally Tally { get; } = new();
 
@@ -337,14 +349,37 @@ public sealed class CityGame
             bool insolvent = Insolvent;
             if (_services is null || _servicesKey != _serviceVersion || _servicesInsolvent != insolvent)
             {
+                long started = System.Diagnostics.Stopwatch.GetTimestamp();
                 _services = CityServices.Compute(Map, Network, Config, k => Budget.Effective(k, insolvent),
-                    Profile.WaterSupply, Profile.PowerDemand, ElapsedDays);
+                    Profile.WaterSupply, Profile.PowerDemand, ElapsedDays, _services);
+                ServiceComputeMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
                 _servicesKey = _serviceVersion;
                 _servicesInsolvent = insolvent;
             }
 
             return _services;
         }
+    }
+
+    public double ServiceComputeMilliseconds { get; private set; }
+    private int _serviceUnlockDefinitionCount = -1;
+    private readonly int?[] _serviceUnlocks = new int?[ServiceKinds.Count];
+
+    internal int? ServiceUnlockGate(ServiceKind kind)
+    {
+        var definitions = Map.Content.Buildings;
+        if (_serviceUnlockDefinitionCount != definitions.Count)
+        {
+            Array.Clear(_serviceUnlocks);
+            foreach (var building in definitions)
+                if (building.PlayerPlaceable)
+                {
+                    int slot = (int)building.Service, population = CityProgression.RequiredPopulation(building);
+                    _serviceUnlocks[slot] = Math.Min(_serviceUnlocks[slot] ?? int.MaxValue, population);
+                }
+            _serviceUnlockDefinitionCount = definitions.Count;
+        }
+        return _serviceUnlocks[(int)kind];
     }
 
     /// <summary>How the city is doing: happiness, jobs, crime, traffic and what is driving people in or out.</summary>
@@ -405,7 +440,7 @@ public sealed class CityGame
         double education = 1 + 0.3 * ind.Education / 100;
         double staffing = 0.5 + 0.5 * ind.JobsFilled;
         double income = stats.ResidentialIncome * (0.5 + 0.5 * (1 - ind.Unemployment)) +
-            (stats.CommercialIncome + stats.IndustrialIncome) * staffing * education * Settlement.CharterDues(Rank);
+            (stats.CommercialIncome + stats.IndustrialIncome) * staffing * education * Simulation.Settlement.CharterDues(Rank);
 
         double services = 0;
         foreach (int i in Map.ServiceCells)
@@ -495,6 +530,7 @@ public sealed class CityGame
 
     /// <summary>Increases whenever what the map looks like may have changed (not on every clock tick).</summary>
     public int MapVersion { get; private set; }
+    public int AnalysisVersion => _version;
 
     /// <summary>
     /// Invalidates every cache and notifies listeners. Call this after changing the map directly;
@@ -527,6 +563,7 @@ public sealed class CityGame
         }
 
         UpdateMilestones();
+        Settlement?.EnsureFirstWave(this);
         Changed?.Invoke();
     }
 
@@ -552,17 +589,30 @@ public sealed class CityGame
     /// <summary>Advances real time. Days complete according to the current speed; does nothing while paused.</summary>
     public void Update(double elapsedSeconds)
     {
-        if (Paused || elapsedSeconds <= 0)
+        if (Paused || !double.IsFinite(elapsedSeconds) || elapsedSeconds <= 0)
         {
             return;
         }
 
-        _dayProgress += Math.Min(elapsedSeconds, MaxSecondsPerUpdate);
+        double seconds = Math.Min(elapsedSeconds, MaxSecondsPerUpdate);
+        SimulationStarted = true;
+        long started = ProfileUpdates ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        if (ProfileUpdates)
+            LastPatrolAssignmentMilliseconds = LastDayUpdateMilliseconds = LastPathWearMilliseconds =
+                LastPopulationWeekMilliseconds = LastWeekFinishMilliseconds = 0;
+        AdvanceSiege(seconds * Config.MediumSecondsPerWeek / Config.SecondsPerWeek(Speed));
+        if (ProfileUpdates)
+            LastSiegeUpdateMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        _dayProgress += seconds;
         double length = SecondsPerDay;
         while (_dayProgress >= length)
         {
             _dayProgress -= length;
-            AdvanceDay();
+            started = ProfileUpdates ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+            AdvanceDayCore();
+            if (ProfileUpdates)
+                LastDayUpdateMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            length = SecondsPerDay;
         }
 
         if (RemoveDezonedBuildings(ElapsedDays) > 0)
@@ -589,6 +639,15 @@ public sealed class CityGame
     /// </summary>
     public void AdvanceDay()
     {
+        AdvanceSiege(Config.MediumSecondsPerWeek / Config.DaysPerWeek);
+        AdvanceDayCore();
+    }
+
+    private void AdvanceDayCore()
+    {
+        int navigation = Map.NavigationVersion;
+        SimulationStarted = true;
+        ClearSettlementReservations();
         if (!_planned)
         {
             PlanWeek();
@@ -596,20 +655,23 @@ public sealed class CityGame
 
         int day = Day;
         int homes = Config.FullRules ? MoveIn(Share(_planHomes, day)) : Grow(ZoneType.Residential, Share(_planHomes, day), int.MaxValue);
-        Invalidate();
+        if (homes > 0) Invalidate();
 
         int allowedC = SupportedCells(ZoneType.Commercial);
         int shops = Grow(ZoneType.Commercial, Share(_planShops, day), allowedC - Stats.Commercial.Occupied);
-        Invalidate();
+        if (shops > 0) Invalidate();
 
         int allowedI = SupportedCells(ZoneType.Industrial);
         int factories = Grow(ZoneType.Industrial, Share(_planFactories, day), allowedI - Stats.Industrial.Occupied);
-        Invalidate();
+        if (factories > 0) Invalidate();
 
         _weekHomes += homes;
         _weekShops += shops;
         _weekFactories += factories;
-        bool pathsChanged = TravelRoutes.WearPaths(Map);
+        long pathsStarted = ProfileUpdates ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        _ = TravelRoutes.AdvancePathWear(Map, out bool pathsChanged);
+        if (ProfileUpdates)
+            LastPathWearMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(pathsStarted).TotalMilliseconds;
         Invalidate(servicesChanged: true);
         Day++;
         int removed = RemoveDezonedBuildings((long)Week * Config.DaysPerWeek + Day);
@@ -621,7 +683,7 @@ public sealed class CityGame
             // (the week bar has its own, cheaper, redraw).
             if (homes + shops + factories + removed > 0 || pathsChanged || Map.ServiceCells.Count > 0)
             {
-                Notify(roadsChanged: false);
+                Notify(roadsChanged: false, mapChanged: Map.NavigationVersion != navigation || pathsChanged);
             }
 
             return;
@@ -629,11 +691,15 @@ public sealed class CityGame
 
         if (Config.FullRules)
         {
+            long populationStarted = ProfileUpdates ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
             PopulationEngine.RunWeek(this, Tally);
+            if (ProfileUpdates)
+                LastPopulationWeekMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(populationStarted).TotalMilliseconds;
             Invalidate(servicesChanged: true);
-            Settlement.RunWeek(this);
+            Simulation.Settlement.RunWeek(this);
         }
 
+        long weekFinishStarted = ProfileUpdates ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         var finance = Finance;
         int income = finance.Income;
         bool wasInsolvent = Insolvent;
@@ -652,7 +718,10 @@ public sealed class CityGame
             Tally.Births, Tally.Deaths, Tally.MovedIn, Tally.MovedOut, Tally.Events);
         _weekHomes = _weekShops = _weekFactories = 0;
         Tally.Reset();
-        Notify(roadsChanged: false, mapChanged: true, servicesChanged: Config.FullRules);
+        Notify(roadsChanged: false, mapChanged: Map.NavigationVersion != navigation || pathsChanged,
+            servicesChanged: Config.FullRules);
+        if (ProfileUpdates)
+            LastWeekFinishMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(weekFinishStarted).TotalMilliseconds;
     }
 
     private int RemoveDezonedBuildings(double elapsedDays)
@@ -715,6 +784,8 @@ public sealed class CityGame
         {
             byte id = Map.BuildingLayer[i];
             if (id != 0 && Map.IsBuildingAnchor(i) &&
+                (Settlement is null || Map.BuildingFootprintAt(i % Map.Width, i / Map.Width).Cells()
+                    .All(p => Settlement.AcceptsArrivals(this, p))) &&
                 Map.Content.Buildings[id].Capacity - Map.HouseholdLayer[i].Total >= 3 && CityAnalysis.Operating(this, i))
             {
                 vacancies.Add(i);
@@ -789,6 +860,7 @@ public sealed class CityGame
     private int Grow(ZoneType zone, int limit, int room)
     {
         int count = Math.Min(limit, room);
+        if (Settlement is not null) return GrowSettlement(zone, count);
         var building = Map.Content.Buildings.ForZone(zone);
         if (count <= 0 || building is null)
         {
@@ -827,7 +899,8 @@ public sealed class CityGame
 
                 if (!TryPlot(p, out var footprint)) continue;
                 // Roads accelerate settlement; a remote plot remains a valid place to live.
-                if (network.AccessRank(Map.Index(p.X, p.Y)) == 0 && !Rng.Chance(0.35)) continue;
+                if (!footprint.Cells().Any(cell => network.AccessRank(Map.Index(cell.X, cell.Y)) > 0) &&
+                    !Rng.Chance(0.35)) continue;
                 Map.SetBuildingFootprint(building, footprint);
                 if (zone == ZoneType.Residential)
                 {
@@ -846,8 +919,8 @@ public sealed class CityGame
         bool TryPlot(Pos p, out CellRect footprint)
         {
             int variation = CellHash.Pick(p.X + 17, p.Y + 29, 100);
-            int width = variation >= 88 ? 2 : 1;
-            int height = variation is >= 80 and < 88 or >= 96 ? 2 : 1;
+            int width = (variation >= 88 ? 2 : 1) * building.ModelScale;
+            int height = (variation is >= 80 and < 88 or >= 96 ? 2 : 1) * building.ModelScale;
             footprint = new(p.X, p.Y, Math.Max(building.Width, width), Math.Max(building.Height, height));
             if (Available(footprint)) return true;
             footprint = new(p.X, p.Y, building.Width, building.Height);
@@ -882,7 +955,8 @@ public sealed class CityGame
             .Average(p => Map.TerrainAt(p.X, p.Y).BuildCostModifier));
 
     public bool CanBuildOn(int x, int y) =>
-        Map.InBounds(x, y) && Map.TerrainAt(x, y).Buildable && !Map.HasRoad(x, y) &&
+        Map.InBounds(x, y) && !IsSettlementWall(x, y) && Map.TerrainAt(x, y).Buildable &&
+        !Map.Footbridges.Any(bridge => bridge.Cells().Contains(new Pos(x, y))) && !Map.HasRoad(x, y) &&
         Map.ZoneAt(x, y) == ZoneType.None && Map.BuildingAt(x, y) is null &&
         !Network.RoadOverlapsCell(Map.Index(x, y));
 
@@ -890,6 +964,7 @@ public sealed class CityGame
     {
         var type = Map.Content.Buildings.ForZone(zone);
         if (type is null) return [];
+        if (Settlement is { } settlement) return SettlementSites(settlement.GrowthBounds(this), type);
         var claimed = new HashSet<int>();
         var plots = new List<CellRect>();
         var size = MinimumGrowthSize(zone);
@@ -926,7 +1001,7 @@ public sealed class CityGame
         var stroke = cells as IReadOnlyList<Pos> ?? cells.ToList();
         var plan = RoadRules.Plan(Map, stroke, type.Rank,
             (x, y) => (Map.TerrainAt(x, y).Buildable || Map.TerrainAt(x, y).Name == DefaultTerrains.WaterName) &&
-                Map.ZoneAt(x, y) == ZoneType.None && Map.BuildingAt(x, y) is null);
+                !RoadWallBlocked(x, y) && Map.ZoneAt(x, y) == ZoneType.None && Map.BuildingAt(x, y) is null);
         if (plan.Count == 0) return plan;
         if (stroke.Count > 1)
         {
@@ -959,7 +1034,7 @@ public sealed class CityGame
         foreach (var p in plan)
             for (int y = Math.Max(0, p.Y - reach); y <= Math.Min(Map.Height - 1, p.Y + reach); y++)
                 for (int x = Math.Max(0, p.X - reach); x <= Math.Min(Map.Width - 1, p.X + reach); x++)
-                    if (Map.BuildingAt(x, y) is not null || Map.ZoneAt(x, y) != ZoneType.None)
+                    if (IsSettlementWall(x, y) || Map.BuildingAt(x, y) is not null || Map.ZoneAt(x, y) != ZoneType.None)
                         obstacles.Add(new(x, y));
         if (obstacles.Count == 0) return plan;
 
@@ -999,7 +1074,9 @@ public sealed class CityGame
     public bool CanPlaceBuilding(BuildingType type, int x, int y, int rotation = 0)
     {
         var footprint = type.FootprintAt(x, y, rotation);
-        return CityProgression.IsUnlocked(this, type) && footprint.Cells().All(p => CanBuildOn(p.X, p.Y)) &&
+        return CityProgression.IsUnlocked(this, type) &&
+            (SettlementState.RosterCapacity(type) == 0 || Settlement?.GarrisonPlacementError(this, type, footprint) is null && Settlement is not null) &&
+            footprint.Cells().All(p => CanBuildOn(p.X, p.Y)) &&
             (!type.RequiresWaterNearby || footprint.Cells().Any(p => Map.NearWater(p.X, p.Y, 1)));
     }
 
@@ -1019,6 +1096,11 @@ public sealed class CityGame
         if (footprint.Cells().Any(p => !Map.InBounds(p)))
         {
             return $"Move the {type.Name} fully inside the map.";
+        }
+        if (SettlementState.RosterCapacity(type) > 0)
+        {
+            if (Settlement is null) return "Found a bailey before placing a garrison.";
+            if (Settlement.GarrisonPlacementError(this, type, footprint) is { } garrisonError) return garrisonError;
         }
         if (footprint.Cells().Any(p => !Map.TerrainAt(p.X, p.Y).Buildable))
         {
@@ -1282,7 +1364,8 @@ public sealed class CityGame
             }
 
             bool restoring = Map.ZoneRemovalAt(p.X, p.Y) is { } removal && removal.Zone == zone;
-            bool allowed = Map.TerrainAt(p.X, p.Y).Buildable && !Map.HasRoad(p.X, p.Y) &&
+            bool allowed = !IsSettlementWall(p.X, p.Y) && (Settlement is null || Settlement.ContainsInterior(p)) &&
+                Map.TerrainAt(p.X, p.Y).Buildable && !Map.HasRoad(p.X, p.Y) &&
                 (Map.BuildingAt(p.X, p.Y) is null || restoring);
             if (!allowed)
             {
@@ -1349,7 +1432,7 @@ public sealed class CityGame
     public IReadOnlySet<Pos> DemolitionCells(IEnumerable<Pos> cells)
     {
         var targets = new HashSet<Pos>();
-        foreach (var p in cells.Where(Map.InBounds))
+        foreach (var p in cells.Where(p => Map.InBounds(p) && !IsSettlementWall(p.X, p.Y)))
             foreach (var cell in Map.BuildingFootprintAt(p.X, p.Y).Cells()) targets.Add(cell);
         return targets;
     }

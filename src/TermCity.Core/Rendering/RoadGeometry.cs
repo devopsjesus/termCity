@@ -15,6 +15,19 @@ public sealed class RoadGeometry
     private readonly Dictionary<int, RoadPath?> _centerRoads = [];
     private readonly RoadMeshLayout _mesh;
 
+    private RoadGeometry(GameMap map, RoadGeometry source)
+    {
+        _width = source._width;
+        _height = source._height;
+        _occupied = source._occupied;
+        _access = source._access;
+        _accessCells = source._accessCells;
+        _mesh = source._mesh.ForkForMap(map);
+        foreach (var pair in source._centerRoads) _centerRoads.Add(pair.Key, pair.Value);
+    }
+
+    internal RoadGeometry ForkForMap(GameMap map) => new(map, this);
+
     public RoadGeometry(GameMap map, IReadOnlyList<RoadPath> paths)
     {
         _width = map.Width;

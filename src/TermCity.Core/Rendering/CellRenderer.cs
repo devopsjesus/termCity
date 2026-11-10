@@ -17,7 +17,7 @@ public static class CellRenderer
     /// so the glyph does not show through.
     /// </param>
     public static CellVisual Render(CityGame game, int x, int y, MapOverlay overlay = MapOverlay.Off,
-        bool vectorRoads = false, bool buildingArt = true, bool buildingSprites = false)
+        bool vectorRoads = false, bool buildingArt = true, bool buildingSprites = false, bool showAreas = true)
     {
         var map = game.Map;
         var terrain = map.TerrainAt(x, y);
@@ -28,7 +28,7 @@ public static class CellRenderer
         var zone = map.ZoneAt(x, y);
         var building = map.BuildingAt(x, y);
 
-        if (zone != ZoneType.None)
+        if (showAreas && zone != ZoneType.None)
         {
             var visual = RenderZone(game, x, y);
             bg = visual.Background;
@@ -54,7 +54,7 @@ public static class CellRenderer
 
         }
 
-        if (building is null && map.PathWearAt(x, y) > 0 && !map.HasRoad(x, y) &&
+        if (building is null && map.PathWearAt(x, y) > 0 && !map.HasRoad(x, y) && map.FootpathsAllowedAt(x, y) &&
             !map.IsHouseYardCell(map.Index(x, y)) && !TravelRoutes.IsFootpathBridgeCell(map, map.Index(x, y)) &&
             !TravelRoutes.IsFootpathHillCell(map, map.Index(x, y)))
         {

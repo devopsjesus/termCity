@@ -98,6 +98,9 @@ public sealed class RoadVectorLayer
 
     public IReadOnlyList<RoadPath> Paths => _paths;
 
+    public bool IsCurrent(CityGame game) =>
+        ReferenceEquals(game.Map, _map) && ReferenceEquals(game.Network, _network);
+
     /// <summary>Re-reads the roads if they changed since last time. Returns true when they did.</summary>
     public bool Sync(CityGame game)
     {

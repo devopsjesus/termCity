@@ -140,9 +140,9 @@ public class HouseYardLayoutTests
     public void ExistingWearInsideAGardenIsPreservedButNotRenderedOverIt()
     {
         var game = TestCity.Flat();
-        AddHouse(game, new(10, 10, 1, 1));
+        AddHouse(game, new(10, 10, 5, 5));
         var yard = Assert.Single(HouseYardLayout.Create(game.Map)).Value;
-        for (int x = 8; x <= 12; x++) game.Map.SetPathWear(x, 11, 6);
+        for (int x = 10; x <= 16; x++) game.Map.SetPathWear(x, yard.Cell.Y, 6);
         var restored = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
         Assert.True(restored.Map.IsHouseYardCell(restored.Map.Index(yard.Cell.X, yard.Cell.Y)));
         var paths = new FootpathSurfaceLayout(restored.Map, null);
@@ -212,7 +212,7 @@ public class HouseYardLayoutTests
     public void AdjacentHousesNeverShareAYardAndReloadPreservesItsAppearance()
     {
         var game = TestCity.Flat();
-        foreach (var area in new[] { new CellRect(10, 10, 1, 1), new CellRect(10, 12, 1, 1), new CellRect(11, 10, 1, 1) })
+        foreach (var area in new[] { new CellRect(10, 5, 5, 5), new CellRect(10, 11, 5, 5), new CellRect(16, 5, 5, 5) })
             AddHouse(game, area);
         game.Touch();
         var yards = HouseYardLayout.Create(game.Map);
@@ -309,7 +309,7 @@ public class HouseYardLayoutTests
     public void SavedBlockedYardStaysFixedEvenWhenAnotherNeighborIsFree()
     {
         var game = TestCity.Flat();
-        AddHouse(game, new(10, 10, 1, 1));
+        AddHouse(game, new(10, 10, 5, 5));
         var original = Assert.Single(HouseYardLayout.Create(game.Map)).Value;
         game.Map.SetZone(original.Cell.X, original.Cell.Y, ZoneType.None);
         var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
@@ -323,11 +323,13 @@ public class HouseYardLayoutTests
     public void UpgradingAndRotatingAHouseNeverReassignItsYard()
     {
         var game = TestCity.Flat();
-        AddHouse(game, new(10, 10, 1, 1));
+        AddHouse(game, new(10, 10, 5, 5));
         var original = Assert.Single(HouseYardLayout.Create(game.Map)).Value;
         game.Map.BuildingRotations[game.Map.Index(10, 10)] = 1;
         Assert.Equal(original, Assert.Single(HouseYardLayout.Create(game.Map)).Value);
-        game.Map.SetBuildingFootprint(game.Map.Content.Buildings.Get("Burgage House"), new(10, 10, 1, 2));
+        var expanded = new CellRect(10, 10, 5, 10);
+        foreach (var cell in expanded.Cells()) game.Map.SetZone(cell.X, cell.Y, ZoneType.Residential);
+        game.Map.SetBuildingFootprint(game.Map.Content.Buildings.Get("Burgage House"), expanded);
         Assert.Empty(HouseYardLayout.Create(game.Map));
         Assert.Equal(game.Map.Index(original.Cell.X, original.Cell.Y),
             Assert.Single(game.Map.HouseYardCells).Value);
@@ -341,7 +343,7 @@ public class HouseYardLayoutTests
     public void OldSavesAssignYardsOnceAndMalformedAssignmentsAreRejected()
     {
         var game = TestCity.Flat();
-        AddHouse(game, new(10, 10, 1, 1));
+        AddHouse(game, new(10, 10, 5, 5));
         var original = Assert.Single(HouseYardLayout.Create(game.Map)).Value;
         var json = System.Text.Json.Nodes.JsonNode.Parse(SaveGameStore.Serialize(game))!;
         json.AsObject().Remove("HouseYardCells");
@@ -365,16 +367,16 @@ public class HouseYardLayoutTests
     public void SaveRejectsYardsSharedByTwoHousesOrOwnedByANonHouse()
     {
         var game = TestCity.Flat();
-        AddHouse(game, new(10, 10, 1, 1));
-        AddHouse(game, new(10, 12, 1, 1));
+        AddHouse(game, new(10, 5, 5, 5));
+        AddHouse(game, new(10, 11, 5, 5));
         HouseYardLayout.Create(game.Map);
         var json = System.Text.Json.Nodes.JsonNode.Parse(SaveGameStore.Serialize(game))!;
-        string first = game.Map.Index(10, 10).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        string second = game.Map.Index(10, 12).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string first = game.Map.Index(10, 5).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string second = game.Map.Index(10, 11).ToString(System.Globalization.CultureInfo.InvariantCulture);
         json["HouseYardCells"] = new System.Text.Json.Nodes.JsonObject
         {
-            [first] = game.Map.Index(10, 11),
-            [second] = game.Map.Index(10, 11),
+            [first] = game.Map.Index(12, 10),
+            [second] = game.Map.Index(12, 10),
         };
         Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(json.ToJsonString()));
         json["HouseYardCells"] = new System.Text.Json.Nodes.JsonObject

@@ -114,16 +114,34 @@ public static class ZoneSurfaceLayout
     {
         var result = new List<Vector2>();
         var edge = b - a;
-        float Distance(Vector2 point) => edge.X * (point.Y - a.Y) - edge.Y * (point.X - a.X);
+        double Distance(Vector2 point) =>
+            (double)edge.X * ((double)point.Y - a.Y) - (double)edge.Y * ((double)point.X - a.X);
         var previous = polygon[^1];
-        float previousDistance = Distance(previous);
+        double previousDistance = Distance(previous);
         bool previousKept = inside ? previousDistance >= 0 : previousDistance <= 0;
         foreach (var current in polygon)
         {
-            float distance = Distance(current);
+            double distance = Distance(current);
             bool kept = inside ? distance >= 0 : distance <= 0;
             if (kept != previousKept)
-                Add(previous + (current - previous) * (previousDistance / (previousDistance - distance)));
+            {
+                double fraction = previousDistance / (previousDistance - distance);
+                var point = new Vector2((float)(previous.X + ((double)current.X - previous.X) * fraction),
+                    (float)(previous.Y + ((double)current.Y - previous.Y) * fraction));
+                if (!inside)
+                {
+                    // Keep float-rounded cut vertices outside the road through subsequent terrain clipping.
+                    bool moveX = Math.Abs((double)edge.Y) * Math.Abs((double)MathF.BitIncrement(point.X) - point.X) >=
+                        Math.Abs((double)edge.X) * Math.Abs((double)MathF.BitIncrement(point.Y) - point.Y);
+                    void StepOutside()
+                    {
+                        if (moveX) point.X = edge.Y > 0 ? MathF.BitIncrement(point.X) : MathF.BitDecrement(point.X);
+                        else point.Y = edge.X > 0 ? MathF.BitDecrement(point.Y) : MathF.BitIncrement(point.Y);
+                    }
+                    while (Distance(point) > 0) StepOutside();
+                }
+                Add(point);
+            }
             if (kept) Add(current);
             previous = current;
             previousDistance = distance;

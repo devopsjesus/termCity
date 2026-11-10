@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using TermCity.Core.Buildings;
 using TermCity.Core.Registry;
 using TermCity.Core.Rendering;
+using TermCity.Core.Session;
 using TermCity.Core.Simulation;
 using TermCity.Core.Terrain;
 using TermCity.Core.Util;
@@ -11,7 +12,7 @@ using TermCity.Core.World;
 
 namespace TermCity.Core.Persistence;
 
-public sealed record SavedView(int CameraX, int CameraY, int ZoomLevel)
+public sealed record SavedView(int CameraX, int CameraY, double ZoomLevel)
 {
     public bool CameraEdgePadding { get; init; }
 }
@@ -76,12 +77,16 @@ public static class SaveGameStore
             HighestMilestone = game.HighestMilestone,
             HighestPopulation = game.HighestPopulation,
             GuideDismissed = game.GuideDismissed,
+            SimulationStarted = game.SimulationStarted,
+            Settlement = SavedSettlement.Capture(game.Settlement),
             ZoneRemovals = new(map.ZoneRemovals),
             BuildingFootprints = map.BuildingFootprints.Values.ToList(),
             BuildingRotations = new(map.BuildingRotations),
             HouseYardCells = new(map.HouseYardCells),
             Paths = Pack(map.PathLayer),
             PathLinks = Pack(map.PathLinkLayer),
+            Footbridges = map.Footbridges.ToList(),
+            ElevationProfile = map.ElevationProfile == TerrainElevationProfile.Current ? null : map.ElevationProfile,
             Sea = Pack(EncodeFlags(map.SeaLayer)),
             Rivers = Pack(EncodeFlags(map.RiverLayer)),
             BuildingEstablishedDays = new(map.BuildingEstablishedDays),
@@ -110,6 +115,14 @@ public static class SaveGameStore
     public static CityGame Deserialize(string json, GameContent? content = null) =>
         Deserialize(json, out _, content);
 
+    /// <summary>Restores an in-session undo snapshot without treating it as a user-loaded saved game.</summary>
+    public static CityGame DeserializeSnapshot(string json, GameContent? content = null)
+    {
+        var game = Deserialize(json, content);
+        game.LoadedFromSave = false;
+        return game;
+    }
+
     public static CityGame Deserialize(string json, out SavedView? view, GameContent? content = null)
     {
         SaveData data;
@@ -130,10 +143,15 @@ public static class SaveGameStore
         if (data.Compression != Deflate)
             throw new InvalidDataException($"Unsupported save compression '{data.Compression}'.");
 
-        content ??= new GameContent();
         var config = data.Config ?? throw new InvalidDataException("Save file has no configuration.");
         ValidateState(data, config);
+        content = GameContent.ForScenario(config.Scenario, content);
         var map = new GameMap(config.MapWidth, config.MapHeight, content);
+        if (data.ElevationProfile is { } elevation)
+        {
+            if (!Enum.IsDefined(elevation)) throw new InvalidDataException("Save file has an invalid terrain elevation profile.");
+            map.SetElevationProfile(elevation);
+        }
         int count = map.Width * map.Height;
 
         DecodeLayer(data.Terrain, map.TerrainLayer, content.Terrains, "terrain", allowNone: false);
@@ -185,6 +203,18 @@ public static class SaveGameStore
             }
         }
         map.RebuildIndexes();
+        if (data.Footbridges is { } footbridges)
+        {
+            if (footbridges.Count > count / 2) throw new InvalidDataException("Too many settlement footbridges.");
+            var bridgeCells = new HashSet<Pos>();
+            foreach (var bridge in footbridges)
+            {
+                if (bridge is null || !SettlementFootbridges.Valid(map, bridge, requireEnclosure: false) ||
+                    bridge.Cells().Any(p => !bridgeCells.Add(p)))
+                    throw new InvalidDataException("Invalid settlement footbridge geometry or construction progress.");
+                map.FootbridgeList.Add(bridge);
+            }
+        }
         if (data.BuildingRotations.Values.Any(rotation => rotation is < 0 or > 3))
             throw new InvalidDataException("Invalid building rotation.");
         var occupied = new HashSet<int>();
@@ -197,8 +227,10 @@ public static class SaveGameStore
                     area != building.FootprintAt(area.X, area.Y, data.BuildingRotations.GetValueOrDefault(map.Index(area.X, area.Y))) &&
                     !(area.Width == 1 && area.Height == 1 && building.Width == 2 && building.Height == 1 &&
                         building.Name is "Watch House" or "Apothecary" or "Chapel" or "Tavern")) ||
-                (!building.PlayerPlaceable && (area.Width > 5 ||
-                    area.Height > (building.Zone == ZoneType.Residential ? 4 : 3))))
+                (!building.PlayerPlaceable && (area.Width < building.Width || area.Height < building.Height ||
+                    area.Width > Math.Max(building.Width, 5 * building.ModelScale) ||
+                    area.Height > Math.Max(building.Height,
+                        (building.Zone == ZoneType.Residential ? 4 : 3) * building.ModelScale))))
                 throw new InvalidDataException("Invalid building footprint.");
             if (building.DebugOnly && !CityGame.DebugToolsAvailable)
                 throw new InvalidDataException($"Save contains debug-only building '{building.Name}'; load it with a Debug build.");
@@ -270,6 +302,8 @@ public static class SaveGameStore
             HighestMilestone = data.HighestMilestone,
             HighestPopulation = Math.Max(data.HighestPopulation, data.HighestMilestone),
             GuideDismissed = data.GuideDismissed,
+            LoadedFromSave = true,
+            SimulationStarted = data.SimulationStarted,
         };
 
         game.GrowthState = data.Growth;
@@ -286,8 +320,15 @@ public static class SaveGameStore
         game.Hunger = data.Hunger;
         game.HighestRank = data.HighestRank;
         game.TributeArrears = data.TributeArrears;
+        if (data.Settlement is not null)
+        {
+            game.Settlement = data.Settlement.Restore(game);
+            game.ClearSettlementReservations();
+        }
+        if (map.Footbridges.Count > 0 && game.Settlement is null)
+            throw new InvalidDataException("Settlement footbridges require a settlement.");
         game.Touch();
-        if (data.View is { } savedView && (savedView.ZoomLevel is < -2 or > 1 ||
+        if (data.View is { } savedView && (!GameSession.IsValidZoom(savedView.ZoomLevel) ||
             (!savedView.CameraEdgePadding && (savedView.CameraX < 0 || savedView.CameraY < 0)) ||
             savedView.CameraX >= map.Width || savedView.CameraY >= map.Height))
             throw new InvalidDataException("Saved camera position or zoom is invalid.");
@@ -313,6 +354,10 @@ public static class SaveGameStore
             data.BuildingFootprints is null || data.ZoneRemovals is null || data.Funding is null ||
             data.BuildingEstablishedDays is null || data.BuildingRotations is null || data.HouseYardCells is null)
             throw new InvalidDataException("Save file has missing city state.");
+        if (!data.SimulationStarted && (data.Day != 0 || data.DayProgressSeconds != 0 || data.Growth.Planned ||
+            data.Growth.Homes != 0 || data.Growth.Shops != 0 || data.Growth.Factories != 0 ||
+            data.Growth.WeekHomes != 0 || data.Growth.WeekShops != 0 || data.Growth.WeekFactories != 0))
+            throw new InvalidDataException("An unstarted city cannot have elapsed time or planned growth.");
         if (!InRange(data.Taxes.Residential, 0, 0.3) || !InRange(data.Taxes.Commercial, 0, 0.3) ||
             !InRange(data.Taxes.Industrial, 0, 0.3) || data.Funding.Length != ServiceKinds.Count ||
             data.Funding.Any(level => !InRange(level, 0, 1)) || data.Loan < 0 || data.TributeArrears < 0 ||
@@ -510,6 +555,8 @@ public static class SaveGameStore
         public int HighestPopulation { get; set; }
 
         public required bool GuideDismissed { get; set; }
+        public bool SimulationStarted { get; set; } = true;
+        public SavedSettlement? Settlement { get; set; }
 
         public required Dictionary<int, ZoneRemoval> ZoneRemovals { get; set; }
         public required List<CellRect> BuildingFootprints { get; set; }
@@ -517,6 +564,9 @@ public static class SaveGameStore
         public Dictionary<int, int> HouseYardCells { get; set; } = [];
         public string? Paths { get; set; }
         public string? PathLinks { get; set; }
+        public List<SettlementFootbridge>? Footbridges { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public TerrainElevationProfile? ElevationProfile { get; set; }
         public string? Sea { get; set; }
         public string? Rivers { get; set; }
         public Dictionary<int, double> BuildingEstablishedDays { get; set; } = [];

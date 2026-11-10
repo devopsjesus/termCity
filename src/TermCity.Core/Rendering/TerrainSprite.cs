@@ -14,6 +14,9 @@ public sealed record TerrainSprite(int Width, int Height, int Lift, byte[] Pixel
     public const float HillBaseHeight = 0.3f;
     public const float HillStepHeight = 0.35f;
     public const float MaximumHillHeight = HillBaseHeight + 3 * HillStepHeight;
+    public static float HillBaseFor(GameMap map) => HillBaseHeight * (int)map.ElevationProfile;
+    public static float HillStepFor(GameMap map) => HillStepHeight * (int)map.ElevationProfile;
+    public static float MaximumHillFor(GameMap map) => MaximumHillHeight * (int)map.ElevationProfile;
     public bool AnimatedWater { get; init; }
     public static WaterFlowField Flow(GameMap map) => map.WaterFlow ??= new WaterFlowField(map);
 
@@ -32,12 +35,23 @@ public sealed record TerrainSprite(int Width, int Height, int Lift, byte[] Pixel
         return count > 0 ? sum / count : -0.16f;
     }
 
+    public static TerrainElevationField CaptureElevations(GameMap map)
+    {
+        if (map.TerrainSamples is { } cached && map.TerrainSamplesVersion == map.TerrainVersion) return cached;
+        var values = new float[map.Width * map.Height];
+        for (int y = 0; y < map.Height; y++)
+            for (int x = 0; x < map.Width; x++)
+                values[map.Index(x, y)] = Elevation(map, x, y);
+        map.TerrainSamplesVersion = map.TerrainVersion;
+        return map.TerrainSamples = new(map.Width, map.Height, values);
+    }
+
     public static float Elevation(GameMap map, int x, int y)
     {
         var terrain = map.TerrainAt(x, y);
         if (!terrain.Buildable) return -0.04f;
         if (terrain.BuildCostModifier <= 1) return 0;
-        float level = HillBaseHeight + (HillLevel(map, x, y) - 1) * HillStepHeight;
+        float level = HillBaseFor(map) + (HillLevel(map, x, y) - 1) * HillStepFor(map);
         map.CoastalHillCaps ??= new byte[map.Width * map.Height];
         int index = map.Index(x, y);
         if (map.CoastalHillCaps[index] != 0) return map.CoastalHillCaps[index] == 2 ? 0 : level;

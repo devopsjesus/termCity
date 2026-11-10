@@ -8,7 +8,6 @@ namespace TermCity.Tests;
 public class MilestoneDialogTests
 {
     [Theory]
-    [InlineData(100)]
     [InlineData(10_000)]
     public void MilestonesWithoutUnlocksHaveOnlyTheSummary(int population)
     {
@@ -22,6 +21,15 @@ public class MilestoneDialogTests
         Assert.Contains(summary.Rows, row => row[0].Text == "Gold grant");
         Assert.DoesNotContain("UNLOCKED BUILDINGS", page.Text);
         Assert.DoesNotContain("All earlier buildings remain available.", page.Text);
+    }
+
+    [Fact]
+    public void HamletUnlocksTheTwoRecruitingGarrisons()
+    {
+        var game = TestCity.Flat();
+        var page = MilestoneReport.Build(game, 0);
+        Assert.Contains(page.Groups, group => group.Title == "ARCHER BARRACKS");
+        Assert.Contains(page.Groups, group => group.Title == "GUARD POST");
     }
 
     [Fact]

@@ -38,8 +38,8 @@ public class PersistenceTests
         game.Map.SetTerrain(5, 5, content.Terrains.Get("Hill"));
         game.Map.SetTerrain(6, 5, content.Terrains.Get("Water"));
         game.Map.SetFeature(7, 5, content.Features.Get("Rock"));
-        game.Designate(new CellRect(60, 21, 12, 1), ZoneType.Residential);
-        game.Designate(new CellRect(60, 19, 3, 1), ZoneType.Commercial);
+        game.Designate(new CellRect(60, 21, 60, 5), ZoneType.Residential);
+        game.Designate(new CellRect(60, 10, 15, 5), ZoneType.Commercial);
         game.Speed = GameSpeed.Fast;
         game.Taxes.Industrial = 0.07;
         game.Update(0.2);
@@ -65,7 +65,7 @@ public class PersistenceTests
     public void LoadedGameContinuesIdenticallyToTheOriginal()
     {
         var game = TestCity.Flat(seed: 5);
-        game.Designate(new CellRect(0, 21, 30, 1), ZoneType.Residential);
+        game.Designate(new CellRect(0, 21, 30, 5), ZoneType.Residential);
         TestCity.Advance(game, 3);
 
         var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
@@ -81,7 +81,7 @@ public class PersistenceTests
     public void MidweekSavePreservesTheWeeklyReport()
     {
         var game = TestCity.Flat(seed: 5);
-        Assert.True(game.Designate(new CellRect(0, 21, 30, 1), ZoneType.Residential).Success);
+        Assert.True(game.Designate(new CellRect(0, 21, 30, 5), ZoneType.Residential).Success);
         for (int day = 0; day < 3; day++) game.AdvanceDay();
         Assert.True(game.Stats.Population > 0);
 
@@ -99,13 +99,11 @@ public class PersistenceTests
         var game = TestCity.Flat(seed: 5, config: new GameConfig { StartingMoney = 1_000_000 }, rules: CityRules.Full);
         foreach (int x in new[] { 50, 40, 30, 20, 10 })
         {
-            game.Map.SetZone(x, 21, ZoneType.Residential);
-            game.Map.SetBuilding(x, 21, game.Map.Content.Buildings.ForZone(ZoneType.Residential));
-            game.Map.SetHousehold(x, 21, new Household(1, 0, 0));
+            TestCity.Stamp(game, "Cottage", new(x, 21), new(1, 0, 0));
         }
         game.Touch();
-        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Woodlot"), new CellRect(80, 18, 1, 1)).Success);
-        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Town Well"), new CellRect(85, 18, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Woodlot"), new CellRect(80, 5, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Town Well"), new CellRect(92, 5, 1, 1)).Success);
         game.Map.BuildingEstablishedDays.Clear();
         game.Touch();
         game.GrowthState = new(true, 7, 0, 0, 0, 0, 0);

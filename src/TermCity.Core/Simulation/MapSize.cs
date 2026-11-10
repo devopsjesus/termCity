@@ -9,19 +9,22 @@ public readonly record struct MapSize(int Width, int Height)
     public const int MinWidth = 80;
     public const int MinHeight = 24;
     public const int MaxWidth = 640;
-    public const int MaxHeight = 384;
+    public const int MaxHeight = 640;
+    public const int ScenarioWidth = 640;
+    public const int ScenarioHeight = 384;
 
     /// <summary>Random map sizes and large, prepopulated regional city scenarios.</summary>
     public static readonly IReadOnlyDictionary<string, MapSize> Presets = new Dictionary<string, MapSize>(StringComparer.OrdinalIgnoreCase)
     {
-        ["small"] = new(160, 96),
-        ["medium"] = new(320, 192),
-        ["large"] = new(640, 384),
-        ["SF"] = new(640, 384) { Scenario = CityScenario.SanFrancisco },
-        ["LA"] = new(640, 384) { Scenario = CityScenario.LosAngeles },
-        ["SD"] = new(640, 384) { Scenario = CityScenario.SanDiego },
-        ["CHI"] = new(640, 384) { Scenario = CityScenario.Chicago },
-        ["STL"] = new(640, 384) { Scenario = CityScenario.StLouis },
+        ["small"] = new(320, 320),
+        ["medium"] = new(480, 480),
+        ["large"] = new(640, 640),
+        ["SF"] = new(ScenarioWidth, ScenarioHeight) { Scenario = CityScenario.SanFrancisco },
+        ["LA"] = new(ScenarioWidth, ScenarioHeight) { Scenario = CityScenario.LosAngeles },
+        ["SD"] = new(ScenarioWidth, ScenarioHeight) { Scenario = CityScenario.SanDiego },
+        ["CHI"] = new(ScenarioWidth, ScenarioHeight) { Scenario = CityScenario.Chicago },
+        ["STL"] = new(ScenarioWidth, ScenarioHeight) { Scenario = CityScenario.StLouis },
+        ["TOP"] = new(640, 640) { Scenario = CityScenario.Top },
     };
 
     public static string Describe() =>

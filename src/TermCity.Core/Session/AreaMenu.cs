@@ -26,6 +26,7 @@ public sealed partial class GameSession
             new("Demolish", () => { ClosePrompt(); PreviewDemolish(); }, ["Clear the area, free of charge"]),
             new("Deselect", () => { ClosePrompt(); ClearSelection(); }, ["Drop the selection"]),
             new("City menu", ShowSessionMenu, ["Save, load, budget, guide"]),
+            new("Garrison", ShowGarrisonMenu, ["Found a bailey, mount weapons, inspect, repair or upgrade walls"]),
             new("Back", CancelPrompt, ["Return to the previous menu"]),
         ], columns: AreaMenuColumns);
     }

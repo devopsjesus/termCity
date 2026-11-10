@@ -1,0 +1,1869 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orc D - warrior march and explosive attacks</title>
+  <style>
+    :root { color-scheme: dark; font-family: Menlo, Consolas, monospace; background: #000; color: #ddddcc; }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; padding: 24px; }
+    h1 { font-size: 23px; color: #d3bd82; margin: 0 0 12px; }
+    h2 { font-size: 16px; color: #d3bd82; margin: 0 0 8px; }
+    p { font-size: 12px; line-height: 1.6; margin: 8px 0; }
+    .muted { color: #9da799; }
+    .frame { position: relative; border: 1px solid white; background: #000; padding: 12px; }
+    .frame::before { content: ""; position: absolute; inset: -5px; border: 1px solid white; pointer-events: none; }
+    button { font: inherit; font-size: 12px; color: #ddddcc; cursor: pointer; border-radius: 0; }
+    button:hover, button[aria-pressed="true"] { color: #d3bd82; }
+    button:disabled { opacity: .45; cursor: default; }
+    button:focus-visible, input:focus-visible { outline: 2px solid #d3bd82; outline-offset: 7px; }
+    .scrubber { margin: 24px 4px; font-size: 12px; }
+    .scrubber-header { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin-top: 12px; }
+    input[type="range"] { appearance: none; display: block; width: 100%; height: 24px; margin: 0; background: #000; cursor: ew-resize; }
+    input[type="range"]::-webkit-slider-runnable-track { height: 6px; border: 1px solid #fff; background: #000; }
+    input[type="range"]::-webkit-slider-thumb { appearance: none; width: 12px; height: 22px; margin-top: -9px; border: 1px solid #fff; border-radius: 0; background: #d3bd82; }
+    input[type="range"]::-moz-range-track { height: 4px; border: 1px solid #fff; background: #000; }
+    input[type="range"]::-moz-range-thumb { width: 10px; height: 20px; border: 1px solid #fff; border-radius: 0; background: #d3bd82; }
+    input[type="range"]:disabled { opacity: .45; cursor: default; }
+    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin: 24px 4px; font-size: 12px; }
+    .phase { color: #d3bd82; min-width: 180px; }
+    .grid { display: grid; grid-template-columns: minmax(0, 1fr); max-width: 760px; gap: 24px; margin: 4px auto; }
+    .grid.reviewing { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 1200px; }
+    .reference-image { display: block; width: 100%; aspect-ratio: 1; object-fit: contain; background: #000; }
+    .reference-image[hidden] { display: none; }
+    .grid .muted { min-height: 40px; }
+    canvas { display: block; width: 100%; aspect-ratio: 1; background: #000; touch-action: none; cursor: grab; }
+    canvas:active { cursor: grabbing; }
+    .caption { border-top: 1px solid #42483e; padding-top: 8px; min-height: 64px; }
+    footer { margin-top: 24px; }
+    #error { color: #e6a18b; white-space: pre-wrap; }
+    @media (max-width: 800px) { .grid, .grid.reviewing { grid-template-columns: 1fr; } canvas { max-height: 460px; } }
+  </style>
+</head>
+<body>
+  <h1>ORC D / WARRIOR MARCH + EXPLOSIVE ATTACKS</h1>
+  <p>Heavy forward march, planted fighting stance, explosive weapon strike, then a cause-specific death.</p>
+  <p class="muted">Original voxel geometry with depth testing and articulated 3D joints. Separate concept study; no game code or combat rules changed.</p>
+  <main class="grid">
+    <section class="frame" id="axe-study" hidden>
+      <h2>01 / AXE</h2>
+      <p class="muted">Patched leather / scars / plain armor</p>
+      <canvas id="orc-1" aria-label="Three-dimensional axe orc walking forward, chopping and dying"></canvas>
+      <p class="caption" hidden>Loaded overhead chop, explosive cutting arc and committed follow-through from a braced stance.</p>
+    </section>
+    <section class="frame" id="hammer-study">
+      <h2>02 / HAMMER</h2>
+      <p class="muted">Articulated shoulders / fitted skull pauldron</p>
+      <canvas id="orc-2" aria-label="Left hand starts down and back; right foot steps into the first hammer swing; left foot catches up to a parallel stance as the left hand grabs above the head for the two-handed smash"></canvas>
+      <p class="caption" hidden><span class="phase" id="hammer-action">FOREHAND / ORC LEFT</span><br>Keep both grips through the ground smash and slow lift. Release the left hand as the torso straightens, leaving the right arm ready for the next swing. Attack-only playback is the default.</p>
+    </section>
+    <section class="frame" id="spear-study" hidden>
+      <h2>03 / SPEAR</h2>
+      <p class="muted">Same proportions / mounted skull knee guards</p>
+      <canvas id="orc-3" aria-label="Three-dimensional spear orc walking forward, thrusting and dying"></canvas>
+      <p class="caption" hidden>Right hand at the rear grip, left hand forward; torso rotation drives the burst thrust over planted feet.</p>
+    </section>
+    <section class="frame" id="reference-study" hidden>
+      <h2>VIDEO / KEY-POSE REFERENCE</h2>
+      <p class="muted" id="reference-time"></p>
+      <img class="reference-image" id="reference-image" alt="User's swing reference pose">
+      <p class="muted">Front and side takes are matched by action, not synchronized timestamps. These approved key poses are now connected in the animation.</p>
+    </section>
+  </main>
+  <div class="frame scrubber">
+    <input id="frame-scrubber" type="range" min="0" max="112" step="1" value="0" aria-describedby="scrubber-help">
+    <div class="scrubber-header">
+      <label id="scrubber-label" for="frame-scrubber">ANIMATION FRAME</label>
+      <output id="frame-number" for="frame-scrubber"></output>
+    </div>
+    <p class="muted" id="scrubber-help">Drag or use arrow keys to inspect frames. Scrubbing pauses; Play resumes from the selected frame.</p>
+    <div class="controls" role="group" aria-label="Study mode">
+      <button class="frame" id="review-poses" aria-pressed="false" type="button">Key-pose review</button>
+      <button class="frame" id="review-animation" aria-pressed="true" type="button">Current animation</button>
+    </div>
+    <div class="controls" id="pose-controls" role="group" aria-label="Reference pose navigation" hidden>
+      <button class="frame" id="previous-pose" type="button">Previous pose</button>
+      <button class="frame" id="next-pose" type="button">Next pose</button>
+      <span id="pose-name" role="status"></span>
+      <button class="frame" id="reference-front" aria-pressed="true" type="button">Front reference</button>
+      <button class="frame" id="reference-side" aria-pressed="false" type="button">Side reference</button>
+    </div>
+  </div>
+  <div class="controls">
+    <button class="frame" id="toggle" type="button">Pause</button>
+    <button class="frame" id="restart" type="button">Restart sequence</button>
+    <span class="phase" id="phase" role="status">ATTACKING</span>
+    <span class="muted" id="elapsed"></span>
+  </div>
+  <div class="controls" role="group" aria-label="Orc weapon">
+    <span>ORC:</span>
+    <button class="frame" data-weapon="axe" aria-controls="axe-study" aria-pressed="false" type="button">Axe</button>
+    <button class="frame" data-weapon="hammer" aria-controls="hammer-study" aria-pressed="true" type="button">Hammer</button>
+    <button class="frame" data-weapon="spear" aria-controls="spear-study" aria-pressed="false" type="button">Spear</button>
+  </div>
+  <div class="controls" role="group" aria-label="Enabled animation phases">
+    <span>ANIMATE:</span>
+    <button class="frame" data-animation-phase="walking" aria-pressed="false" type="button">Walking</button>
+    <button class="frame" data-animation-phase="attacking" aria-pressed="true" type="button">Attacking</button>
+    <button class="frame" data-animation-phase="dying" aria-pressed="false" type="button">Dying</button>
+    <span class="muted">Enable any combination. Disabled phases are skipped; all off holds a pose.</span>
+  </div>
+  <div class="controls" aria-label="Camera controls">
+    <button class="frame" id="left" type="button">Rotate left</button>
+    <button class="frame" id="right" type="button">Rotate right</button>
+    <button class="frame" id="reset-camera" type="button">Reset view</button>
+    <span class="muted">Drag to orbit. Wheel to zoom. Switching orcs preserves the camera and animation position.</span>
+  </div>
+  <div class="controls" aria-label="Incoming killing blow">
+    <span>KILLING BLOW:</span>
+    <button class="frame" data-cause="auto" aria-pressed="true" type="button">Cycle causes</button>
+    <button class="frame" data-cause="arrow" aria-pressed="false" type="button">Arrow</button>
+    <button class="frame" data-cause="blade" aria-pressed="false" type="button">Blade</button>
+    <button class="frame" data-cause="crushing" aria-pressed="false" type="button">Crushing</button>
+    <span id="cause-label">ARROW</span>
+  </div>
+  <p id="error" role="alert"></p>
+  <footer>
+    <p class="muted">The first two swings use the six approved poses. The right hand keeps moving through the low gather while the left catches the handle, then slides down to sit just above the right hand. Both elbows open outward during the overhead lift; the right wrist follows its forearm as the grip rolls around the handle. Both hands bring the upright hammer directly above the head, slowing into a slightly backward-leaning load with the striking face forward. Only then does the torso initiate the downswing, with the arms following. Slow two-handed recovery completes the loop. Key-pose review retains the video comparisons. This is authored pose adaptation, not motion capture or a physics simulation.</p>
+    <p>All orcs march along the ground arrow. Camera rotation does not redirect their travel or attacks; torso rotation is part of the spear delivery.</p>
+    <p class="muted">Arrow: drop weapon, clutch with both hands, then release into a loose collapse. Blade: stagger and side fall. Crushing: knees give way and the torso folds. Gravity-led jointed arms settle with the body; this is procedural motion, not a physics simulation. No gore.</p>
+    <p class="muted">Armor stays attached; weapons are released during death. Reduced-motion preference starts paused; hidden tabs suspend playback.</p>
+    <p class="muted">This is a WebGL concept, not a Godot gameplay capture. Production picking, collision, performance and combat timing remain unverified.</p>
+    <noscript><p>JavaScript and WebGL are required for this 3D study.</p></noscript>
+  </footer>
+  <script>
+    "use strict";
+    const I = () => [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    function mul(a,b) {
+      const m = Array(16).fill(0);
+      for (let c=0;c<4;c++) for (let r=0;r<4;r++) for (let k=0;k<4;k++) m[c*4+r]+=a[k*4+r]*b[c*4+k];
+      return m;
+    }
+    function T(x,y,z) { const m=I();m[12]=x;m[13]=y;m[14]=z;return m; }
+    function S(x,y,z) { const m=I();m[0]=x;m[5]=y;m[10]=z;return m; }
+    function RX(a) { const c=Math.cos(a),s=Math.sin(a);return [1,0,0,0, 0,c,s,0, 0,-s,c,0, 0,0,0,1]; }
+    function RY(a) { const c=Math.cos(a),s=Math.sin(a);return [c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]; }
+    function RZ(a) { const c=Math.cos(a),s=Math.sin(a);return [c,s,0,0, -s,c,0,0, 0,0,1,0, 0,0,0,1]; }
+    function inverseRigid(m) {
+      const r=[m[0],m[4],m[8],0,m[1],m[5],m[9],0,m[2],m[6],m[10],0,0,0,0,1];
+      return mul(r,T(-m[12],-m[13],-m[14]));
+    }
+    const chain = (...matrices) => matrices.reduce(mul,I());
+    const point = (m,p) => [m[0]*p[0]+m[4]*p[1]+m[8]*p[2]+m[12],m[1]*p[0]+m[5]*p[1]+m[9]*p[2]+m[13],m[2]*p[0]+m[6]*p[1]+m[10]*p[2]+m[14]];
+    const add=(a,b)=>a.map((v,i)=>v+b[i]), sub=(a,b)=>a.map((v,i)=>v-b[i]), times=(a,s)=>a.map(v=>v*s);
+    const dot=(a,b)=>a.reduce((s,v,i)=>s+v*b[i],0);
+    const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+    function norm(a) { const n=Math.hypot(...a);if(n<1e-9)throw new Error("Degenerate 3D direction");return times(a,1/n); }
+    const clamp=v=>Math.max(0,Math.min(1,v));
+    const smooth=v=>{const t=clamp(v);return t*t*(3-2*t);};
+    const mix=(a,b,t)=>a+(b-a)*t;
+    const mixV=(a,b,t)=>a.map((v,i)=>mix(v,b[i],t));
+    const degrees=Math.PI/180;
+    const C={skin:0x7c794d,skinLight:0x969262,skinDark:0x585734,pants:0x343733,
+      leather:0x745337,patch:0x98774d,darkLeather:0x3e3024,sole:0x292b26,scuff:0xb09364,
+      iron:0x586b71,ironLight:0x89938a,bone:0xb5a783,boneLight:0xd4c7a2,socket:0x403b2e,wood:0x79583b};
+    const corners=[[-.5,-.5,-.5],[.5,-.5,-.5],[-.5,.5,-.5],[.5,.5,-.5],[-.5,-.5,.5],[.5,-.5,.5],[-.5,.5,.5],[.5,.5,.5]];
+    const faces=[[4,5,7,6],[1,0,2,3],[5,1,3,7],[0,4,6,2],[6,7,3,2],[0,1,5,4]];
+    const light=norm([-.4,.85,.7]);
+    const colorCache=new Map();
+    function rgb(color) {
+      if(!colorCache.has(color))colorCache.set(color,[(color>>16&255)/255,(color>>8&255)/255,(color&255)/255]);
+      return colorCache.get(color);
+    }
+    function box(parts,m,c,size,color,tag="") {
+      parts.push({m:chain(m,T(...c),S(...size)),color,tag});
+    }
+    function minY(parts) {
+      let minimum=Infinity;
+      for(const part of parts)for(const p of corners)minimum=Math.min(minimum,point(part.m,p)[1]);
+      return minimum;
+    }
+    function transformParts(parts,m) { return parts.map(part=>({...part,m:mul(m,part.m)})); }
+    function segment(a,b) {
+      const y=norm(sub(b,a));
+      const helper=Math.abs(y[2])>.94?[1,0,0]:[0,0,1];
+      const x=norm(cross(y,helper)),z=norm(cross(x,y));
+      return [x[0],x[1],x[2],0,y[0],y[1],y[2],0,z[0],z[1],z[2],0,...a,1];
+    }
+    function armSegment(a,b) {
+      const direction=norm(sub(b,a)),down=[0,-1,0];
+      const q=[...cross(down,direction),1+dot(down,direction)],length=Math.hypot(...q);
+      if(length<1e-8)throw new Error("Arm orientation crosses its inverted reference");
+      return chain(T(...a),Q(times(q,1/length)),RX(Math.PI));
+    }
+    function relaxedWristRotation(arm) {
+      return mul(Q(quat(armSegment(arm.elbow,arm.hand))),RX(-Math.PI/2));
+    }
+    function solveArm(side,hand,preferred=[side*.85,-.10,1.0],shoulderZ=.10) {
+      return solveJointArm([side*.76,1.60,shoulderZ],hand,preferred,.52,.50);
+    }
+    function solveJointArm(shoulder,hand,preferred,upper,lower) {
+      const delta=sub(hand,shoulder),distance=Math.hypot(...delta);
+      if(distance>=upper+lower||distance<=Math.abs(upper-lower))throw new Error("Unreachable 3D hand target: "+distance);
+      const direction=norm(delta),along=(upper*upper-lower*lower+distance*distance)/(2*distance);
+      const bend=norm(sub(preferred,times(direction,dot(preferred,direction))));
+      const elbow=add(add(shoulder,times(direction,along)),times(bend,Math.sqrt(Math.max(0,upper*upper-along*along))));
+      return {shoulder,elbow,hand,upper:segment(shoulder,elbow),forearm:segment(elbow,hand)};
+    }
+    const hammerUpperArm=.56,hammerForearm=.56;
+    const hammerReviewPoses=[
+      {name:"1 / RAISED LOAD",front:2.20,side:13.58,time:.60,body:[-.08,.10,0],
+        upper:[.65,-.05,.30],lower:[-.10,.94,-.10],shaft:point(RY(50*Math.PI/180),[.90,.25,-.35]),
+        left:[-.80,1.03,-.10],shoulderZ:.10},
+      {name:"2 / LOW DIAGONAL FOLLOW-THROUGH",front:2.86,side:14.31,time:1.10,body:[.42,-.65,.06],
+        upper:[.20,-.80,.55],lower:[-.85,-.35,.35],shaft:[-.70,.35,.60],
+        left:[-.85,1.05,-.30],shoulderZ:.12},
+      {name:"3 / CARRY LEFT / BEGIN ROLL",front:3.30,side:14.63,time:1.32,body:[.18,-.90,.04],
+        upper:[-.20,-.40,.90],lower:[-.90,.10,.40],shaft:[-.90,0,-.45],
+        left:[-.85,1.03,-.65],shoulderZ:.10},
+      {name:"4 / LOADED ACROSS THE CHEST",front:4.28,side:15.03,time:1.58,body:[.10,-.80,0],
+        upper:[.10,-.15,.98],lower:[-.70,.10,.70],shaft:[-.93,.05,-.37],
+        left:[-.85,1.03,-.65],shoulderZ:.15},
+      {name:"5 / UPPER ARM STARTS REVERSAL",front:4.72,side:15.27,time:1.78,body:[.10,-.30,0],
+        upper:[.80,-.15,.60],lower:[-.15,.05,.98],shaft:[-.98,.05,.15],
+        left:[-.90,1.05,-.30],shoulderZ:.18},
+      {name:"6 / EXTENDED RIGHTWARD BACKHAND",front:5.05,side:15.60,time:2.05,body:[.08,.60,0],
+        upper:[.95,-.05,.30],lower:[.98,-.08,.15],shaft:[0,.10,1],
+        left:[-.90,1.03,-.20],shoulderZ:.12}
+    ];
+    function hammerReviewArm(review) {
+      const girdle=hammerShoulder(1,[.76,1.60,review.shoulderZ]);
+      const elbow=add(girdle.shoulder,times(norm(review.upper),hammerUpperArm));
+      const forward=norm(review.lower),hand=add(elbow,times(forward,hammerForearm));
+      const shaft=norm(review.shaft),face=norm(sub(forward,times(shaft,dot(forward,shaft)))),x=cross(shaft,face);
+      const rotation=[...x,0,...shaft,0,...face,0,0,0,0,1];
+      const arm={shoulder:girdle.shoulder,elbow,hand,upper:segment(girdle.shoulder,elbow),
+        forearm:segment(elbow,hand),girdle};
+      return {arm,rotation,windup:0};
+    }
+    function hammerShoulder(side,requested) {
+      // Convert reach into clavicle rotation rather than translating the arm's socket away from the chest.
+      const anchor=[side*.48,1.61,.05],length=.44;
+      const yaw=Math.atan2(requested[2]-anchor[2],length);
+      const rise=Math.atan2(requested[1]-anchor[1]+.06*Math.sin(yaw),length);
+      const shoulder=add(anchor,[side*length*Math.cos(yaw)*Math.cos(rise),
+        length*Math.sin(rise),length*Math.sin(yaw)*Math.cos(rise)]);
+      return {anchor,shoulder,length,rotation:chain(RY(-side*yaw),RZ(side*rise))};
+    }
+    function articulateHammerArm(arm,side,requested=arm.shoulder,preferred=sub(arm.elbow,arm.shoulder)) {
+      if(arm.girdle)return arm;
+      const girdle=hammerShoulder(side,requested);
+      return {...solveJointArm(girdle.shoulder,arm.hand,preferred,hammerUpperArm,hammerForearm),girdle};
+    }
+    function legAngles(y,z) {
+      const a=.38,b=.37,d=Math.hypot(y,z);
+      if(d>=a+b||d<=Math.abs(a-b))throw new Error("Unreachable 3D foot target: "+d);
+      const direction=Math.atan2(z,-y);
+      const u=Math.acos((a*a+d*d-b*b)/(2*a*d)),v=Math.acos((b*b+d*d-a*a)/(2*b*d));
+      return [-direction-u,u+v];
+    }
+    function skull(parts,m,variant=0,tag="skull") {
+      const start=parts.length;
+      box(parts,m,[0,.09,0],[.29,.10,.15],C.bone);
+      box(parts,m,[-.10,-.005,0],[.09,.12,.15],C.bone);
+      box(parts,m,[.105,.005,0],[.07,.10,.15],C.bone);
+      box(parts,m,[0,-.005,.01],[.05,.10,.16],C.bone);
+      box(parts,m,[-.01,-.09,.015],[.18,.065,.15],C.bone);
+      box(parts,m,[-.075,.015,.083],[.075,.065,.02],C.socket);
+      box(parts,m,[.072,.026,.083],[.065,.055,.02],C.socket);
+      box(parts,m,[0,-.057,.095],[.025,.035,.02],C.socket);
+      box(parts,m,[-.07,-.135,.035],[.045,.05,.10],C.bone);
+      if(variant!==1)box(parts,m,[.005,-.14,.03],[.035,.04,.10],C.boneLight);
+      box(parts,m,[.065,-.127,.025],[.025,.025,.10],C.bone);
+      box(parts,m,[variant? .09:-.08,.152,-.015],[.08,.026,.12],C.boneLight);
+      for(let i=start;i<parts.length;i++)parts[i].tag=tag;
+    }
+    function boot(parts,m) {
+      box(parts,m,[0,.02,0],[.28,.25,.29],0x634b36,"boot");
+      box(parts,m,[0,-.065,.07],[.32,.13,.40],0x594432,"boot");
+      box(parts,m,[0,-.13,.07],[.33,.035,.42],C.sole,"boot");
+      for(const y of [-.01,.10])box(parts,m,[0,y,0],[.295,.035,.31],0x8b7352,"boot");
+      box(parts,m,[.095,.10,.165],[.045,.055,.025],0xa19879,"boot");
+      box(parts,m,[-.06,-.055,.278],[.12,.04,.016],0x957b57,"boot");
+      box(parts,m,[0,.015,-.152],[.04,.12,.018],0x957b57,"boot");
+    }
+    function sectionOutline(width,depth,cut) {
+      const x=width/2,z=depth/2;
+      return [[-x,-z+cut],[-x+cut,-z+cut],[-x+cut,-z],[x-cut,-z],
+        [x-cut,-z+cut],[x,-z+cut],[x,z-cut],[x-cut,z-cut],
+        [x-cut,z],[-x+cut,z],[-x+cut,z-cut],[-x,z-cut]];
+    }
+    function sectionWrap(parts,m,y,height,width,depth,cut,thickness,color,tag,sideTop=Infinity) {
+      const outline=sectionOutline(width,depth,cut);
+      for(let i=0;i<outline.length;i++) {
+        const a=outline[i],b=outline[(i+1)%outline.length];
+        const bottom=y-height/2,top=Math.min(y+height/2,i===2||i===8?Infinity:sideTop);
+        box(parts,m,[(a[0]+b[0])/2,(bottom+top)/2,(a[1]+b[1])/2],
+          [Math.abs(a[0]-b[0])+thickness,top-bottom,Math.abs(a[1]-b[1])+thickness],color,tag);
+      }
+    }
+    function torso(parts,m,index) {
+      const start=parts.length;
+      const profile=[[1.04,.28,.64,.36],[1.24,.16,.80,.46],[1.395,.19,.98,.52]];
+      const armpitHeight=1.40;
+      for(const [y,height,width,depth] of [...profile,[1.565,.16,.86,.50]]) {
+        box(parts,m,[0,y,0],[width-.20,height,depth],C.skin,"body-torso");
+        for(const side of [-1,1])
+          box(parts,m,[side*(width/2-.05),y,0],[.10,height,depth-.20],C.skin,"body-torso");
+      }
+      box(parts,m,[0,1.67,0],[.78,.10,.46],C.skin,"body-traps");
+      box(parts,m,[0,1.735,0],[.57,.07,.40],C.skin,"body-traps");
+      box(parts,m,[0,1.77,0],[.43,.20,.37],C.skinDark,"body-neck");
+      box(parts,m,[0,2.0,0],[.58,.44,.48],C.skin,"body-head");
+      box(parts,m,[0,1.80,.14],[.68,.22,.46],C.skin,"body-jaw");
+      for(const side of [-1,1]) {
+        box(parts,m,[side*.34,2.04,0],[.105,.12,.17],C.skin,"body-ear");
+        box(parts,chain(m,T(side*.13,2.06,.251),RZ(side*.16)),[0,0,0],[.14,.065,.035],C.skinDark);
+        box(parts,m,[side*.13,2.025,.276],[.055,.036,.025],0xe1cf9b);
+        box(parts,m,[side*.17,1.88,.395],[.075,.22,.075],0xd9d49b,"body-tusk");
+        box(parts,m,[side*.17,2.015,.395],[.055,.05,.055],0xe4deb3,"body-tusk");
+      }
+      box(parts,m,[0,1.785,.378],[.29,.025,.02],0x49462c);
+      for(const [y,height,width,depth] of profile) {
+        sectionWrap(parts,m,y,height,width+.035,depth+.06,.10,.045,C.leather,"armor-chest",armpitHeight);
+        for(const side of [-1,1])for(const x of [-.20,.20])
+          box(parts,m,[x,y,side*(depth/2+.075)],[.07,height+.02,.045],0x342d24,"armor-chest");
+      }
+      for(const side of [-1,1]) {
+        box(parts,m,[0,1.555,side*.275],[.76,.14,.07],C.leather,"armor-chest");
+        box(parts,m,[-.14,1.05,side*.245],[.20,.15,.035],C.patch,"armor-chest");
+        box(parts,m,[.16,1.35,side*.315],[.23,.20,.035],0x5b4230,"armor-chest");
+        for(const x of [-.20,.20])
+          box(parts,m,[x,1.56,side*.325],[.07,.30,.045],0x342d24,"armor-chest");
+        box(parts,m,[side*.20,1.735,0],[.07,.045,.70],0x342d24,"armor-chest");
+      }
+      for(const [section,y,buckleX] of [[profile[0],1.15,-.24],[profile[2],1.40,-.08]]) {
+        const [,,width,depth]=section,frontZ=depth/2+.085;
+        sectionWrap(parts,m,y,.065,width+.10,depth+.17,.14,.045,C.darkLeather,"torso-belt");
+        box(parts,m,[buckleX,y,frontZ+.03],[.125,.09,.025],0xa99b78);
+        box(parts,m,[buckleX,y,frontZ+.045],[.075,.045,.016],C.darkLeather);
+      }
+      for(const x of [-.27,-.18,.10])box(parts,m,[x,1.25,.275],[.035,.035,.02],0xc0a475);
+      box(parts,m,[0,.90,0],[.66,.15,.40],0x594532);
+      box(parts,m,[0,.94,0],[.70,.07,.44],0x352f26);
+      box(parts,m,[-.05,.94,.2325],[.13,.10,.025],0x968971);
+      if(index===1) {
+        box(parts,m,[-.12,2.13,.255],[.035,.13,.025],0xb2a17a);
+        box(parts,m,[-.08,2.06,.255],[.065,.035,.025],0xb2a17a);
+      } else box(parts,m,[.15,2.14,.255],[.035,.10,.025],0xaaa078);
+      for(let i=start;i<parts.length;i++)parts[i].owner="torso";
+    }
+    function shoulderArmor(parts,body,hands,index) {
+      for(const hand of hands) {
+        const start=parts.length;
+        const side=hand.side;
+        const direction=norm(sub(hand.arm.elbow,hand.arm.shoulder));
+        const swing=[...cross([0,-1,0],direction),1-direction[1]];
+        const length=Math.hypot(...swing);
+        const rotation=Q(slerp([0,0,0,1],length<1e-8?[1,0,0,0]:times(swing,1/length),.45));
+        const m=chain(body,T(...hand.arm.shoulder),hand.arm.girdle?.rotation||I(),rotation);
+        const color=side<0?C.iron:0x655c4a;
+        box(parts,m,[0,.15,.025],[.40,.035,.40],color,"armor-shoulder-"+side);
+        box(parts,m,[side*.19,.055,.025],[.035,.17,.40],color,"armor-shoulder-"+side);
+        box(parts,m,[side*.075,.065,-.18],[.25,.15,.035],color,"armor-shoulder-"+side);
+        if(index===2&&side<0) {
+          box(parts,m,[0,.015,.205],[.39,.29,.045],0x594432,"shoulder-pad");
+          box(parts,m,[side*.215,.035,.10],[.04,.25,.25],C.bone,"skull-shoulder--1");
+          box(parts,m,[0,.182,.04],[.38,.035,.31],C.bone,"skull-shoulder--1");
+          for(const x of [-.14,.14]) {
+            box(parts,m,[x,.20,.02],[.035,.025,.45],C.darkLeather,"shoulder-strap");
+            box(parts,m,[x,.02,-.2075],[.035,.35,.025],C.darkLeather,"shoulder-strap");
+            box(parts,m,[x,-.06,-.225],[.05,.05,.025],0xa19879,"shoulder-strap");
+          }
+          skull(parts,chain(m,T(0,.015,.26),S(1.28,1.05,.65)),0,"skull-shoulder--1");
+        }
+        for(let i=start;i<parts.length;i++)parts[i].owner="arm-"+side;
+      }
+    }
+    function handArtwork(parts,m,side,grip,open,thin=0) {
+      const tag="palm-"+side;
+      const frame=chain(m,T(side<0?.04*(1-grip):0,.0175,0),S(1,1.25,1));
+      box(parts,frame,[0,0,mix(.065,.045,grip)],[.22,.14,mix(.19,.15,grip)],C.skin,tag);
+      box(parts,frame,[0,-.04,mix(.09,.11,grip)],[.19,.035,.025],0x554a38,tag);
+      const proximal=mix(.025,mix(.16,.12,thin),grip),lengths=[.14,.175,.165,.13];
+      for(let i=0;i<lengths.length;i++) {
+        const finger=chain(frame,T(side*mix(.085,.04,thin),.0525-i*.035,.12),RY(side*Math.PI/4*open));
+        box(parts,finger,[0,0,proximal/2],[.045,.03,proximal],C.skin,tag);
+        box(parts,finger,[0,0,proximal+.01],[.045,.03,.04],C.skin,tag);
+        const tip=chain(finger,T(0,0,proximal+.02),RY(-side*Math.PI/2*(1-open)));
+        box(parts,tip,[0,0,lengths[i]/2],[.035,.03,lengths[i]],C.skin,tag);
+      }
+      const thumb=chain(frame,T(-side*mix(.095,.03,thin),.015,mix(.08,.18,grip)),RY(-side*.45*open));
+      box(parts,thumb,[-side*.015,0,.03],[.06,.085,.12],C.skin,tag);
+    }
+    function freeWristRotation(arm) {
+      const y=norm(sub(arm.hand,arm.elbow)),upper=norm(sub(arm.elbow,arm.shoulder));
+      const x=norm(cross(y,upper)),z=cross(x,y);
+      return [...x,0,...y,0,...z,0,0,0,0,1];
+    }
+    function limbs(parts,body,legFrame,state,index,section) {
+      const diagnostics={knees:[],hands:[]};
+      if(section!=="arms")for(const side of [-1,1]) {
+        const start=parts.length;
+        const gait=((state.travel+1.05)/.50+(side<0?.5:0))%1;
+        const swing=clamp((gait-.6)/.4);
+        const marchZ=(gait<.6?.12-.50*gait:mix(-.18,.12,smooth(swing)))*state.walkBlend;
+        let targetZ=marchZ+(state.phase==="attacking"?side*.16*state.brace:0);
+        let targetY=.14+Math.sin(swing*Math.PI)*.16*state.walkBlend;
+        let legRoll=0;
+        if(index===2&&state.reviewStep!==undefined) {
+          targetZ=side>0?state.reviewStep:0;
+          targetY=.14;
+          legRoll=side>0&&state.reviewStep>0?-.10:0;
+        } else if(index===2&&state.phase==="attacking") {
+          const progress=smooth((state.attackTime-(side>0?.45:2.18))/(side>0?.71:.42));
+          targetZ=.24*progress;
+          targetY+=.11*Math.sin(progress*Math.PI);
+          legRoll=side>0?-.10*progress:0;
+        } else if(index===2&&state.phase==="dying") {
+          targetZ=.24*(1-state.buckle);
+          legRoll=side>0?-.10*(1-state.buckle):0;
+        }
+        const hipHeight=.84+state.marchBob;
+        let [hip,knee]=legAngles((targetY-hipHeight)/Math.cos(legRoll),targetZ);
+        if(state.phase==="dying"&&state.cause==="crushing") {
+          hip=mix(hip,-1.30,state.buckle);
+          knee=mix(knee,1.90,state.buckle);
+        } else {
+          hip+=state.buckle*(side<0?-.24:.27);
+          knee+=state.buckle*.30;
+        }
+        const upper=chain(legFrame,T(side*.25,hipHeight,0),RZ(legRoll),RX(hip));
+        const shin=chain(upper,T(0,-.38,0),RX(knee));
+        box(parts,upper,[0,-.19,0],[.30,.38,.31],C.pants,"thigh-"+side);
+        box(parts,shin,[0,-.185,0],[.28,.37,.30],C.pants,"calf-"+side);
+        const foot=chain(shin,T(0,-.37,0),RX(-(hip+knee)*(1-state.buckle)),RZ(-legRoll*(1-state.buckle)));
+        boot(parts,foot);
+        box(parts,shin,[0,0,.18],[.29,.25,.09],0x594432,"knee-pad");
+        for(const y of [-.06,.08]) {
+          box(parts,shin,[0,y,-.17],[.30,.04,.03],C.darkLeather,"knee-band-back");
+          for(const x of [-.16,.16])box(parts,shin,[x,y,0],[.03,.04,.38],C.darkLeather,"knee-band-side");
+        }
+        if(index===3)skull(parts,chain(shin,T(0,.015,.26),S(1.12,1.12,1.12)),side<0?0:1,"skull-knee-"+side);
+        for(let i=start;i<parts.length;i++)parts[i].owner="leg-"+side;
+        diagnostics.knees.push({shin,foot});
+      }
+      if(section!=="legs")for(const side of [-1,1]) {
+        const start=parts.length;
+        const target=side>0?state.hand:state.supportHand;
+        const key=side>0?"right":"left";
+        let arm=state.looseArms?.[key]||state.drivenArms?.[key]||solveArm(side,target,state.bends[key]);
+        if(index===2&&!arm.girdle) {
+          const requested=arm.shoulder;
+          const preferred=sub(arm.elbow,arm.shoulder);
+          arm=articulateHammerArm(arm,side,requested,preferred);
+        }
+        if(index===2) {
+          const driven=side>0&&state.phase==="attacking";
+          if(!driven) {
+            arm={...arm,upper:armSegment(arm.shoulder,arm.elbow),forearm:armSegment(arm.elbow,arm.hand)};
+          }
+        }
+        const upper=mul(body,arm.upper),forearm=mul(body,arm.forearm);
+        if(arm.girdle) {
+          const link=mul(body,segment(arm.girdle.anchor,arm.shoulder));
+          box(parts,link,[0,arm.girdle.length/2,0],[.32,arm.girdle.length,.34],C.skin,"shoulder-link-"+side);
+        } else box(parts,body,[side*.56,1.61,.03],[.42,.25,.42],C.skin,"shoulder-link-"+side);
+        box(parts,body,add(arm.shoulder,[0,.02,.02]),[.35,.27,.34],C.skin,"shoulder-joint-"+side);
+        box(parts,body,add(arm.shoulder,[0,.105,.02]),[.29,.12,.29],C.skin,"shoulder-bulk-"+side);
+        const upperLength=index===2?hammerUpperArm:.52,lowerLength=index===2?hammerForearm:.50;
+        box(parts,upper,[0,upperLength/2,0],[.24,upperLength,.25],C.skin,"upper-arm-"+side);
+        box(parts,upper,[0,index===2?upperLength*.56:.29,0],[.28,.29,.28],C.skin,"upper-arm-"+side);
+        box(parts,forearm,[0,lowerLength/2,0],[.22,lowerLength,.23],C.skin,"forearm-"+side);
+        box(parts,forearm,[0,.19,0],[.25,.27,.26],C.skin,"forearm-"+side);
+        box(parts,forearm,[0,index===2?.29:.38,0],[.26,index===2?.15:.17,.27],0x554a38,"bracer-"+side);
+        box(parts,forearm,[0,index===2?.28:.37,0],[.275,.04,.285],0x7e8a82,"bracer-"+side);
+        const grip=side>0?state.gripRight:state.gripLeft;
+        const posed=mul(body,state.palms[side>0?"right":"left"]);
+        let natural=chain(forearm,T(0,lowerLength,0));
+        if(index===2) {
+          natural=chain(body,T(...arm.hand),state.freeLeftRotation||relaxedWristRotation(arm));
+        }
+        const authored=side>0?Math.max(1-state.release,state.clutch):Math.max(grip,state.clutch,state.supportAlignment||0);
+        const rotation=side<0&&state.freeLeftRotation?quat(mul(body,state.freeLeftRotation)):
+          slerp(quat(natural),quat(posed),authored);
+        const palm=mul(T(...point(body,arm.hand)),Q(rotation));
+        const open=side>0?state.openRight:state.openLeft;
+        handArtwork(parts,state.clutch>0?mul(palm,S(1,1,mix(1,.65,state.clutch))):palm,side,grip,open,state.clutch);
+        if(index===1&&side<0)box(parts,upper,[0,.13,.105],[.10,.03,.015],0xa59a70);
+        for(let i=start;i<parts.length;i++)parts[i].owner="arm-"+side;
+        diagnostics.hands.push({side,target,arm,palm});
+      }
+      return diagnostics;
+    }
+    function weapon(parts,m,kind) {
+      const length=kind==="spear"?1.80:1.28,center=kind==="spear"?.78:.08;
+      box(parts,m,[0,center,0],[.065,length,.07],C.wood,"shaft");
+      const wear=kind==="spear"?[[.23,0x4a3b2b],[.62,0xa58d63],[1.08,0x624732],[1.40,0xa18458]]:
+        [[-.40,0x4a3b2b],[-.22,0xa58d63],[.28,0x624732],[.47,0xa18458]];
+      for(const [y,color] of wear) {
+        box(parts,m,[.005,y,kind==="hammer"?.035:.04],[.06,.13,kind==="hammer"?.012:.025],color,"shaft-wear");
+        box(parts,m,[-.035,y+.02,0],[.02,.10,.065],color,"shaft-wear");
+      }
+      for(const y of kind==="hammer"?[-.48,-.40,-.20,-.12]:[-.10,0,.10])
+        box(parts,m,[0,y,0],[kind==="hammer"?.082:.105,.045,kind==="hammer"?.087:.11],0x493c2d,"grip-wrap");
+      box(parts,m,[.07,kind==="hammer"?.40:-.21,.02],[.04,.225,.035],0x66503a,"loose-strap");
+      for(const y of kind==="spear"?[1.55,1.62]:[.57,.64])box(parts,m,[0,y,0],[.10,.04,.10],0x493c2d,"head-binding");
+      if(kind==="axe") {
+        box(parts,m,[0,.73,0],[.17,.18,.13],C.iron,"weapon-head");
+        box(parts,m,[0,.73,.13],[.15,.25,.16],0x7c8984,"weapon-head");
+        box(parts,m,[0,.68,.265],[.13,.35,.13],0x7c8984,"weapon-head");
+        box(parts,m,[0,.68,.345],[.105,.32,.035],0xb1b5a1);
+        box(parts,m,[0,.505,.24],[.12,.035,.11],C.iron);
+      } else if(kind==="hammer") {
+        const head=mul(m,RY(Math.PI/2));
+        box(parts,head,[0,.73,0],[.43,.25,.27],C.iron,"weapon-head");
+        for(const x of [-.145,.145])box(parts,head,[x,.73,0],[.055,.27,.29],0x9d9f88);
+      } else {
+        box(parts,m,[0,1.71,0],[.11,.15,.11],0x493c2d);
+        box(parts,m,[0,1.84,0],[.09,.24,.075],0xa4a599,"weapon-head");
+        box(parts,m,[0,1.995,0],[.05,.07,.05],0xc0c5b2);
+      }
+    }
+    const attackKeys={
+      axe:[[0,.68,1.03,.75,.10,0,0],[.12,1.30,1.40,.55,-.10,-.03,-.05],
+        [.26,1.30,1.95,.05,-.70,-.06,-.10],[.32,1.30,1.93,-.20,-.95,-.10,-.14],
+        [.40,1.30,1.93,-.20,-.95,-.10,-.14],[.46,1.30,1.78,.60,.35,.05,.05],
+        [.52,1.0,1.34,.65,1.35,.13,.20],
+        [.64,1.0,1.20,.60,2.1,.18,.25],[1.12,.85,1.09,.75,.35,.04,.08],
+        [1.55,.68,1.03,.75,.10,0,0],[1.9,.68,1.03,.75,.10,0,0]],
+      hammer:[[0,.78,1.03,.75,.10,0,0],[3.7,.78,1.03,.75,.10,0,0]],
+      hammerArm:[[0,.15,0,1.20,0,.10,0,0],
+        [.50,2.05,.05,.75,0,-.20,.22,-.09],
+        [1.08,.72,-.38,1.10,-1.10,.36,-.60,.20],
+        [1.28,.70,-.48,1.20,-1.20,.28,-.95,.24],
+        [1.58,1.05,-.50,1.20,-1.15,-.06,-.95,.09],
+        [1.86,1.00,-.22,1.20,-.45,.08,-.08,.02],
+        [2.12,.60,.05,.85,-.20,.10,.75,-.12],
+        [2.50,1.80,-1.05,.90,-.35,-.20,.10,-.03],
+        [3.00,1.05,-1.05,.50,-.30,.45,.03,0],
+        [3.18,.95,-1.00,.50,-.30,.48,.03,0],
+        [3.70,.15,0,1.20,0,0,0,0]],
+      hammerWrist:[[0,.10,0],[.50,-.90,-.10],
+        [.94,-.25,-.10],[1.10,.10,1.45],[1.58,.18,1.75],
+        [1.90,.10,-1.45],[2.12,.18,-1.65],[2.28,1.90,-.75],
+        [2.50,-.80,.10],[2.78,.05,.02],[3.00,1.60,.05],
+        [3.18,1.05,.08],[3.70,.10,0]],
+      hammerReturn:[[0,.08],[1.70,.08],[1.90,.24],[2.12,.24],[3.70,0]],
+      hammerReferenceBody:[[0,.10,0,0],[.55,-.12,.12,-.04],[.78,-.08,.08,0],
+        [1.05,.30,-.50,.12],[1.30,.24,-.78,.10],[1.55,.14,-.70,.04],
+        [1.72,.08,-.35,0],[2.05,.10,.65,-.06],[2.18,.04,.72,0],[2.50,-.20,.10,-.03]],
+      // Wrist positions adapted to the orc's reach; shaft tracking determines the elbow plane.
+      hammerReferenceArm:[[0,.78,1.03,.531],[.35,1.05,1.58,.35],[.60,.92,2.02,.32],
+        [.78,.82,1.82,.70],[1.05,1.00,1.52,.60],[1.22,.45,1.25,.85],
+        [1.48,.20,1.50,.90],[1.62,.20,1.50,.90],[1.82,1.60,1.50,.75],
+        [2.05,1.96,1.48,.38],[2.18,1.88,1.55,.40],[2.50,.20,1.90,.65]],
+      hammerReferenceLeft:[[0,-.69,1.03,.04],[.60,-.75,1.02,-.10],
+        [1.05,-.90,1.05,-.20],[1.30,-.85,1.05,-.55],
+        [1.55,-.85,1.10,-.65],[1.82,-.90,1.16,.12],
+        [2.05,-.95,1.13,-.20],[2.18,-.65,1.40,.55],[2.50,-.45,1.20,.90]],
+      // Shaft directions from the visible prop: down/left, rearward roll, then the reverse sweep.
+      hammerObjectGrip:[[0,0,.94,.34],[.60,0,.94,-.34],[.78,-.70,.70,0],
+        [1.05,-.70,-.65,.30],[1.22,-.95,-.25,-.18],
+        [1.48,-.85,.08,-.50],[1.62,-.85,.08,-.50],[1.72,-1,.08,0],
+        [1.82,-.20,.08,1],[2.05,0,.10,1],[2.18,0,.65,.76]],
+      // Time, upper-arm yaw, forearm yaw, elbow elevation, grip bank.
+      hammerReverse:[[1.04,-1.05,-.40,.10,0],
+        [1.20,-.40,-.95,.10,-Math.PI*4/9],
+        [1.42,.40,-1.05,.10,-Math.PI*4/9],
+        [1.62,1.35,-1.20,.90,-Math.PI*4/9],
+        [1.86,2.40,2.50,-.20,-Math.PI*4/9],
+        [2.10,2.70,2.90,-.25,-Math.PI*4/9]],
+      hammerTempo:[[0,0],[.55,.50],[1.01,1.10],[1.48,1.58],
+        [1.84,2.04],[2.02,2.18],[2.60,2.55],[2.99,3.04],[3.70,3.70]],
+      hammerFinish:[[0,.05,1.65,.85,-.20],[2.28,.65,1.10,.70,1.65],
+        [2.42,.18,1.70,.78,-.10],[2.60,0,2.07,.55,-.70],
+        [2.80,.02,1.65,.75,.30],[3.04,.02,1.35,.70,1.00],
+        [3.18,.06,1.30,.70,1.05],[3.42,.68,1.38,.80,.55],[3.70,.78,1.052,.531,.10]],
+      spear:[[0,.68,1.03,.75,.1,0,0,0,0],[.16,.70,1.35,.55,.85,0,.42,0,0],
+        [.34,.60,1.28,.30,Math.PI/2,-.02,1.10,.34,1],
+        [.42,.60,1.28,.30,Math.PI/2,-.02,1.10,.34,1],[.53,.40,1.28,.52,Math.PI/2,.10,.70,.28,1],
+        [.62,.40,1.28,.52,Math.PI/2,.10,.70,.28,1],[.80,.60,1.28,.30,Math.PI/2,-.02,1.10,.34,1],
+        [.92,.60,1.28,.30,Math.PI/2,-.02,1.10,.34,0],[1.14,.70,1.35,.55,.85,0,.42,0,0],
+        [1.40,.68,1.03,.75,.1,0,0,0,0],[1.9,.68,1.03,.75,.1,0,0,0,0]],
+      hammerOverhead:[[2.05,.965,-.065,.225,0,.10,1,.12,1.116,1.60],
+        [2.16,.65,-.55,.52,0,.35,.94,.20,1.105,1.60],
+        [2.28,-.78,-.40,.48,0,.70,.714,.30,1.065,1.60],
+        [2.38,-.75,.38,.53,0,.82,.57,.30,1.070,1.78],
+        [2.44,-.76,.65,.05,0,.85,-.52,.30,1.075,1.96],
+        [2.50,-.657,.694,-.293,0,.42,-.908,.30,1.106,2.09],
+        [2.55,-.6563283412868018,.6948329580352388,-.2940072598622615,0,.40,-.916,.30,1.108,2.10]],
+      hammerOverheadBody:[[2.05,.08,.60,0],[2.16,.18,.35,0],[2.28,.34,0,0],
+        [2.34,.34,0,0],[2.44,.15,0,0],[2.50,-.08,0,0],[2.55,-.12,0,0],
+        [2.62,.03,0,0],[2.72,.18,0,0],[3.04,.94,0,0],[3.44,.94,0,0]],
+      hammerOverheadShoulder:[[2.20,.10,1.60],[2.28,.10,1.60],[2.34,.10,1.74],[2.36,.20,1.88],[2.38,.12,2.20],[2.40,.12,2.12],
+        [2.44,.18,2.04],[2.48,.08,2.44],[2.50,.12,2.50],[2.52,.12,2.48],[2.55,.08,2.48],[2.58,.30,2.45],
+        [2.62,.70,2.49],[2.66,.92,2.30],[2.70,.96,2.10],[2.74,1.04,1.94],[2.78,.50,1.70],
+        [2.82,.70,1.63],[2.86,.68,1.79],[2.90,.58,1.67],[2.94,.48,1.62],[2.98,.39,1.61],[3.04,.32,1.60],[3.44,.32,1.60]],
+      hammerOffhand:[[0,-.69,1.03,.04],[.30,-.82,1.00,-.18],[.52,-.86,.98,-.22],
+        [.78,-.88,.98,-.20],[1.10,-.90,1.00,-.12],[1.58,-.92,1.15,.90],
+        [1.92,-.25,1.55,.80],[2.12,-.30,1.52,.88],[2.32,-.65,1.40,.90],
+        [2.50,-.45,1.20,.90],[3.20,-.42,1.12,.74],
+        [3.7,-.69,1.03,.04]]
+    };
+    const marchSeconds=2.4,attackSeconds=3.7,deathSeconds=4;
+    const hammerRearGrip=-.44,hammerFrontGrip=-.12,hammerHeadReach=.73-hammerRearGrip;
+    const deathStart=marchSeconds+attackSeconds,duration=deathStart+deathSeconds;
+    function hammerFrontGripAt(t) {
+      // Stack the .175-high gloves while gripping; restore the original target as the left hand opens.
+      const close=smooth((t-2.34)/.14)*(1-smooth((t-3.56)/.04));
+      return mix(hammerFrontGrip,hammerRearGrip+.18,close);
+    }
+    function keyed(kind,t) {
+      const keys=attackKeys[kind];
+      let i=keys.findIndex(key=>key[0]>t);if(i<0)i=keys.length-1;
+      if(i===0)return keys[0].slice(1);
+      const a=keys[i-1],b=keys[i],span=b[0]-a[0],u=clamp((t-a[0])/span);
+      if(!kind.startsWith("hammer"))return b.slice(1).map((v,j)=>mix(a[j+1],v,smooth(u)));
+      function velocity(index,column) {
+        if(index===0||index===keys.length-1)return 0;
+        const before=keys[index-1],key=keys[index],after=keys[index+1];
+        const leftSpan=key[0]-before[0],rightSpan=after[0]-key[0];
+        const left=(key[column]-before[column])/leftSpan,right=(after[column]-key[column])/rightSpan;
+        if(left*right<=0)return 0;
+        const w1=2*rightSpan+leftSpan,w2=rightSpan+2*leftSpan;
+        return (w1+w2)/(w1/left+w2/right);
+      }
+      return b.slice(1).map((value,j)=>
+        (2*u*u*u-3*u*u+1)*a[j+1]+(u*u*u-2*u*u+u)*span*velocity(i-1,j+1)+
+        (-2*u*u*u+3*u*u)*value+(u*u*u-u*u)*span*velocity(i,j+1));
+    }
+    function hammerAttackTime(t) {
+      return keyed("hammerTempo",Math.max(0,Math.min(attackSeconds,t)))[0];
+    }
+    function stateAt(kind,t,cause,authored=false) {
+      const phase=t<marchSeconds?"walking":t<deathStart?"attacking":"dying",d=Math.max(0,t-deathStart);
+      let [hx,hy,hz,angle,lean,twist,support=0,contact=0]=keyed(kind,0);
+      let stride=0,walkBlend=0,marchBob=0,brace=0,buckle=0,fall=0,roll=0,release=0,push=0;
+      let supportHand=[-.69,1.03,.04],sideLean=0,clutch=0,loose=0;
+      const marchTime=Math.min(t,marchSeconds);
+      const distanceTime=marchTime<.18?marchTime*marchTime/.36:
+        marchTime<2.18?marchTime-.09:2.09+(marchTime-2.18)-(marchTime-2.18)**2/.44;
+      const travel=-1.05+1.40*distanceTime/2.2;
+      if(phase==="walking") {
+        walkBlend=1-smooth((t-2.06)/.34);
+        stride=Math.sin((travel+1.05)/.50*Math.PI*2)*walkBlend;
+        marchBob=.020*stride*stride;
+        lean=.10;twist=stride*.025;
+        hz+=stride*.12;supportHand[2]-=stride*.18;
+        angle+=stride*.13;
+      } else if(phase==="attacking") {
+        [hx,hy,hz,angle,lean,twist,support=0,contact=0]=keyed(kind,t-marchSeconds);
+        brace=smooth((t-marchSeconds)/.20);
+        supportHand=kind==="hammer"?keyed("hammerOffhand",t-marchSeconds):[-.69,1.16,.12];
+        if(kind==="hammer")[,,,,lean,twist,sideLean]=keyed("hammerArm",t-marchSeconds);
+      } else {
+        if(cause==="arrow") {
+          const recoil=smooth((d-.22)/.16)*(1-smooth((d-.55)/.3));
+          buckle=smooth((d-1.65)/.8);fall=-smooth((d-1.80)/1.10)*1.45;
+          lean=-recoil*.16;push=-recoil*.10-buckle*.12;release=smooth((d-.28)/.30);
+          loose=smooth((d-1.80)/.55);
+          clutch=smooth((d-.40)/.52)*(1-smooth((d-1.45)/.35));
+        } else if(cause==="blade") {
+          buckle=smooth((d-.35)/.8);fall=smooth((d-.7)/1.1)*.65;
+          roll=smooth((d-.75)/1.1)*1.12;twist=smooth((d-.22)/.3)*.25;
+          lean=buckle*.12;push=-buckle*.08;release=smooth((d-.75)/.6);
+          loose=smooth((d-.85)/.70);
+        } else {
+          buckle=smooth((d-.22)/.72);fall=0;
+          lean=smooth((d-.40)/.85)*1.75;push=buckle*.08;release=smooth((d-.28)/.32);
+          roll=smooth((d-.90)/.70)*.65+Math.sin(Math.max(0,d-.45)*5)*Math.exp(-Math.max(0,d-.45)*2)*.08;
+          loose=smooth((d-.50)/.65);
+        }
+        const reach=cause==="blade"?smooth((d-.22)/.3)*(1-smooth((d-1.2)/.4)):0;
+        const approach=mixV(supportHand,[-.90,1.12,.80],smooth(reach/.45));
+        supportHand=mixV(approach,[-.25,1.40,.85],smooth((reach-.45)/.55));
+        hx=mix(hx,.67,buckle);hy=mix(hy,1.04,buckle);hz=mix(hz,.48,buckle);
+        angle=mix(angle,.5,buckle);
+      }
+      if(kind==="hammer"&&phase==="attacking"&&!authored) {
+        const values=hammerTrackAt(t-marchSeconds).values;
+        [lean,twist,sideLean]=values.slice(0,3);
+        supportHand=values.slice(3,6);
+        const attack=t-marchSeconds;
+        if(attack<2.50) {
+          const approved=approvedHammerTrackAt(attack);
+          [lean,twist,sideLean]=approved.slice(0,3);
+          supportHand=approved.slice(16,19);
+        }
+        const settle=smooth((t-marchSeconds-2.72)/.32)*(1-smooth((t-marchSeconds-3.08)/.52));
+        lean=mix(lean,1.05,settle);
+        twist*=1-settle;
+        sideLean*=1-settle;
+        if(attack>2.05&&attack<3.44) {
+          const blend=smooth((attack-2.05)/.12)*(1-smooth((attack-3.08)/.36));
+          [lean,twist,sideLean]=mixV([lean,twist,sideLean],keyed("hammerOverheadBody",attack),blend);
+        }
+      }
+      return {phase,cause,deathTime:d,attackTime:Math.max(0,t-marchSeconds),hand:[hx,hy,hz],supportHand,angle,sideLean,clutch,loose,support,contact,lean,twist,stride,walkBlend,marchBob,brace,buckle,fall,roll,release,travel,push};
+    }
+    function bodyFrame(state,legFrame) {
+      return chain(legFrame,T(0,.84+state.marchBob,0),RX(state.lean),RZ(state.sideLean),RY(state.twist),T(0,-.84,0));
+    }
+    function authoredHammerPose(t,body) {
+      const [raise,sweep,bend,plane]=keyed("hammerArm",t);
+      const [pitch,snap]=keyed("hammerWrist",t);
+      const horizontal=smooth((t-1.58)/.22);
+      const windup=smooth((t-1.18)/.40)*(1-horizontal);
+      const forwardReach=smooth((t-.88)/.20)*(1-smooth((t-3.18)/.42));
+      const diagonalReach=smooth((t-.70)/.20)*(1-smooth((t-1.42)/.16));
+      const shoulder=[.76,1.60,.10+.10*forwardReach+.06*diagonalReach];
+      const upperFrame=chain(T(...shoulder),RY(sweep),RZ(.08),RX(-raise));
+      const elbow=point(upperFrame,[0,-.52,0]);
+      const forearmFrame=chain(upperFrame,T(0,-.52,0),RY(plane),RX(-bend));
+      const authoredHand=point(forearmFrame,[0,-.50,0]);
+      let hand=authoredHand;
+      const inverseBody=inverseRigid(body);
+      const exit=1-smooth((t-2.12)/.12);
+      const [bank]=keyed("hammerReturn",t);
+      const horizontalFrame=chain(RX(bank),RY(-Math.PI/2));
+      const face=norm([-.34,-.92,0]),shaft=[-.92,.34,Math.sqrt(.038)],x=cross(shaft,face);
+      const diagonalFrame=[...x,0,...shaft,0,...face,0,0,0,0,1];
+      const baseWrist=quat(chain(RX(pitch),RZ(snap)));
+      let stroke=slerp(baseWrist,quat(diagonalFrame),smooth((t-.94)/.16));
+      stroke=slerp(stroke,quat(mul(inverseBody,horizontalFrame)),horizontal);
+      // Keep the loaded pose body-relative so it follows the torso's leftward turn.
+      hand=add(elbow,times(norm(mixV(sub(hand,elbow),sub(authoredHand,elbow),windup)),.50));
+      const windupShaft=[-.82,.48,Math.sqrt(.0972)],windupFace=norm([-.48,-.82,0]);
+      const windupX=cross(windupShaft,windupFace);
+      const windupFrame=[...windupX,0,...windupShaft,0,...windupFace,0,0,0,0,1];
+      stroke=slerp(stroke,quat(windupFrame),windup);
+      const wrist=slerp(baseWrist,stroke,exit);
+      const restRotation=RX(.10);
+      const rest=solveArm(1,sub([.78,1.03,.75],point(restRotation,[0,0,.22])),[.35,-1,-.6]);
+      const active=smooth(t/.18)*(1-smooth((t-3.25)/.45));
+      const actualElbow=add(shoulder,times(norm(mixV(sub(rest.elbow,shoulder),sub(elbow,shoulder),active)),.52));
+      const actualHand=add(actualElbow,times(norm(mixV(sub(rest.hand,rest.elbow),sub(hand,elbow),active)),.50));
+      const rotation=Q(slerp(quat(restRotation),wrist,active));
+      return {arm:{shoulder,elbow:actualElbow,hand:actualHand,upper:segment(shoulder,actualElbow),forearm:segment(actualElbow,actualHand)},rotation,windup};
+    }
+    function backhandGrip(head,face,body,shoulderZ) {
+      const shoulder=[.76,1.60,shoulderZ],delta=sub(sub(head,point(body,shoulder)),times(face,.22));
+      const projected=sub(delta,times(face,dot(delta,face))),length=Math.hypot(...projected);
+      if(length<1e-8)throw new Error("Degenerate front-body backhand");
+      const ratio=(dot(delta,delta)+hammerHeadReach*hammerHeadReach-.90*.90)/(2*hammerHeadReach*length);
+      if(!Number.isFinite(ratio)||Math.abs(ratio)>1)throw new Error("Unreachable front-body backhand");
+      const along=times(projected,1/length);
+      let upward=norm(cross(face,along));
+      if(upward[1]<0)upward=times(upward,-1);
+      const shaft=add(times(along,ratio),times(upward,Math.sqrt(1-ratio*ratio)));
+      const x=cross(shaft,face),rotation=[...x,0,...shaft,0,...face,0,0,0,0,1],inverse=inverseRigid(body);
+      const hand=point(inverse,sub(sub(head,times(face,.22)),times(shaft,hammerHeadReach)));
+      return {arm:solveArm(1,hand,[1,-.6,-1],shoulderZ),rotation:Q(quat(mul(inverse,rotation)))};
+    }
+    function blendHammerArm(a,b,weight) {
+      const shoulder=mixV(a.shoulder,b.shoulder,weight);
+      const elbow=add(shoulder,times(norm(mixV(sub(a.elbow,a.shoulder),sub(b.elbow,b.shoulder),weight)),.52));
+      const hand=add(elbow,times(norm(mixV(sub(a.hand,a.elbow),sub(b.hand,b.elbow),weight)),.50));
+      return {shoulder,elbow,hand,upper:segment(shoulder,elbow),forearm:segment(elbow,hand)};
+    }
+    function rawHammerPose(t,body) {
+      let authored=authoredHammerPose(t,body);
+      const finish=smooth((t-2.12)/.26)*(1-smooth((t-3.32)/.38));
+      if(finish>0) {
+        const [x,y,z,pitch]=keyed("hammerFinish",t);
+        const target=mixV(authored.arm.hand,[x,y,z],finish);
+        const distance=Math.hypot(...sub(target,[.76,1.60,.30]));
+        if(distance>=1.02)throw new Error("Unreachable smash target at "+t+": "+distance);
+        const arm=solveArm(1,target,[1,.10,1.2],.30);
+        authored={...authored,arm,rotation:Q(slerp(quat(authored.rotation),quat(RX(pitch)),finish))};
+      }
+      const startTime=1.58,endTime=2.12;
+      const blend=smooth((t-(startTime-.08))/.08)*(1-smooth((t-endTime)/.12));
+      if(blend===0)return authored;
+      const sampleTime=Math.max(startTime,Math.min(endTime,t));
+      const sampleBody=sampleTime===t?body:bodyFrame(stateAt("hammer",marchSeconds+sampleTime,"arrow",true),I());
+      const startBody=bodyFrame(stateAt("hammer",marchSeconds+startTime,"arrow",true),I());
+      const start=authoredHammerPose(startTime,startBody);
+      const startHead=point(chain(startBody,T(...start.arm.hand),start.rotation),[0,hammerHeadReach,.22]);
+      const radius=-startHead[0]+.05;
+      if(radius<=0)throw new Error("Backhand needs a left-loaded starting pose");
+      const headAt=time=>{
+        const angle=-Math.PI/2+(time-startTime)/(endTime-startTime)*(1.30+Math.PI/2);
+        return [radius*Math.sin(angle),startHead[1],startHead[2]+.48+radius*Math.cos(angle)];
+      };
+      const head=headAt(sampleTime),face=norm(times(sub(headAt(sampleTime+.00001),headAt(sampleTime-.00001)),-1));
+      const target=backhandGrip(head,face,sampleBody,.30);
+      return {...authored,arm:blendHammerArm(authored.arm,target.arm,blend),
+        rotation:Q(slerp(quat(authored.rotation),quat(target.rotation),blend))};
+    }
+    let hammerTrack=null,hammerEndpoints=null;
+    function hammerTrackAt(t) {
+      const step=attackSeconds/120;
+      if(!hammerTrack) {
+        const raw=[];
+        let previous=null;
+        for(let i=0;i<=120;i++) {
+          const time=i*step,state=stateAt("hammer",marchSeconds+Math.min(time,attackSeconds-.000001),"arrow",true);
+          const body=bodyFrame(state,I()),pose=rawHammerPose(time,body);
+          let rotation=quat(mul(body,pose.rotation));
+          if(previous&&dot(previous,rotation)<0)rotation=times(rotation,-1);
+          previous=rotation;
+          raw.push([state.lean,state.twist,state.sideLean,...state.supportHand,pose.arm.shoulder[2],
+            ...point(body,pose.arm.elbow),...point(body,pose.arm.hand),
+            ...point(chain(body,T(...pose.arm.hand),pose.rotation),[0,hammerHeadReach,.22]),...rotation,pose.windup]);
+        }
+        hammerEndpoints=[raw[0],raw[120]];
+        hammerTrack=raw.map((row,i)=>{
+          if(i===0||i===120)return row;
+          const result=row.map(()=>0);
+          let weight=0;
+          for(let offset=-6;offset<=6;offset++) {
+            const w=Math.exp(-offset*offset/12),sample=raw[Math.max(0,Math.min(120,i+offset))];
+            weight+=w;
+            sample.forEach((v,j)=>result[j]+=v*w);
+          }
+          return result.map(v=>v/weight);
+        });
+      }
+      const position=Math.max(0,Math.min(120,t/step)),i=Math.min(119,Math.floor(position)),u=position-i;
+      const points=[i-1,i,i+1,i+2].map(index=>hammerTrack[Math.max(0,Math.min(120,index))]);
+      const basis=[(1-u)**3,3*u**3-6*u*u+4,-3*u**3+3*u*u+3*u+1,u**3].map(v=>v/6);
+      const derivative=[-3*(1-u)**2,9*u*u-12*u,-9*u*u+6*u+3,3*u*u].map(v=>v/(6*step));
+      let values=points[0].map((_,j)=>points.reduce((sum,p,k)=>sum+p[j]*basis[k],0));
+      let velocity=points[0].map((_,j)=>points.reduce((sum,p,k)=>sum+p[j]*derivative[k],0));
+      const envelope=smooth(t/.18)*(1-smooth((t-3.45)/.25));
+      const slope=(value,width)=>value>0&&value<1?6*value*(1-value)/width:0;
+      const rate=slope(t/.18,.18)*(1-smooth((t-3.45)/.25))-smooth(t/.18)*slope((t-3.45)/.25,.25);
+      const endpoint=hammerEndpoints[t<attackSeconds/2?0:1];
+      velocity=velocity.map((v,j)=>v*envelope+(values[j]-endpoint[j])*rate);
+      values=mixV(endpoint,values,envelope);
+      return {values,velocity};
+    }
+    function hammerPose(t,body) {
+      const {values,velocity}=hammerTrackAt(t),inverse=inverseRigid(body);
+      const shoulder=[.76,1.60,values[6]];
+      const elbow=add(shoulder,times(norm(sub(point(inverse,values.slice(7,10)),shoulder)),.52));
+      const wrist=point(inverse,values.slice(10,13));
+      let hand=add(elbow,times(norm(sub(wrist,elbow)),.50));
+      let rotation=Q(quat(mul(inverse,Q(times(values.slice(16,20),1/Math.hypot(...values.slice(16,20)))))));
+      const neutralGrip=smooth((t-.48)/.12)*(1-smooth((t-.88)/.14));
+      if(neutralGrip>0) {
+        // The hand follows the forearm; orient the hammer by forearm roll, not sideways wrist bend.
+        const z=norm(sub(hand,elbow));
+        const y=norm(sub([0,1,0],times(z,z[1]))),x=cross(y,z);
+        const neutral=[...x,0,...y,0,...z,0,0,0,0,1];
+        rotation=Q(slerp(quat(rotation),quat(neutral),neutralGrip));
+        return {arm:{shoulder,elbow,hand,upper:segment(shoulder,elbow),forearm:segment(elbow,hand)},rotation,windup:values[20]};
+      }
+      const faceBlend=smooth((t-1.68)/.06)*(1-smooth((t-2.02)/.08));
+      if(faceBlend>0) {
+        const head=values.slice(13,16),face=norm(times(velocity.slice(13,16),-1));
+        const target=backhandGrip(head,face,body,shoulder[2]);
+        const arm=blendHammerArm({shoulder,elbow,hand},target.arm,faceBlend);
+        rotation=Q(slerp(quat(rotation),quat(target.rotation),faceBlend));
+        return extendBackhand({arm,rotation,windup:values[20]},t);
+      }
+      return extendBackhand({arm:{shoulder,elbow,hand,upper:segment(shoulder,elbow),forearm:segment(elbow,hand)},rotation,windup:values[20]},t);
+    }
+    function backhandExtension(t) {
+      return smooth((t-1.90)/.20)*(1-smooth((t-2.10)/.28));
+    }
+    function extendBackhand(pose,t) {
+      const blend=backhandExtension(t);
+      if(blend===0)return pose;
+      const target=add(pose.arm.shoulder,times(norm([1,-.14,.32]),1.012));
+      const arm=solveArm(1,target,[0,-1,1],pose.arm.shoulder[2]);
+      const shaft=norm([0,.60,.80]),face=[1,0,0],x=cross(shaft,face);
+      const rotation=[...x,0,...shaft,0,...face,0,0,0,0,1];
+      return {...pose,arm:blendHammerArm(pose.arm,arm,blend),
+        rotation:Q(slerp(quat(pose.rotation),quat(rotation),blend))};
+    }
+    function groundedHammerPose(pose,t,body) {
+      const impact=smooth((t-2.72)/.32);
+      if(impact===0)return pose;
+      const recovery=smooth((t-3.08)/.52);
+      const worldRotation=RX(Math.PI/2);
+      // Wrist height accounts for the head's 0.215 half-width, grip offset and planted root lift.
+      let targetWorld=[0,.425+.70*(1-impact),1.90-hammerHeadReach];
+      if(t>=3.04)targetWorld=mixV([0,.425,1.90-hammerHeadReach],point(body,[0,1.30,.70]),recovery);
+      const inverse=inverseRigid(body);
+      const joint=point(inverse,targetWorld);
+      const bend=[2,0,1];
+      const target=solveArm(1,joint,bend,.30+.15*recovery);
+      const targetRotation=Q(slerp(quat(mul(inverse,worldRotation)),quat(RX(.1)),recovery));
+      const weight=impact*(1-smooth((t-3.60)/.10));
+      const arm=blendHammerArm(pose.arm,target,weight);
+      return {...pose,arm,rotation:Q(slerp(quat(pose.rotation),quat(targetRotation),weight))};
+    }
+    function straightHammerGrip(arm,rotation,grip,t) {
+      const gathered=smooth((t-2.24)/.20)*(1-smooth((t-3.60)/.10));
+      const shoulder=add(arm.shoulder,[0,0,.03+.15*gathered]);
+      const y=rotation.slice(4,7),reach=sub(grip,shoulder);
+      const projected=sub(reach,times(y,dot(reach,y)));
+      if(Math.hypot(...projected)<1e-8)throw new Error("Degenerate neutral hammer grip");
+      const forward=norm(sub(arm.hand,arm.elbow));
+      const reachable=norm(projected);
+      const initial=norm(add(sub(forward,times(y,dot(forward,y))),times(reachable,1.2*gathered)));
+      const candidate=weight=>{
+        const z=norm(mixV(initial,reachable,weight)),x=cross(y,z),hand=sub(grip,times(z,.22));
+        const delta=sub(hand,shoulder),planar=sub(delta,times(x,dot(delta,x))),length=Math.hypot(...planar);
+        const cosine=(dot(delta,delta)+.50*.50-.52*.52)/(2*.50*length);
+        return {z,x,hand,planar,length,cosine};
+      };
+      let target=candidate(0);
+      if(Math.abs(target.cosine)>1) {
+        let low=0,high=1;
+        for(let i=0;i<32;i++) {
+          const middle=(low+high)/2;
+          if(Math.abs(candidate(middle).cosine)>1)low=middle;else high=middle;
+        }
+        target=candidate(high);
+      }
+      const {z,x,hand,planar,length,cosine}=target;
+      if(!Number.isFinite(cosine)||Math.abs(cosine)>1)throw new Error("Unreachable neutral hammer grip");
+      const neutral=[...x,0,...y,0,...z,0,0,0,0,1];
+      const along=times(planar,1/length),bend=times(cross(x,along),Math.sqrt(1-cosine*cosine));
+      const elbow=sub(hand,times(sub(times(along,cosine),bend),.50));
+      // Keep the wrist in its forearm plane while preserving the handle's grip center.
+      return {arm:{...arm,shoulder,hand,elbow,upper:segment(shoulder,elbow),forearm:segment(elbow,hand)},rotation:neutral};
+    }
+    function baseHeldHammerPose(t,body) {
+      const pose=groundedHammerPose(hammerPose(t,body),t,body);
+      const straight=1-smooth((t-2.24)/.32)*(1-smooth((t-3.60)/.10));
+      if(straight===0)return pose;
+      const grip=add(pose.arm.hand,point(pose.rotation,[0,0,.22]));
+      const neutral=straightHammerGrip(pose.arm,pose.rotation,grip,t);
+      if(straight===1)return {...pose,...neutral};
+      const rotation=Q(slerp(quat(pose.rotation),quat(neutral.rotation),straight));
+      const hand=sub(grip,point(rotation,[0,0,.22]));
+      const shoulder=mixV(pose.arm.shoulder,neutral.arm.shoulder,straight);
+      const pole=mixV(sub(pose.arm.elbow,pose.arm.shoulder),sub(neutral.arm.elbow,neutral.arm.shoulder),straight);
+      return {...pose,rotation,arm:solveArm(1,hand,pole,shoulder[2])};
+    }
+    function recoveryHammerPose(t,body) {
+      const pose=t>=2.15?groundedHammerPose(hammerPose(t,body),t,body):baseHeldHammerPose(t,body);
+      const blend=smooth((t-1.04)/.16)*(1-smooth((t-2.10)/.30));
+      if(blend===0)return pose;
+      const [upperYaw,lowerYaw,upperPitch,bank]=keyed("hammerReverse",t);
+      const shoulder=add(pose.arm.shoulder,[0,0,.20]);
+      const inverse=inverseRigid(body),worldShoulder=point(body,shoulder);
+      const upper=norm([Math.sin(upperYaw),upperPitch,Math.cos(upperYaw)]);
+      const face=[Math.sin(lowerYaw),0,Math.cos(lowerYaw)];
+      const shaft=add(times([0,1,0],Math.cos(bank)),times(cross([0,1,0],face),Math.sin(bank)));
+      // Opposing upper/lower-arm rotation lets the head carry rearward before the forearm releases.
+      const lower=norm(add(face,times(shaft,-.35)));
+      const worldElbow=add(worldShoulder,times(upper,.52));
+      const elbow=point(inverse,worldElbow),hand=point(inverse,add(worldElbow,times(lower,.50)));
+      const arm={shoulder,elbow,hand,upper:segment(shoulder,elbow),forearm:segment(elbow,hand)};
+      const x=cross(shaft,face),rotation=mul(inverse,[...x,0,...shaft,0,...face,0,0,0,0,1]);
+      return {...pose,arm:blendHammerArm(pose.arm,arm,blend),
+        rotation:Q(slerp(quat(pose.rotation),quat(rotation),blend))};
+    }
+    function previousHammerPose(t,body) {
+      const recovery=recoveryHammerPose(t,body);
+      const blend=smooth(t/.18)*(1-smooth((t-2.15)/.15));
+      if(blend===0)return recovery;
+      const handTarget=keyed("hammerReferenceArm",t);
+      const girdle=hammerShoulder(1,[.76,1.60,.10+.08*smooth((t-.65)/.40)]);
+      const target={shoulder:girdle.shoulder,hand:handTarget};
+      const grip=keyed("hammerObjectGrip",Math.min(t,2.18)),shaft=norm(grip.slice(0,3));
+      const delta=sub(target.hand,target.shoulder),projected=sub(delta,times(shaft,dot(delta,shaft)));
+      const length=Math.hypot(...projected);
+      const ratio=(dot(delta,delta)+hammerForearm*hammerForearm-hammerUpperArm*hammerUpperArm)/(2*hammerForearm*length);
+      if(!Number.isFinite(ratio)||ratio>1)throw new Error("Object grip exceeds neutral-wrist reach at "+t);
+      const along=times(projected,1/length),across=cross(shaft,along);
+      // Solve fixed-length bones in the grip plane instead of bending the wrist to aim the head.
+      const forward=sub(times(along,ratio),times(across,Math.sqrt(1-ratio*ratio)));
+      target.elbow=sub(target.hand,times(forward,hammerForearm));
+      const right=cross(shaft,forward);
+      const referenceRotation=[...right,0,...shaft,0,...forward,0,0,0,0,1];
+      const hand=mixV(recovery.arm.hand,target.hand,blend);
+      const shoulderRequest=mixV(recovery.arm.shoulder,[.76,1.60,.10+.08*smooth((t-.65)/.40)],blend);
+      const actualGirdle=hammerShoulder(1,shoulderRequest);
+      const pole=mixV(sub(recovery.arm.elbow,recovery.arm.shoulder),sub(target.elbow,target.shoulder),blend);
+      const arm=solveJointArm(actualGirdle.shoulder,hand,pole,hammerUpperArm,hammerForearm);
+      const lower=norm(sub(arm.hand,arm.elbow)),desiredX=referenceRotation.slice(0,3);
+      const forearmX=norm(sub(desiredX,times(lower,dot(desiredX,lower)))),forearmZ=cross(forearmX,lower);
+      const forearmRotation=[...forearmX,0,...lower,0,...forearmZ,0,0,0,0,1];
+      const rollFrame=Q(slerp(quat(arm.forearm),quat(forearmRotation),blend));
+      arm.forearm=mul(T(...arm.elbow),rollFrame);
+      return {...recovery,arm:{...arm,girdle:actualGirdle},
+        rotation:Q(slerp(quat(recovery.rotation),quat(referenceRotation),blend))};
+    }
+    let approvedHammerTrack=null;
+    function approvedHammerTrackAt(t) {
+      if(!approvedHammerTrack) {
+        const row=(time,state,pose,left)=>[time,state.lean,state.twist,state.sideLean,...pose.arm.shoulder,
+          ...norm(sub(pose.arm.elbow,pose.arm.shoulder)),...norm(sub(pose.arm.hand,pose.arm.elbow)),
+          ...quat(pose.rotation),...left,...quat(pose.arm.upper)];
+        const endpoint=time=>{
+          const state=stateAt("hammer",marchSeconds+time,"arrow",true);
+          const baseline=hammerTrackAt(time).values;
+          [state.lean,state.twist,state.sideLean]=baseline.slice(0,3);
+          state.supportHand=baseline.slice(3,6);
+          const body=bodyFrame(state,I());
+          const pose=previousHammerPose(time,body);
+          pose.arm=articulateHammerArm(pose.arm,1);
+          pose.arm.upper=armSegment(pose.arm.shoulder,pose.arm.elbow);
+          return row(time,state,pose,state.supportHand);
+        };
+        const gather=endpoint(2.30);
+        const forward=norm(gather.slice(10,13)),authoredShaft=Q(gather.slice(13,17)).slice(4,7);
+        const shaft=norm(sub(authoredShaft,times(forward,dot(authoredShaft,forward))));
+        const side=cross(shaft,forward);
+        gather.splice(13,4,...quat([...side,0,...shaft,0,...forward,0,0,0,0,1]));
+        approvedHammerTrack=[endpoint(0),...hammerReviewPoses.map(review=>{
+          const [lean,twist,sideLean]=review.body;
+          return row(review.time,{lean,twist,sideLean},hammerReviewArm(review),review.left);
+        }),gather,endpoint(2.50)];
+        let previous=null,previousUpper=null;
+        for(const key of approvedHammerTrack) {
+          const q=key.slice(13,17);
+          if(previous&&dot(previous,q)<0)for(let i=13;i<17;i++)key[i]*=-1;
+          previous=key.slice(13,17);
+          const upper=key.slice(20,24);
+          if(previousUpper&&dot(previousUpper,upper)<0)for(let i=20;i<24;i++)key[i]*=-1;
+          previousUpper=key.slice(20,24);
+        }
+        const before=endpoint(2.4999),after=endpoint(2.5001);
+        const last=approvedHammerTrack[approvedHammerTrack.length-1];
+        for(const key of [before,after])if(dot(key.slice(13,17),last.slice(13,17))<0)
+          for(let i=13;i<17;i++)key[i]*=-1;
+        for(const key of [before,after])if(dot(key.slice(20,24),last.slice(20,24))<0)
+          for(let i=20;i<24;i++)key[i]*=-1;
+        approvedHammerTrack.endVelocity=after.map((value,i)=>(value-before[i])/.0002);
+        const delivery=approvedHammerTrack[6],previousDelivery=approvedHammerTrack[5],originalEnd=[...last];
+        for(const start of [13,20])if(dot(originalEnd.slice(start,start+4),delivery.slice(start,start+4))<0)
+          for(let i=start;i<start+4;i++)originalEnd[i]*=-1;
+        approvedHammerTrack.deliveryVelocity=originalEnd.map((value,i)=>
+          (value-previousDelivery[i])/(originalEnd[0]-previousDelivery[0]));
+      }
+      const keys=approvedHammerTrack;
+      let i=keys.findIndex(key=>key[0]>t);
+      if(i<0)return keys[keys.length-1].slice(1);
+      if(i===0)return keys[0].slice(1);
+      const a=keys[i-1],b=keys[i],span=b[0]-a[0],u=clamp((t-a[0])/span);
+      const tangent=(index,column)=>{
+        if(index===0)return 0;
+        if(index===keys.length-1)return keys.endVelocity[column];
+        if(keys[index][0]===2.05)return keys.deliveryVelocity[column];
+        return (keys[index+1][column]-keys[index-1][column])/(keys[index+1][0]-keys[index-1][0]);
+      };
+      // Shared Hermite timing preserves approved poses; bone directions and grip quaternions normalize afterward.
+      return a.slice(1).map((v,j)=>{
+        const column=j+1;
+        return (2*u*u*u-3*u*u+1)*v+(u*u*u-2*u*u+u)*span*tangent(i-1,column)+
+          (-2*u*u*u+3*u*u)*b[column]+(u*u*u-u*u)*span*tangent(i,column);
+      });
+    }
+    function approvedHammerPose(t,body) {
+      if(t>=2.50)return previousHammerPose(t,body);
+      const values=approvedHammerTrackAt(t),shoulder=values.slice(3,6);
+      const anchor=[.48,1.61,.05];
+      const actualShoulder=add(anchor,times(norm(sub(shoulder,anchor)),.44));
+      const elbow=add(actualShoulder,times(norm(values.slice(6,9)),hammerUpperArm));
+      const hand=add(elbow,times(norm(values.slice(9,12)),hammerForearm));
+      const q=norm(values.slice(12,16)),rotation=Q(q);
+      const upperDirection=norm(sub(elbow,actualShoulder)),upperFrame=Q(norm(values.slice(19,23)));
+      const authoredX=upperFrame.slice(0,3);
+      const upperX=norm(sub(authoredX,times(upperDirection,dot(authoredX,upperDirection))));
+      const upperZ=cross(upperX,upperDirection);
+      // Retain a continuous reference for the nearly straight-arm delivery.
+      let upperRotation=[...upperX,0,...upperDirection,0,...upperZ,0,0,0,0,1];
+      const lower=norm(sub(hand,elbow)),x=norm(sub(rotation.slice(0,3),times(lower,dot(rotation.slice(0,3),lower))));
+      const hinge=cross(upperDirection,lower),bend=Math.hypot(...hinge);
+      if(bend<1e-8)throw new Error("Undefined elbow hinge plane in approved hammer track");
+      const hingeX=times(hinge,1/bend),hingeZ=cross(hingeX,upperDirection);
+      const hingeFrame=[...hingeX,0,...upperDirection,0,...hingeZ,0,0,0,0,1];
+      // Elbow flexion defines humeral orientation; forearm pronation must not spin the upper arm.
+      // Fade to the continuous reference before extension makes the bending plane ill-conditioned.
+      const hingeWeight=smooth(t/.18)*(1-smooth((t-1.78)/.12));
+      const blended=Q(slerp(quat(upperRotation),quat(hingeFrame),hingeWeight));
+      const jointX=norm(sub(blended.slice(0,3),times(upperDirection,dot(blended.slice(0,3),upperDirection))));
+      upperRotation=[...jointX,0,...upperDirection,0,...cross(jointX,upperDirection),0,0,0,0,1];
+      const z=cross(x,lower),gripForearmRotation=[...x,0,...lower,0,...z,0,0,0,0,1];
+      const freeForearmRotation=Q(quat(armSegment(elbow,hand)));
+      const forearmBlend=smooth((t-2.15)/.35);
+      const forearmRotation=Q(slerp(quat(gripForearmRotation),quat(freeForearmRotation),forearmBlend));
+      const direction=times(sub(actualShoulder,anchor),1/.44);
+      const yaw=Math.atan2(direction[2],direction[0]),rise=Math.asin(direction[1]);
+      const girdle={anchor,shoulder:actualShoulder,length:.44,rotation:chain(RY(-yaw),RZ(rise))};
+      return {arm:{shoulder:actualShoulder,elbow,hand,upper:mul(T(...actualShoulder),upperRotation),
+        forearm:mul(T(...elbow),forearmRotation),girdle},rotation,windup:0};
+    }
+    function hammerArmTransport(from,to) {
+      const q=[...cross(from,to),1+dot(from,to)],length=Math.hypot(...q);
+      if(length<1e-8)throw new Error("Overhead arm reverses through its transport reference");
+      return Q(times(q,1/length));
+    }
+    function overheadHammerPose(t,body) {
+      if(t<=2.05||t>=3.44)return approvedHammerPose(t,body);
+      const start=approvedHammerPose(2.05,body),initial=start.arm;
+      const initialReach=norm(sub(initial.hand,initial.shoulder));
+      const values=keyed("hammerOverhead",t);
+      const enter=smooth((t-2.05)/.08);
+      let direction=norm(mixV(initialReach,norm(values.slice(0,3)),enter));
+      const initialLength=Math.hypot(...sub(initial.hand,initial.shoulder));
+      let reach=mix(initialLength,values[7],enter);
+      const descend=smooth((t-2.62)/.42);
+      const shoulderY=mix(values[8],1.60,descend);
+      const girdle=hammerShoulder(1,[.76,shoulderY,values[6]]);
+      const topShaft=[0,1,0],topFace=[0,0,1];
+      const topWorld=[...cross(topShaft,topFace),0,...topShaft,0,...topFace,0,0,0,0,1];
+      const topRotation=mul(inverseRigid(body),topWorld);
+      let rotation;
+      if(t<=2.55) {
+        const shaft=norm(values.slice(3,6));
+        const forward=norm(sub(direction,times(shaft,dot(direction,shaft))));
+        rotation=[...cross(shaft,forward),0,...shaft,0,...forward,0,0,0,0,1];
+        rotation=Q(slerp(quat(start.rotation),quat(rotation),enter));
+        rotation=Q(slerp(quat(rotation),quat(topRotation),smooth((t-2.34)/.16)));
+      } else {
+        const target=point(inverseRigid(body),[-.02,.425,.73]);
+        const delta=sub(target,girdle.shoulder),targetDirection=norm(delta);
+        const forwardArc=norm([-.70,-.08,.71]);
+        const crownArc=norm([-.74,.65,.16]);
+        direction=t<2.73?norm(mixV(direction,crownArc,smooth((t-2.62)/.11))):
+          t<2.81?norm(mixV(crownArc,forwardArc,smooth((t-2.73)/.08))):
+          norm(mixV(forwardArc,targetDirection,smooth((t-2.81)/.23)));
+        const impactBody=bodyFrame({lean:.94,twist:0,sideLean:0,marchBob:0},I());
+        const impactTarget=point(inverseRigid(impactBody),[-.02,.425,.73]);
+        const impactGirdle=hammerShoulder(1,[.76,1.60,values[6]]);
+        const impactReach=Math.hypot(...sub(impactTarget,impactGirdle.shoulder));
+        reach=mix(reach,impactReach,descend);
+        const pitch=descend*Math.PI/2,bank=(1-descend)*Math.atan2(-topShaft[0],topShaft[1]);
+        const face=[0,-Math.sin(pitch),Math.cos(pitch)];
+        const shaft=[-Math.sin(bank),Math.cos(bank)*Math.cos(pitch),Math.cos(bank)*Math.sin(pitch)];
+        const world=[...cross(shaft,face),0,...shaft,0,...face,0,0,0,0,1];
+        rotation=Q(quat(mul(inverseRigid(body),world)));
+      }
+      const carried=hammerArmTransport(initialReach,direction);
+      let hand=add(girdle.shoulder,times(direction,reach));
+      let pole=point(carried,sub(initial.elbow,initial.shoulder));
+      pole=mixV(pole,[3,0,1],smooth((t-2.17)/.08));
+      let actualGirdle=girdle;
+      const recover=smooth((t-3.08)/.36);
+      if(recover>0) {
+        const previous=previousHammerPose(t,body),old=articulateHammerArm(previous.arm,1);
+        actualGirdle=hammerShoulder(1,mixV([.76,shoulderY,values[6]],previous.arm.shoulder,recover));
+        hand=mixV(hand,old.hand,recover);
+        pole=mixV(pole,sub(old.elbow,old.shoulder),recover);
+        rotation=Q(slerp(quat(rotation),quat(previous.rotation),recover));
+      }
+      const arm=solveJointArm(actualGirdle.shoulder,hand,pole,hammerUpperArm,hammerForearm);
+      arm.girdle=actualGirdle;
+      return {arm,rotation,windup:0};
+    }
+    let overheadHammerFrames=null;
+    function heldHammerPose(t,body) {
+      if(t<=2.05||t>=3.44)return approvedHammerPose(t,body);
+      const pose=overheadHammerPose(t,body);
+      if(!overheadHammerFrames) {
+        overheadHammerFrames=[];
+        const count=Math.ceil((3.44-2.05)*240);
+        let previous=null,orientations=null;
+        // Transport successive bone frames; a fixed start reference adds axial roll along curved arcs.
+        for(let i=0;i<=count;i++) {
+          const time=2.05+(3.44-2.05)*i/count;
+          const sampleBody=bodyFrame(stateAt("hammer",marchSeconds+time,"arrow"),I());
+          const sample=overheadHammerPose(time,sampleBody);
+          const arm=articulateHammerArm(sample.arm,1);
+          const axes={upper:norm(sub(arm.elbow,arm.shoulder)),forearm:norm(sub(arm.hand,arm.elbow))};
+          if(previous)for(const field of ["upper","forearm"])
+            orientations[field]=mul(hammerArmTransport(previous[field],axes[field]),orientations[field]);
+          else orientations={upper:Q(quat(arm.upper)),forearm:Q(quat(arm.forearm))};
+          overheadHammerFrames.push({time,upper:quat(orientations.upper),forearm:quat(orientations.forearm)});
+          previous=axes;
+        }
+      }
+      const frames=overheadHammerFrames,position=(t-2.05)/(3.44-2.05)*(frames.length-1);
+      const index=Math.min(frames.length-2,Math.floor(position)),u=position-index;
+      const recover=smooth((t-3.08)/.36),arm=pose.arm;
+      for(const [field,a,b] of [["upper",arm.shoulder,arm.elbow],["forearm",arm.elbow,arm.hand]]) {
+        const axis=norm(sub(b,a)),carried=slerp(frames[index][field],frames[index+1][field],u);
+        const frame=Q(slerp(carried,quat(armSegment(a,b)),recover));
+        const x=norm(sub(frame.slice(0,3),times(axis,dot(frame.slice(0,3),axis))));
+        arm[field]=[...x,0,...axis,0,...cross(x,axis),0,...a,1];
+      }
+      return pose;
+    }
+    function elbowDrivenHammerGrip(pose,t) {
+      const start=hammerAttackTime(hammerPreviewSourceTime(70/previewFrameRate));
+      const blend=smooth((t-start)/.14)*(1-smooth((t-3.50)/.20));
+      if(blend===0)return pose;
+      const original=pose.arm,shaft=norm(pose.rotation.slice(4,7));
+      const grip=add(original.hand,times(pose.rotation.slice(8,11),.22));
+      const pole=mixV(sub(original.elbow,original.shoulder),[3,0,1],blend);
+      let rotation=pose.rotation,error=Infinity;
+      // The forearm determines grip roll around the handle; the weapon keeps its own frame.
+      for(let i=0;i<48;i++) {
+        const hand=sub(grip,times(rotation.slice(8,11),.22));
+        const arm=solveJointArm(original.shoulder,hand,pole,hammerUpperArm,hammerForearm);
+        const lower=norm(sub(arm.hand,arm.elbow));
+        const projected=sub(lower,times(shaft,dot(lower,shaft)));
+        if(Math.hypot(...projected)<1e-8)throw new Error("Undefined forearm grip plane at "+t);
+        const forward=norm(projected),goal=[...cross(shaft,forward),0,...shaft,0,...forward,0,0,0,0,1];
+        const target=Q(slerp(quat(pose.rotation),quat(goal),blend));
+        error=Math.hypot(...sub(target.slice(8,11),rotation.slice(8,11)));
+        rotation=Q(slerp(quat(rotation),quat(target),.5));
+        if(error<1e-7)break;
+      }
+      if(error>1e-6)throw new Error("Forearm grip solve did not converge at "+t+": "+error);
+      const arm=solveJointArm(original.shoulder,sub(grip,times(rotation.slice(8,11),.22)),
+        pole,hammerUpperArm,hammerForearm);
+      arm.girdle=original.girdle;
+      const upper=norm(sub(arm.elbow,arm.shoulder)),lower=norm(sub(arm.hand,arm.elbow));
+      const oldUpper=norm(sub(original.elbow,original.shoulder)),oldLower=norm(sub(original.hand,original.elbow));
+      const oldHinge=cross(oldUpper,oldLower),hinge=cross(upper,lower);
+      if(Math.hypot(...oldHinge)<1e-8||Math.hypot(...hinge)<1e-8)
+        throw new Error("Undefined right elbow hinge at "+t);
+      const oldAxis=norm(oldHinge),axis=norm(hinge),referenceX=original.upper.slice(0,3);
+      // Keep the humerus tied to the elbow plane, retaining the authored mesh offset.
+      const x=norm(add(times(axis,dot(referenceX,oldAxis)),
+        times(cross(upper,axis),dot(referenceX,cross(oldUpper,oldAxis)))));
+      arm.upper=[...x,0,...upper,0,...cross(x,upper),0,...arm.shoulder,1];
+      const gripX=rotation.slice(0,3),forearmX=sub(gripX,times(lower,dot(gripX,lower)));
+      if(Math.hypot(...forearmX)<1e-8)throw new Error("Undefined forearm roll at "+t);
+      const rollX=norm(forearmX),roll=[...rollX,0,...lower,0,...cross(rollX,lower),0,0,0,0,1];
+      const carried=Q(slerp(quat(original.forearm),quat(roll),blend));
+      const projectedX=sub(carried.slice(0,3),times(lower,dot(carried.slice(0,3),lower)));
+      if(Math.hypot(...projectedX)<1e-8)throw new Error("Undefined blended forearm roll at "+t);
+      const finalX=norm(projectedX);
+      arm.forearm=[...finalX,0,...lower,0,...cross(finalX,lower),0,...arm.elbow,1];
+      return {...pose,arm,rotation};
+    }
+    function quat(m) {
+      const trace=m[0]+m[5]+m[10];let q;
+      if(trace>0){const s=Math.sqrt(trace+1)*2;q=[(m[6]-m[9])/s,(m[8]-m[2])/s,(m[1]-m[4])/s,s/4];}
+      else if(m[0]>m[5]&&m[0]>m[10]){const s=Math.sqrt(1+m[0]-m[5]-m[10])*2;q=[s/4,(m[4]+m[1])/s,(m[8]+m[2])/s,(m[6]-m[9])/s];}
+      else if(m[5]>m[10]){const s=Math.sqrt(1+m[5]-m[0]-m[10])*2;q=[(m[4]+m[1])/s,s/4,(m[9]+m[6])/s,(m[8]-m[2])/s];}
+      else{const s=Math.sqrt(1+m[10]-m[0]-m[5])*2;q=[(m[8]+m[2])/s,(m[9]+m[6])/s,s/4,(m[1]-m[4])/s];}
+      return times(q,1/Math.hypot(...q));
+    }
+    function slerp(a,b,t) {
+      let d=dot(a,b);if(d<0){b=times(b,-1);d=-d;}
+      if(d>.9995){const q=mixV(a,b,t);return times(q,1/Math.hypot(...q));}
+      const angle=Math.acos(Math.min(1,d)),s=Math.sin(angle);
+      return add(times(a,Math.sin((1-t)*angle)/s),times(b,Math.sin(t*angle)/s));
+    }
+    function Q(q) {
+      const [x,y,z,w]=q;
+      return [1-2*(y*y+z*z),2*(x*y+z*w),2*(x*z-y*w),0,
+        2*(x*y-z*w),1-2*(x*x+z*z),2*(y*z+x*w),0,
+        2*(x*z+y*w),2*(y*z-x*w),1-2*(x*x+y*y),0,0,0,0,1];
+    }
+    function projectile(parts,m,kind,tag="incoming-cue") {
+      const start=parts.length;
+      if(kind==="arrow") {
+        box(parts,m,[0,0,.36],[.025,.025,.70],0xb09b6d);
+        box(parts,m,[0,0,0],[.055,.055,.10],0xc0c5b2);
+        box(parts,m,[0,0,.66],[.12,.02,.14],0xc4b899);
+      } else if(kind==="blade") {
+        box(parts,m,[0,.25,0],[.09,.65,.07],0xc0c5b2);
+        box(parts,m,[0,-.10,0],[.30,.045,.10],C.iron);
+        box(parts,m,[0,-.22,0],[.07,.20,.075],C.wood);
+      } else {
+        box(parts,m,[0,0,0],[.50,.28,.34],C.iron);
+        for(const x of [-.17,.17])box(parts,m,[x,0,0],[.065,.30,.36],0x9d9f88);
+        box(parts,m,[0,.40,0],[.07,.65,.07],C.wood);
+      }
+      for(let i=start;i<parts.length;i++)parts[i].tag=tag;
+    }
+    function looseArm(side,authored,body,lift,state) {
+      if(state.hammerRig)authored=articulateHammerArm(authored,side);
+      const upperLength=state.hammerRig?hammerUpperArm:.52,lowerLength=state.hammerRig?hammerForearm:.50;
+      const shoulder=point(body,authored.shoulder);
+      const startUpper=norm(sub(point(body,authored.elbow),shoulder));
+      const startLower=norm(sub(point(body,authored.hand),point(body,authored.elbow)));
+      const age=Math.max(0,state.deathTime-(state.cause==="arrow"?1.80:state.cause==="blade"?.85:.50));
+      const swing=Math.sin(age*7+side*.4)*Math.exp(-age*1.7);
+      const outward=sub(point(body,[side,0,0]),point(body,[0,0,0]));
+      const upperGoal=norm(add(times(outward,1.35+.18*swing),[0,-1,.24+.35*swing]));
+      const lowerGoal=norm(add(times(outward,.25-.10*swing),[0,-1,.70-.30*swing]));
+      function groundedDirection(origin,direction,length) {
+        const y=Math.max(direction[1],Math.min(.98,(.24-lift-origin[1])/length));
+        const horizontal=norm([direction[0],0,direction[2]]);
+        return [horizontal[0]*Math.sqrt(1-y*y),y,horizontal[2]*Math.sqrt(1-y*y)];
+      }
+      const u=groundedDirection(shoulder,norm(mixV(startUpper,upperGoal,state.loose)),upperLength);
+      const elbow=add(shoulder,times(u,upperLength));
+      let v=groundedDirection(elbow,norm(mixV(startLower,lowerGoal,state.loose)),lowerLength);
+      const inverse=inverseRigid(body),a=point(inverse,shoulder),b=point(inverse,elbow);
+      let c;
+      for(let iteration=0;iteration<12;iteration++) {
+        c=point(inverse,add(elbow,times(v,lowerLength)));
+        const fingers=[];
+        const wrist=state.hammerRig?chain(body,T(...c),relaxedWristRotation({shoulder:a,elbow:b,hand:c})):
+          chain(body,segment(b,c),T(0,lowerLength,0));
+        handArtwork(fingers,wrist,side,0,side>0?state.openRight:state.openLeft);
+        const penetration=.030-lift-minY(fingers);
+        if(penetration<=.00001)break;
+        if(iteration===11)throw new Error("Loose hand did not settle above the floor");
+        const y=Math.min(.98,v[1]+penetration/lowerLength+.0001),horizontal=norm([v[0],0,v[2]]);
+        v=[horizontal[0]*Math.sqrt(1-y*y),y,horizontal[2]*Math.sqrt(1-y*y)];
+      }
+      return {shoulder:a,elbow:b,hand:c,upper:segment(a,b),forearm:segment(b,c),girdle:authored.girdle};
+    }
+    function rightHandedHammer(frame) {
+      // Facing +Z puts anatomical right at -X; conjugation keeps mirrored box normals outward.
+      const vector=p=>[-p[0],p[1],p[2]];
+      const matrix=m=>m.map((value,i)=>value*(i%4===0?-1:1)*(i<4?-1:1));
+      const parts=items=>items.map(part=>({...part,m:matrix(part.m)}));
+      const arm=value=>({...value,shoulder:vector(value.shoulder),elbow:vector(value.elbow),
+        hand:vector(value.hand),upper:matrix(value.upper),forearm:matrix(value.forearm),
+        ...(value.girdle?{girdle:{...value.girdle,anchor:vector(value.girdle.anchor),
+          shoulder:vector(value.girdle.shoulder),rotation:matrix(value.girdle.rotation)}}:{})});
+      return {...frame,
+        parts:parts(frame.parts),actorParts:parts(frame.actorParts),weaponParts:parts(frame.weaponParts),
+        state:{...frame.state,hand:vector(frame.state.hand),supportHand:vector(frame.state.supportHand),
+          twist:-frame.state.twist,sideLean:-frame.state.sideLean,roll:-frame.state.roll},
+        diagnostics:{...frame.diagnostics,
+          hands:frame.diagnostics.hands.map(hand=>({...hand,target:vector(hand.target),arm:arm(hand.arm),palm:matrix(hand.palm)})),
+          knees:frame.diagnostics.knees.map(knee=>({...knee,shin:matrix(knee.shin),foot:matrix(knee.foot)}))},
+        root:matrix(frame.root),body:matrix(frame.body),held:matrix(frame.held),weaponMatrix:matrix(frame.weaponMatrix)};
+    }
+    function build(index,kind,t,cause,review=null) {
+      if(review)t=marchSeconds+review.time;
+      else if(kind==="hammer"&&t>=marchSeconds&&t<deathStart)
+        t=marchSeconds+hammerAttackTime(t-marchSeconds);
+      const state=stateAt(kind,t,cause),local=[];
+      if(review) {
+        [state.lean,state.twist,state.sideLean]=review.body;
+        state.supportHand=review.left;
+        state.reviewStep=review.time<1?0:.24;
+      }
+      const drop=state.phase==="dying"&&cause==="crushing"?-.48*state.buckle:0;
+      const collapse=chain(T(0,.15+drop,0),RX(state.fall),RZ(state.roll),T(0,-.15,0));
+      const body=bodyFrame(state,collapse);
+      const armState={...state};
+      armState.hammerRig=kind==="hammer";
+      const releaseAt=state.cause==="blade"?.75:.28;
+      const openStart=Math.max(.06,releaseAt-.24),openEnd=releaseAt-.08;
+      const opening=state.phase==="dying"?smooth((state.deathTime-openStart)/(openEnd-openStart)):0;
+      armState.openRight=opening;
+      armState.openLeft=0;
+      armState.gripRight=Math.max(1-state.release,state.clutch);
+      armState.gripLeft=kind==="spear"&&state.phase==="attacking"?smooth(state.contact/.35):state.clutch;
+      const orientation=RX(state.angle),gripOffset=point(orientation,[0,0,.22]);
+      armState.bends={right:point(orientation,[1,.4,-1]),left:mixV([-1,0,-1],[-1,3,1],smooth((state.supportHand[2]-.20)/.25))};
+      if(state.phase==="walking"||state.phase==="dying")armState.bends={right:[.35,-1,-.6],left:[-.35,-1,-.6]};
+      if(state.phase==="dying"&&cause==="blade")armState.bends.left=[-1,1,3];
+      if(kind==="hammer"&&state.phase==="attacking")armState.bends.left=[-1,-1,-1];
+      let heldLocal;
+      if(kind==="hammer"&&state.phase==="attacking") {
+        let pose=review?hammerReviewArm(review):heldHammerPose(t-marchSeconds,body);
+        pose={...pose,arm:articulateHammerArm(pose.arm,1)};
+        const time=t-marchSeconds;
+        if(time>=3.44)pose={...pose,arm:{...pose.arm,
+          upper:armSegment(pose.arm.shoulder,pose.arm.elbow),forearm:armSegment(pose.arm.elbow,pose.arm.hand)}};
+        const weaponBody=chain(T(...pose.arm.hand),pose.rotation,T(0,-hammerRearGrip,.22));
+        const right=review?pose:elbowDrivenHammerGrip(pose,time);
+        armState.bends.left=[-1,.10,1.2];
+        armState.drivenArms={right:right.arm};
+        armState.hand=right.arm.hand;
+        armState.palms={
+          right:chain(T(...right.arm.hand),right.rotation),
+          left:T(...state.supportHand)
+        };
+        heldLocal=mul(body,weaponBody);
+        if(review) {
+          const requested=hammerShoulder(-1,[-.76,1.60,-.15]);
+          const left=solveJointArm(requested.shoulder,review.left,[-1,-1,-1],hammerUpperArm,hammerForearm);
+          left.girdle=requested;
+          armState.drivenArms.left=left;
+          armState.supportHand=left.hand;
+          armState.freeLeftRotation=freeWristRotation(left);
+          armState.palms.left=chain(T(...left.hand),armState.freeLeftRotation);
+          armState.supportAlignment=0;
+          armState.gripLeft=0;
+        } else {
+        const catchProgress=smooth((time-2.23)/.07);
+        const approach=catchProgress*(1-smooth((time-3.60)/.10));
+        const supportGrip=chain(weaponBody,T(0,hammerFrontGripAt(time),0));
+        const supportRotation=mul(pose.rotation,RY(Math.PI/2));
+        let supportJoint=sub(point(supportGrip,[0,0,0]),point(supportRotation,[0,0,.22]));
+        supportJoint=sub(supportJoint,point(supportRotation,[0,0,.30*smooth((time-3.60)/.06)]));
+        armState.supportHand=mixV(state.supportHand,supportJoint,approach);
+        const approachArc=time<2.40?[-.04,.04,.08]:[-.12,.06,.22];
+        armState.supportHand=add(armState.supportHand,times(approachArc,Math.sin(approach*Math.PI)));
+        const retract=smooth((time-.75)/.35)*(1-smooth((time-1.70)/.45));
+        const overhead=catchProgress*(1-smooth((time-3.08)/.36));
+        const restingShoulderZ=.10-.45*retract+(.28+.05*smooth((time-2.30)/.20))*
+          smooth((time-2.15)/.35)*(1-smooth((time-3.60)/.10));
+        const shoulderTrack=keyed("hammerOverheadShoulder",time);
+        const shoulderZ=mix(restingShoulderZ,shoulderTrack[0],overhead);
+        const shoulderY=mix(1.60,shoulderTrack[1],overhead);
+        const initialBend=mixV([-1,-1,-1],[-1,-3,1.2],smooth((time-2.15)/.35));
+        const groundBend=mixV(initialBend,[-1,-2,1.2],smooth((time-2.72)/.32));
+        const leftBend=mixV(groundBend,[-.35,-1,-.6],smooth((time-3.60)/.10));
+        let supportArm;
+        if(time>2.05&&time<3.44) {
+          const supportGirdle=hammerShoulder(-1,[-.76,shoulderY,shoulderZ]);
+          let preferred=leftBend;
+          if(time<2.17) {
+            const original=articulateHammerArm(solveArm(-1,armState.supportHand,leftBend,shoulderZ),-1);
+            preferred=mixV(norm(sub(original.elbow,original.shoulder)),norm(leftBend),smooth((time-2.05)/.12));
+          }
+          const elbowOut=smooth((time-2.34)/.14)*(1-smooth((time-3.08)/.36));
+          preferred=mixV(preferred,[-3,-1,2],elbowOut);
+          supportArm=solveJointArm(supportGirdle.shoulder,armState.supportHand,preferred,hammerUpperArm,hammerForearm);
+          supportArm.girdle=supportGirdle;
+        } else supportArm=solveArm(-1,armState.supportHand,leftBend,shoulderZ);
+        if(time<.40) {
+          const rest=solveArm(-1,[-.69,1.03,.04],[-.35,-1,-.6]),blend=smooth(time/.40);
+          const elbow=add(supportArm.shoulder,times(norm(mixV(sub(rest.elbow,rest.shoulder),
+            sub(supportArm.elbow,supportArm.shoulder),blend)),.52));
+          const hand=add(elbow,times(norm(mixV(sub(rest.hand,rest.elbow),
+            sub(supportArm.hand,supportArm.elbow),blend)),.50));
+          supportArm={...supportArm,elbow,hand,upper:segment(supportArm.shoulder,elbow),forearm:segment(elbow,hand)};
+          armState.supportHand=hand;
+        }
+        armState.drivenArms.left=supportArm;
+        if(time<.50) {
+          armState.freeLeftRotation=relaxedWristRotation(articulateHammerArm(supportArm,-1));
+        }
+        armState.palms.left=chain(T(...armState.supportHand),supportRotation);
+        armState.supportAlignment=catchProgress;
+        armState.gripLeft=smooth((time-2.30)/.02)*(1-smooth((time-3.56)/.04));
+        armState.openLeft=smooth((time-2.16)/.16)*(1-armState.gripLeft)*(1-smooth((time-3.66)/.04));
+        if(time>3.60) {
+          const releaseBody=bodyFrame(stateAt("hammer",marchSeconds+3.60,"arrow"),I());
+          const releasePose=heldHammerPose(3.60,releaseBody);
+          const restArm=articulateHammerArm(solveArm(-1,[-.69,1.03,.04],[-.35,-1,-.6]),-1);
+          const start=quat(mul(releasePose.rotation,RY(Math.PI/2)));
+          const rotationAt=t=>{const b=bodyFrame(stateAt("hammer",marchSeconds+t,"arrow"),I());return quat(mul(heldHammerPose(t,b).rotation,RY(Math.PI/2)));};
+          const align=q=>dot(start,q)<0?times(q,-1):q;
+          const velocity=times(sub(align(rotationAt(3.6001)),align(rotationAt(3.5999))),5000);
+          const end=align(quat(relaxedWristRotation(restArm))),u=clamp((time-3.60)/.10);
+          // Carry the release angular velocity into a single quaternion curve, not a new zero-speed ease.
+          const q=start.map((v,j)=>(2*u*u*u-3*u*u+1)*v+(u*u*u-2*u*u+u)*.10*velocity[j]+(-2*u*u*u+3*u*u)*end[j]);
+          armState.freeLeftRotation=Q(times(q,1/Math.hypot(...q)));
+        }
+        }
+      } else if(kind==="spear"&&state.phase==="attacking") {
+        armState.bends={
+          right:mixV([1,0,-1],[1,.50,1],smooth((state.angle-.5)/.9)),
+          left:mixV(armState.bends.left,[-1,0,1],state.contact)
+        };
+        const inverse=inverseRigid(body);
+        const rightJoint=sub(state.hand,gripOffset);
+        const frontGrip=point(chain(T(...state.hand),orientation),[0,state.support,0]);
+        const leftJoint=sub(frontGrip,gripOffset);
+        const lift=smooth(state.contact/.35);
+        const blend=smooth((state.angle-1.15)/.42)*smooth((state.contact-.35)/.65);
+        armState.openLeft=smooth((lift-.8)/.2)*(1-smooth((blend-.995)/.005));
+        const low=mixV(point(body,[-.69,1.16,.12]),point(body,[-1.10,1.10,.85]),smooth(lift/.5));
+        const approach=mixV(low,point(body,[-1.12,1.85,.90]),smooth((lift-.5)/.5));
+        const raised=add(leftJoint,[0,.36,0]);
+        const left=mixV(mixV(approach,raised,smooth(blend/.65)),leftJoint,smooth((blend-.65)/.23));
+        armState.hand=point(inverse,rightJoint);
+        armState.supportHand=point(inverse,left);
+        const leftRotation=Q(slerp(quat(body),quat(orientation),smooth((blend-.30)/.30)));
+        armState.palms={
+          right:chain(inverse,T(...rightJoint),orientation),
+          left:chain(inverse,T(...left),leftRotation)
+        };
+        heldLocal=chain(T(...state.hand),orientation);
+      } else {
+        const withdraw=state.phase==="dying"?.30*smooth((state.deathTime-openEnd)/(releaseAt-openEnd)):0;
+        armState.hand=add(sub(sub(state.hand,gripOffset),point(orientation,[0,0,withdraw])),
+          [0,.12*state.release,-.20*state.release]);
+        armState.hand=mixV(armState.hand,[1.10,1.04,.60],smooth(state.release));
+        armState.palms={
+          right:chain(T(...armState.hand),orientation),
+          left:T(...state.supportHand)
+        };
+        heldLocal=chain(body,T(...state.hand),orientation,T(0,kind==="hammer"?-hammerRearGrip:0,0));
+      }
+      if(state.phase==="dying"&&cause==="arrow") {
+        const reach=smooth((state.deathTime-.40)/.52);
+        for(const side of [-1,1]) {
+          const key=side>0?"right":"left";
+          const rotation=chain(RX(Math.PI/2),RY(-side*Math.PI/4));
+          const joint=[side*.101,1.451,side>0?.52:.84];
+          const start=side>0?armState.hand:armState.supportHand;
+          const approach=mixV(start,[side*1.10,1.15,.80],smooth(reach/.45));
+          const target=mixV(mixV(approach,joint,smooth((reach-.45)/.55)),
+            [side*1.10,1.30,.86],smooth((state.deathTime-1.45)/.35));
+          if(side>0)armState.hand=target;else armState.supportHand=target;
+          const pose=chain(T(...target),rotation);
+          armState.palms[key]=mul(T(...target),Q(slerp(quat(armState.palms[key]),quat(pose),reach)));
+          armState.bends[key]=mixV(armState.bends[key],[side,2,3],smooth((reach-.45)/.55));
+        }
+        armState.openRight=mix(opening,0,reach);
+      }
+      torso(local,body,index);
+      const diagnostics=limbs(local,body,collapse,armState,index,"legs");
+      let lift=-minY(local)+.030;
+      for(let iteration=0;iteration<12;iteration++) {
+        if(state.loose>0) {
+          armState.looseArms={};
+          for(const side of [-1,1]) {
+            const key=side>0?"right":"left",target=side>0?armState.hand:armState.supportHand;
+            armState.looseArms[key]=looseArm(side,solveArm(side,target,armState.bends[key]),body,lift,armState);
+          }
+        }
+        const arms=[];
+        diagnostics.hands=limbs(arms,body,collapse,armState,index,"arms").hands;
+        shoulderArmor(arms,body,diagnostics.hands,index);
+        const mounts=arms.filter(p=>/^(shoulder-|armor-shoulder|skull-shoulder)/.test(p.tag));
+        const correction=.030-lift-minY(mounts);
+        if(correction<=.00001) {local.push(...arms);break;}
+        if(iteration===11)throw new Error("Shoulder armor did not settle above the floor");
+        lift+=correction+.00001;
+      }
+      const root=T(0,lift,state.travel+state.push);
+      const actorParts=transformParts(local,root);
+      const parts=[...actorParts];
+      const held=mul(root,heldLocal);
+      const restingRotation=chain(RY(-.30),RX(Math.PI/2));
+      const restParts=[];weapon(restParts,restingRotation,kind);
+      const restPoint=[2.20,-minY(restParts)+.035,.35];
+      const location=mixV([held[12],held[13]-.08*opening,held[14]],restPoint,state.release);
+      const weaponMatrix=mul(T(...location),Q(slerp(quat(held),quat(restingRotation),state.release)));
+      const weaponParts=[];
+      weapon(weaponParts,weaponMatrix,kind);
+      parts.push(...weaponParts);
+      if(state.phase==="dying") {
+        const d=state.deathTime;
+        if(cause==="arrow"&&d>=.23)projectile(parts,chain(root,body,T(0,1.35,.32)),"arrow","lodged-arrow");
+        if(d<.58) {
+          const approach=smooth(d/.23);
+          if(cause==="arrow"&&d<.23)projectile(parts,chain(root,body,T(0,1.35,mix(2.6,.32,approach))),cause);
+          if(cause==="blade")projectile(parts,chain(root,T(-.30,1.25,.70),RZ(mix(-1.1,.40,approach)),RX(.25)),cause);
+          if(cause==="crushing")projectile(parts,chain(root,T(0,mix(2.9,1.75,approach),.30),RZ(-.10)),cause);
+        }
+        if(d>=.22&&d<.39) {
+          const hit=chain(root,body,T(0,1.35,.42));
+          for(const x of [-.16,.16])box(parts,hit,[x,0,0],[.08,.035,.045],0xddcf9f);
+          for(const y of [-.16,.16])box(parts,hit,[0,y,0],[.035,.08,.045],0xddcf9f);
+        }
+      }
+      const frame={parts,actorParts,weaponParts,state,diagnostics,root,body,held,weaponMatrix,lift};
+      return kind==="hammer"?rightHandedHammer(frame):frame;
+    }
+    const floor=[];
+    box(floor,I(),[0,-.12,.50],[4.8,.24,4.0],0x3c3427);
+    box(floor,I(),[0,.005,.50],[4.8,.025,4.0],0x253323);
+    for(let x=-2.1;x<2.2;x+=.6)for(let z=-1.2;z<2.2;z+=.6)
+      if((Math.round((x+2.1)/.6)+Math.round((z+1.2)/.6))%2===0)box(floor,I(),[x,.022,z],[.59,.01,.59],0x30412a);
+    box(floor,I(),[-1.28,.035,.10],[.065,.014,1.0],0x829176);
+    for(const side of [-1,1])box(floor,chain(T(-1.28+side*.12,.035,.49),RY(side*.75)),[0,0,0],[.065,.014,.34],0x829176);
+    function lookAt(eye,target) {
+      const z=norm(sub(eye,target)),x=norm(cross([0,1,0],z)),y=cross(z,x);
+      return [x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot(x,eye),-dot(y,eye),-dot(z,eye),1];
+    }
+    function perspective(fov,aspect,near,far) {
+      const f=1/Math.tan(fov/2),range=1/(near-far);
+      return [f/aspect,0,0,0,0,f,0,0,0,0,(far+near)*range,-1,0,0,2*far*near*range,0];
+    }
+    const camera={yaw:.58,pitch:.32,distance:6.9};
+    function viewProjection(aspect) {
+      // Keep the raised hammer visible without changing the approved reference-view framing.
+      const targetY=weapons[selectedWeapon]==="hammer"&&reviewPose<0?1.70:1.12;
+      const target=[0,targetY,.45],c=Math.cos(camera.pitch),d=camera.distance;
+      const eye=add(target,[Math.sin(camera.yaw)*c*d,Math.sin(camera.pitch)*d,Math.cos(camera.yaw)*c*d]);
+      return mul(perspective(43*degrees,aspect,.05,30),lookAt(eye,target));
+    }
+    function renderer(canvas) {
+      const gl=canvas.getContext("webgl",{alpha:false,antialias:true,preserveDrawingBuffer:true});
+      if(!gl)throw new Error("WebGL is unavailable. This study requires a depth-tested 3D context.");
+      function shader(type,source) {
+        const s=gl.createShader(type);if(!s)throw new Error("Cannot create WebGL shader");
+        gl.shaderSource(s,source);gl.compileShader(s);
+        if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));
+        return s;
+      }
+      const program=gl.createProgram();if(!program)throw new Error("Cannot create WebGL program");
+      gl.attachShader(program,shader(gl.VERTEX_SHADER,"attribute vec3 p;attribute vec3 c;uniform mat4 vp;varying vec3 color;void main(){color=c;gl_Position=vp*vec4(p,1.0);}"));
+      gl.attachShader(program,shader(gl.FRAGMENT_SHADER,"precision mediump float;varying vec3 color;void main(){gl_FragColor=vec4(color,1.0);}"));
+      gl.linkProgram(program);
+      if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program));
+      const buffer=gl.createBuffer();if(!buffer)throw new Error("Cannot create WebGL buffer");
+      gl.useProgram(program);gl.bindBuffer(gl.ARRAY_BUFFER,buffer);
+      for(const [name,offset] of [["p",0],["c",12]]) {
+        const location=gl.getAttribLocation(program,name);gl.enableVertexAttribArray(location);
+        gl.vertexAttribPointer(location,3,gl.FLOAT,false,24,offset);
+      }
+      gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);gl.clearColor(0,0,0,1);
+      const vp=gl.getUniformLocation(program,"vp");
+      const output={canvas,gl,frame:null,vertices:0};
+      output.draw=frame=>{
+        const ratio=Math.min(devicePixelRatio||1,2);
+        const width=Math.max(1,Math.round(canvas.clientWidth*ratio)),height=Math.max(1,Math.round(canvas.clientHeight*ratio));
+        if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;}
+        gl.viewport(0,0,width,height);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+        gl.uniformMatrix4fv(vp,false,new Float32Array(viewProjection(width/height)));
+        const data=[];
+        for(const part of [...floor,...frame.parts]) {
+          const vertices=corners.map(p=>point(part.m,p)),color=rgb(part.color);
+          for(const face of faces) {
+            const [a,b,c,d]=face.map(i=>vertices[i]);
+            const normal=norm(cross(sub(b,a),sub(c,a)));
+            const shade=.64+.36*Math.max(0,dot(normal,light));
+            const lit=color.map(v=>v*shade);
+            for(const p of [a,b,c,a,c,d])data.push(...p,...lit);
+          }
+        }
+        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.DYNAMIC_DRAW);
+        gl.drawArrays(gl.TRIANGLES,0,data.length/6);
+        output.frame=frame;output.vertices=data.length/6;
+      };
+      return output;
+    }
+    const weapons=["axe","hammer","spear"],causes=["arrow","blade","crushing"];
+    const animationPhases=[
+      {name:"walking",start:0,length:marchSeconds},
+      {name:"attacking",start:marchSeconds,length:attackSeconds},
+      {name:"dying",start:deathStart,length:deathSeconds}
+    ];
+    const enabledPhases=new Set(["attacking"]);
+    const previewFrameRate=30;
+    const frameScrubber=document.getElementById("frame-scrubber");
+    function phasePlaybackLength(phase) {
+      return phase.length+(phase.name==="attacking"&&weapons[selectedWeapon]==="hammer"?1/previewFrameRate:0);
+    }
+    const playbackDuration=()=>animationPhases.reduce((sum,phase)=>sum+(enabledPhases.has(phase.name)?phasePlaybackLength(phase):0),0);
+    function hammerPreviewSourceTime(time) {
+      const start=29/previewFrameRate,end=31/previewFrameRate;
+      if(time<=start)return time;
+      if(time>=end)return time-1/previewFrameRate;
+      // Insert a midpoint frame with continuous playback speed at both ends.
+      const u=(time-start)/(end-start);
+      return start+(2*u*u*u-3*u*u+2*u)/previewFrameRate;
+    }
+    function hammerPreviewDisplayTime(time) {
+      const start=29/previewFrameRate,end=30/previewFrameRate;
+      if(time<=start)return time;
+      if(time>=end)return time+1/previewFrameRate;
+      let low=start,high=31/previewFrameRate;
+      for(let i=0;i<32;i++) {
+        const middle=(low+high)/2;
+        if(hammerPreviewSourceTime(middle)<time)low=middle;else high=middle;
+      }
+      return (low+high)/2;
+    }
+    function playbackAt(t) {
+      const total=playbackDuration();
+      if(total===0)return {time:0,phase:"none"};
+      let remaining=Math.max(0,Math.min(t,total-.000001));
+      for(const phase of animationPhases) {
+        if(!enabledPhases.has(phase.name))continue;
+        const length=phasePlaybackLength(phase);
+        if(remaining<length) {
+          const sourceTime=phase.name==="attacking"&&weapons[selectedWeapon]==="hammer"?
+            hammerPreviewSourceTime(remaining):remaining;
+          return {time:phase.start+sourceTime,phase:phase.name};
+        }
+        remaining-=length;
+      }
+      throw new Error("Enabled animation timeline could not be resolved");
+    }
+    function elapsedForPlayback(playback) {
+      if(playback.phase==="none")return 0;
+      let time=0;
+      for(const phase of animationPhases) {
+        if(!enabledPhases.has(phase.name))continue;
+        if(phase.name===playback.phase) {
+          const sourceTime=playback.time-phase.start;
+          return time+(phase.name==="attacking"&&weapons[selectedWeapon]==="hammer"?
+            hammerPreviewDisplayTime(sourceTime):sourceTime);
+        }
+        time+=phasePlaybackLength(phase);
+      }
+      throw new Error("Playback phase is not enabled");
+    }
+    let views=[],elapsed=0,cycle=0,causeChoice="auto",selectedWeapon=1,running=!matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let reviewPose=-1,referenceAngle="front",reviewCamera=null;
+    let previous=performance.now(),lastDraw=0,request=0;
+    function showError(error) {
+      document.getElementById("error").textContent=String(error.message||error);
+      running=false;document.getElementById("toggle").textContent="Play";
+    }
+    addEventListener("error",event=>showError(event.error||event.message));
+    try { views=weapons.map((_,i)=>renderer(document.getElementById("orc-"+(i+1)))); }
+    catch(error) { showError(error);throw error; }
+    function updateReviewMode() {
+      const active=reviewPose>=0;
+      document.querySelector("main").classList.toggle("reviewing",active);
+      document.getElementById("reference-study").hidden=!active;
+      document.getElementById("pose-controls").hidden=!active;
+      document.getElementById("toggle").disabled=active;
+      document.getElementById("restart").textContent=active?"First pose":"Restart sequence";
+      document.querySelectorAll("[data-animation-phase],[data-cause]").forEach(button=>button.disabled=active);
+      document.getElementById("review-poses").setAttribute("aria-pressed",String(active));
+      document.getElementById("review-animation").setAttribute("aria-pressed",String(!active));
+    }
+    function leavePoseReview() {
+      if(reviewPose<0)return;
+      reviewPose=-1;
+      Object.assign(camera,reviewCamera);
+      reviewCamera=null;
+    }
+    function selectWeapon(index) {
+      leavePoseReview();
+      const playback=playbackAt(elapsed);
+      selectedWeapon=index;
+      elapsed=elapsedForPlayback(playback);
+      weapons.forEach((weapon,i)=>{
+        document.getElementById(weapon+"-study").hidden=i!==selectedWeapon;
+        document.querySelector('[data-weapon="'+weapon+'"]').setAttribute("aria-pressed",String(i===selectedWeapon));
+      });
+      renderAt(elapsed);
+    }
+    function enterPoseReview() {
+      if(reviewPose>=0)return;
+      selectWeapon(1);
+      reviewCamera={...camera};
+      reviewPose=0;
+      referenceAngle="front";
+      Object.assign(camera,{yaw:0,pitch:.18});
+      setRunning(false);
+      renderAt(elapsed);
+    }
+    function renderAt(t) {
+      updateReviewMode();
+      if(reviewPose>=0) {
+        const pose=hammerReviewPoses[reviewPose];
+        views[1].draw(build(2,"hammer",marchSeconds+pose.time,"arrow",pose));
+        document.body.dataset.phase="pose-review";
+        document.body.dataset.cause="none";
+        document.getElementById("cause-label").textContent="REFERENCE / NO HIT";
+        document.getElementById("phase").textContent="KEY POSES / NOT ANIMATED";
+        document.getElementById("elapsed").textContent="APPROVED KEY-POSE COMPARISON";
+        document.getElementById("scrubber-label").textContent="REFERENCE POSE";
+        document.getElementById("scrubber-help").textContent="Step through the six approved poses with the bar or arrow keys. Front/Side reference changes the source image and camera. Current animation returns to the previous playback position.";
+        frameScrubber.max=String(hammerReviewPoses.length-1);
+        frameScrubber.value=String(reviewPose);
+        frameScrubber.disabled=false;
+        frameScrubber.setAttribute("aria-valuetext",pose.name+", approved key pose");
+        document.getElementById("frame-number").textContent=(reviewPose+1)+" / "+hammerReviewPoses.length;
+        document.getElementById("pose-name").textContent=pose.name;
+        document.getElementById("previous-pose").disabled=reviewPose===0;
+        document.getElementById("next-pose").disabled=reviewPose===hammerReviewPoses.length-1;
+        document.getElementById("reference-time").textContent=referenceAngle.toUpperCase()+" / "+pose[referenceAngle].toFixed(2)+"s / "+pose.name;
+        for(const angle of ["front","side"])
+          document.getElementById("reference-"+angle).setAttribute("aria-pressed",String(referenceAngle===angle));
+        const image=document.getElementById("reference-image");
+        const source="orc-swing-pose-"+String(reviewPose+1).padStart(2,"0")+"-"+referenceAngle+".jpg";
+        if(image.getAttribute("src")!==source)image.src=source;
+        image.alt=referenceAngle+" video reference: "+pose.name+" at "+pose[referenceAngle].toFixed(2)+" seconds";
+        document.getElementById("orc-2").setAttribute("aria-label","Proposed orc reference pose: "+pose.name);
+        return;
+      }
+      document.getElementById("scrubber-label").textContent="ANIMATION FRAME";
+      document.getElementById("scrubber-help").textContent="Drag or use arrow keys to inspect frames. Scrubbing pauses; Play resumes from the selected frame.";
+      document.getElementById("orc-2").setAttribute("aria-label","Three-dimensional hammer orc walking, attacking and dying");
+      const playback=playbackAt(t),displayTime=t;
+      t=playback.time;
+      const cause=causeChoice==="auto"?causes[cycle%causes.length]:causeChoice;
+      views[selectedWeapon].draw(build(selectedWeapon+1,weapons[selectedWeapon],t,cause));
+      const phase=playback.phase;
+      document.body.dataset.phase=phase;document.body.dataset.cause=cause;
+      document.getElementById("phase").textContent=phase==="none"?"PHASES OFF / HELD POSE":phase==="walking"?"ANGRY MARCH":
+        phase==="dying"&&t>deathStart+2.4?"DYING / FALLEN HOLD":phase.toUpperCase();
+      document.getElementById("elapsed").textContent=displayTime.toFixed(1)+" / "+playbackDuration().toFixed(1)+"s";
+      const lastFrame=Math.max(0,Math.round(playbackDuration()*previewFrameRate));
+      const frame=Math.min(lastFrame,Math.round(displayTime*previewFrameRate));
+      frameScrubber.max=String(lastFrame);
+      frameScrubber.value=String(frame);
+      frameScrubber.disabled=playbackDuration()===0;
+      frameScrubber.setAttribute("aria-valuetext","Frame "+frame+" of "+lastFrame+", "+phase);
+      document.getElementById("frame-number").textContent=frame+" / "+lastFrame;
+      document.getElementById("cause-label").textContent=cause.toUpperCase();
+      const attackTime=hammerAttackTime(t-marchSeconds);
+      const action=phase==="none"?"PHASES OFF":phase==="walking"?"MARCH / RIGHT-HANDED":phase==="dying"?"DYING":
+        attackTime<1.28?"FOREHAND / ORC LEFT":attackTime<1.58?"BACKHAND WINDUP / ORC LEFT":
+        attackTime<2.05?"BACKHAND / ORC RIGHT":attackTime<2.28?"DROP / CENTER GATHER":
+        attackTime<2.32?"BEGIN DRAW / CENTER CATCH":attackTime<2.50?"DRAW OVERHEAD / CLOSE GRIP":
+        attackTime<2.55?"SLOW TOP / OVERHEAD LOAD":attackTime<2.62?"TORSO LEADS / ARMS FOLLOW":
+        attackTime<3.08?"GROUND SMASH / TWO HANDS":
+        attackTime<3.56?"RECOVERY / TWO HANDS":"READY / LEFT RELEASE";
+      const hammerAction=document.getElementById("hammer-action");
+      if(hammerAction.textContent!==action)hammerAction.textContent=action;
+    }
+    function setRunning(value) {
+      running=reviewPose<0&&value;
+      const button=document.getElementById("toggle");
+      button.textContent=running?"Pause":"Play";button.setAttribute("aria-pressed",String(running));
+    }
+    document.getElementById("toggle").addEventListener("click",()=>setRunning(!running));
+    frameScrubber.addEventListener("input",()=>{
+      setRunning(false);
+      if(reviewPose>=0) {
+        reviewPose=Number(frameScrubber.value);
+        renderAt(elapsed);
+        return;
+      }
+      elapsed=Number(frameScrubber.value)/previewFrameRate;
+      renderAt(elapsed);
+    });
+    frameScrubber.addEventListener("pointerdown",()=>setRunning(false));
+    function restart(){
+      if(reviewPose>=0){reviewPose=0;renderAt(elapsed);return;}
+      elapsed=0;cycle=0;renderAt(0);
+    }
+    document.getElementById("restart").addEventListener("click",restart);
+    document.querySelectorAll("[data-animation-phase]").forEach(button=>button.addEventListener("click",()=>{
+      const phase=button.dataset.animationPhase;
+      if(enabledPhases.has(phase))enabledPhases.delete(phase);else enabledPhases.add(phase);
+      button.setAttribute("aria-pressed",String(enabledPhases.has(phase)));
+      restart();
+    }));
+    document.querySelectorAll("[data-weapon]").forEach(button=>button.addEventListener("click",()=>{
+      selectWeapon(weapons.indexOf(button.dataset.weapon));
+    }));
+    document.getElementById("review-poses").addEventListener("click",enterPoseReview);
+    document.getElementById("review-animation").addEventListener("click",()=>{leavePoseReview();renderAt(elapsed);});
+    for(const [id,step] of [["previous-pose",-1],["next-pose",1]])
+      document.getElementById(id).addEventListener("click",()=>{reviewPose+=step;renderAt(elapsed);});
+    for(const angle of ["front","side"])
+      document.getElementById("reference-"+angle).addEventListener("click",()=>{
+        referenceAngle=angle;
+        Object.assign(camera,{yaw:angle==="front"?0:-Math.PI/2,pitch:.18});
+        renderAt(elapsed);
+      });
+    document.getElementById("reference-image").addEventListener("error",()=>{
+      showError(new Error("Reference pose image could not be loaded. Keep the study and its paired reference images together."));
+    });
+    document.querySelectorAll("[data-cause]").forEach(button=>button.addEventListener("click",()=>{
+      causeChoice=button.dataset.cause;
+      document.querySelectorAll("[data-cause]").forEach(b=>b.setAttribute("aria-pressed",String(b===button)));
+      restart();
+    }));
+    document.getElementById("left").addEventListener("click",()=>{camera.yaw-=Math.PI/4;renderAt(elapsed);});
+    document.getElementById("right").addEventListener("click",()=>{camera.yaw+=Math.PI/4;renderAt(elapsed);});
+    document.getElementById("reset-camera").addEventListener("click",()=>{
+      Object.assign(camera,reviewPose>=0?
+        {yaw:referenceAngle==="front"?0:-Math.PI/2,pitch:.18,distance:6.9}:
+        {yaw:.58,pitch:.32,distance:6.9});
+      renderAt(elapsed);
+    });
+    for(const view of views) {
+      let drag=null;
+      view.canvas.addEventListener("pointerdown",event=>{
+        if(event.button!==0)return;
+        drag=[event.clientX,event.clientY];view.canvas.setPointerCapture(event.pointerId);
+      });
+      view.canvas.addEventListener("pointermove",event=>{
+        if(!drag)return;
+        camera.yaw-=(event.clientX-drag[0])*.009;
+        camera.pitch=Math.max(.10,Math.min(1.15,camera.pitch+(event.clientY-drag[1])*.007));
+        drag=[event.clientX,event.clientY];renderAt(elapsed);
+      });
+      for(const name of ["pointerup","pointercancel","lostpointercapture"])view.canvas.addEventListener(name,()=>{drag=null;});
+      view.canvas.addEventListener("wheel",event=>{
+        event.preventDefault();camera.distance=Math.max(4.4,Math.min(7.5,camera.distance+event.deltaY*.004));renderAt(elapsed);
+      },{passive:false});
+      view.canvas.addEventListener("webglcontextlost",event=>{event.preventDefault();showError(new Error("WebGL context lost. Reload the study to restore 3D rendering."));});
+    }
+    new ResizeObserver(()=>renderAt(elapsed)).observe(document.querySelector("main"));
+    document.addEventListener("visibilitychange",()=>{previous=performance.now();});
+    function animate(now) {
+      const delta=Math.min((now-previous)/1000,.1);previous=now;
+      const total=playbackDuration();
+      if(running&&!document.hidden&&total>0) {
+        elapsed+=delta;
+        if(elapsed>=total){elapsed%=total;cycle++;}
+        if(now-lastDraw>=1000/30){renderAt(elapsed);lastDraw=now;}
+      }
+      request=requestAnimationFrame(animate);
+    }
+    setRunning(running);renderAt(0);request=requestAnimationFrame(animate);
+    addEventListener("pagehide",()=>cancelAnimationFrame(request));
+  </script>
+</body>
+</html>

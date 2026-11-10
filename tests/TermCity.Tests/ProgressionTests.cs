@@ -11,14 +11,22 @@ public class ProgressionTests
     private static void SetPopulation(CityGame game, int population)
     {
         var cottage = game.Map.Content.Buildings.ForZone(ZoneType.Residential)!;
-        int cells = Math.Max(game.Stats.Residential.Zoned, Math.Max(100, (population + 4) / 5));
-        for (int i = 0; i < cells; i++)
+        var homes = game.Map.BuildingFootprints.Values
+            .Where(area => game.Map.BuildingAt(area.X, area.Y)!.Name == cottage.Name).ToList();
+        int count = Math.Max(homes.Count, Math.Max(100, (population + 4) / 5));
+        for (int y = 60; homes.Count < count && y + cottage.Height <= game.Map.Height; y += cottage.Height)
+            for (int x = 0; homes.Count < count && x + cottage.Width <= game.Map.Width; x += cottage.Width)
+            {
+                var area = cottage.FootprintAt(x, y);
+                if (area.Cells().Any(p => game.Map.BuildingAt(p.X, p.Y) is not null ||
+                    game.Map.HasRoad(p.X, p.Y) || game.Settlement is { } siege && siege.Bounds.Contains(p))) continue;
+                homes.Add(TestCity.Stamp(game, cottage.Name, new(x, y)));
+            }
+        Assert.Equal(count, homes.Count);
+        for (int i = 0; i < homes.Count; i++)
         {
-            int x = i % 100, y = 19 + i / 100 * 2;
-            game.Map.SetZone(x, y, ZoneType.Residential);
-            game.Map.SetBuilding(x, y, cottage);
             int people = Math.Clamp(population - i * 5, 0, 5);
-            game.Map.SetHousehold(x, y, new Household((byte)people, 0, 0));
+            game.Map.SetHousehold(homes[i].X, homes[i].Y, new Household((byte)people, 0, 0));
         }
         game.Touch();
     }
@@ -48,7 +56,7 @@ public class ProgressionTests
     {
         var game = TestCity.Flat(config: new GameConfig { StartingMoney = 200_000 }, rules: CityRules.Full);
         var keep = game.Map.Content.Buildings.Get("Stone Keep");
-        var area = new CellRect(100, 18, 1, 1);
+        var area = new CellRect(110, 40, 1, 1);
         SetPopulation(game, 499);
         string before = SaveGameStore.Serialize(game);
         Assert.False(game.CanPlaceBuilding(keep, area.X, area.Y));
@@ -104,11 +112,11 @@ public class ProgressionTests
     {
         var game = TestCity.Flat(rules: CityRules.Full);
         game.Paused = true;
-        game.Designate(new CellRect(10, 18, 30, 2), ZoneType.Residential);
+        game.Designate(new CellRect(10, 10, 50, 10), ZoneType.Residential);
         Assert.Contains("Woodlot", CityProgression.NextStep(game));
-        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Woodlot"), new CellRect(45, 18, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Woodlot"), new CellRect(65, 10, 1, 1)).Success);
         Assert.Contains("Town Well", CityProgression.NextStep(game));
-        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Town Well"), new CellRect(48, 19, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Town Well"), new CellRect(77, 10, 1, 1)).Success);
         Assert.Equal(38_000, game.Money);
         Assert.Equal(60, game.Finance.ServiceUpkeep);
         Assert.Contains("Resume", CityProgression.NextStep(game));
@@ -152,7 +160,7 @@ public class ProgressionTests
     {
         var game = TestCity.Flat(config: new GameConfig { MaxNewResidentialPerWeek = 0 }, rules: CityRules.Full);
         SetPopulation(game, 100);
-        Assert.True(game.Dezone(new CellRect(0, 19, 20, 1)).Success);
+        Assert.True(game.Dezone(new CellRect(0, 60, 100, 5)).Success);
         Assert.Equal(100, game.Stats.Population);
         Assert.Equal(100, game.HighestMilestone);
         game.AdvanceWeek();
@@ -165,8 +173,8 @@ public class ProgressionTests
     {
         var game = TestCity.Flat(config: new GameConfig { PlagueDeathPerWeek = 1 }, rules: CityRules.Full);
         SetPopulation(game, 99);
-        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Woodlot"), new CellRect(130, 18, 1, 1)).Success);
-        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Town Well"), new CellRect(134, 19, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Woodlot"), new CellRect(130, 45, 1, 1)).Success);
+        Assert.True(game.PlaceBuilding(game.Map.Content.Buildings.Get("Town Well"), new CellRect(142, 45, 1, 1)).Success);
         Assert.Equal(0, game.HighestMilestone);
         game.OutbreakWeeksLeft = 2;
         game.Day = 6;
@@ -184,10 +192,18 @@ public class ProgressionTests
     [MemberData(nameof(GatedBuildings))]
     public void EveryBuildingUnlocksAtItsExactMilestone(string name)
     {
-        var game = TestCity.Flat(config: new GameConfig { StartingMoney = 1_000_000 }, rules: CityRules.Full);
+        var game = TestCity.Flat(config: new GameConfig
+        {
+            StartingMoney = 1_000_000, MapWidth = 320, MapHeight = 192,
+        }, rules: CityRules.Full);
         var type = game.Map.Content.Buildings.Get(name);
         int threshold = CityProgression.RequiredPopulation(type);
         var area = new CellRect(110, 21, 1, 1);
+        if (SettlementState.RosterCapacity(type) > 0)
+        {
+            Assert.True(game.FoundSettlement(new(106, 25, 48, 48)).Success);
+            area = new(110, 29, 1, 1);
+        }
         SetPopulation(game, threshold - 1);
         Assert.False(game.PlaceBuilding(type, area).Success);
         Assert.Equal(0, game.QuoteBuilding(type, area).Cells);

@@ -99,7 +99,7 @@ public sealed class WaterPlan
 /// </summary>
 public sealed class WaterGenerator : ITerrainGenerator
 {
-    /// <summary>The map area (in cells) that the lake counts are tuned for: the default 160x96 map.</summary>
+    /// <summary>The original 160x96 reference area used to tune lake counts.</summary>
     private const double ReferenceArea = 160 * 96;
 
     /// <summary>Water that touches a map edge reaches no further than this from it.</summary>

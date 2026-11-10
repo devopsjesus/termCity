@@ -9,8 +9,12 @@ internal static class TestCity
     /// <summary>A flat, empty map with a single road running edge to edge along row 20.</summary>
     public static CityGame Flat(int seed = 1, GameConfig? config = null, CityRules rules = CityRules.Classic)
     {
-        var game = CityGame.New((config ?? new GameConfig { DefaultTaxRate = 0.05 }) with { Seed = seed, Rules = rules });
+        var game = CityGame.New((config ?? new GameConfig
+        {
+            MapWidth = 160, MapHeight = 96, DefaultTaxRate = 0.05,
+        }) with { Seed = seed, Rules = rules });
         var map = game.Map;
+        map.SetElevationProfile(TerrainElevationProfile.Current);
         var grass = map.Content.Terrains.Base;
         for (int y = 0; y < map.Height; y++)
         {
@@ -36,5 +40,22 @@ internal static class TestCity
         {
             game.AdvanceWeek();
         }
+    }
+
+    public static CellRect Stamp(CityGame game, string name, Pos anchor, Household? household = null)
+    {
+        var type = game.Map.Content.Buildings.Get(name);
+        var area = type.FootprintAt(anchor.X, anchor.Y);
+        Assert.All(area.Cells(), p =>
+        {
+            Assert.True(game.Map.InBounds(p), $"Fixture {name} extends outside the map at {p}.");
+            Assert.Null(game.Map.BuildingAt(p.X, p.Y));
+            Assert.False(game.Map.HasRoad(p.X, p.Y), $"Fixture {name} crosses a road at {p}.");
+            Assert.True(game.Map.TerrainAt(p.X, p.Y).Buildable);
+            game.Map.SetZone(p.X, p.Y, type.Zone);
+        });
+        game.Map.SetBuildingFootprint(type, area);
+        if (household is { } people) game.Map.SetHousehold(anchor.X, anchor.Y, people);
+        return area;
     }
 }

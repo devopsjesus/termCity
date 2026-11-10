@@ -1,4 +1,5 @@
 using TermCity.Core.Buildings;
+using TermCity.Core.World;
 
 namespace TermCity.Core.Simulation;
 
@@ -44,12 +45,11 @@ public static class CityProgression
                 game.Stats.Population) >= RequiredPopulation(building));
 
     public static bool IsServiceUnlocked(CityGame game, ServiceKind kind, int population) =>
-        kind == ServiceKind.None || game.Map.Content.Buildings.Any(b => b.PlayerPlaceable && b.Service == kind &&
-            RequiredPopulation(b) <= Math.Max(game.HighestMilestone, population));
+        kind == ServiceKind.None || game.ServiceUnlockGate(kind) is { } required &&
+            required <= Math.Max(game.HighestMilestone, population);
 
     public static int ServiceUnlockPopulation(CityGame game, ServiceKind kind) =>
-        game.Map.Content.Buildings.Where(b => b.PlayerPlaceable && b.Service == kind)
-            .Select(RequiredPopulation).DefaultIfEmpty(int.MaxValue).Min();
+        game.ServiceUnlockGate(kind) ?? int.MaxValue;
 
     public static int GoldBonus(CityGame game, CityMilestone milestone)
     {
@@ -72,6 +72,14 @@ public static class CityProgression
             .Select(b => b.Name).ToList();
         if (milestone.Population == 500) names.Add("burgage-house redevelopment (with a lord's seat and land value)");
         if (milestone.Population == 5_000) names.Add("tenement redevelopment (with a keep, clear land and land value)");
+        foreach (var kind in Enum.GetValues<WallDefenseKind>().Where(k => k != WallDefenseKind.None))
+        {
+            var defense = WallDefenses.Get(kind);
+            if (defense.RequiredPopulation == milestone.Population) names.Add(defense.Name);
+        }
+        if (milestone.Population == 100) names.Add("goblin attacks and automatic tower arrows");
+        if (milestone.Population == 250) names.Add("stone wall upgrade");
+        if (milestone.Population == 1_000) names.Add("iron-reinforced stone wall upgrade");
         return names.Count == 0 ? "All earlier buildings remain available." : "Now available: " + string.Join(", ", names) + ".";
     }
 
@@ -81,6 +89,17 @@ public static class CityProgression
 
     public static string NextStep(CityGame game)
     {
+        if (game.Settlement is { } settlement)
+        {
+            if (settlement.Walls.Any(w => w.Health < w.MaxHealth * 0.5))
+                return "Walls need repair! G: repair or upgrade walls. Right-click a wall for health.";
+            return game.HighestMilestone < 100
+                ? "P resumes settlement. Homes and jobs grow inside the bailey; no roads needed. G: Garrison."
+                : $"Wave {settlement.WaveNumber}: {settlement.Enemies.Count} attackers, {settlement.Defenders.Count} defenders. " +
+                    "G: recruit troops, mount defenses or repair walls. Click troops to command.";
+        }
+        if (game.Config.Scenario == CityScenario.Random && game.Stats.Residential.Zoned == 0)
+            return "G > enclosure: click a corner, move to size the bailey, click again. No roads needed.";
         if (game.Stats.Residential.Zoned == 0)
             return "1. Zone broad homesteads (R); leave service plots. Roads speed arrivals. F6: guide.";
         if (GrowthDiagnostics.ForZone(game, World.ZoneType.Residential).EligibleVacancies == 0 &&
@@ -111,7 +130,7 @@ public static class CityProgression
             return complaint.Reason == "Smoke"
                 ? "Smoke holds growth back. Move workshops away from homes; greens help. Keep fuel sources clean."
                 : $"Care: {complaint.Reason} holds growth back. Improve nearby cover; save for it. F6: Happiness.";
-        if (game.Stats.Residential.Zoned - game.Stats.Residential.Filled < 20)
+        if (game.VacantPlots(ZoneType.Residential).Count < 20)
             return "Expand a short connected track and zone homes. Leave service plots; do not spend your reserve.";
         if (game.Config.FullRules && game.Services.SeatRank == 0)
             return "7. Save for a Motte and Bailey (14,000g): settlers, defence and denser homes at 500 souls.";
