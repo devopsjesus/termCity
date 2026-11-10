@@ -233,6 +233,8 @@ public sealed record HouseAppearance(float Width, float Depth, float Height, flo
         foreach (var block in BlocksOnPlot(width, depth, level))
             Add(block.X - (block.Width + 0.04f) / 2, block.Z - (block.Depth + 0.04f) / 2,
                 block.X + (block.Width + 0.04f) / 2, block.Z + (block.Depth + 0.04f) / 2);
+        float front = OnPlot(width, depth, level).Depth / 2;
+        Add(-0.1f, front - 0.02f, 0.1f, front + 0.1f);
         return parts;
     }
 
