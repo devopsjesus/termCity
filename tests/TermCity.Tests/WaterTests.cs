@@ -350,7 +350,7 @@ public class WaterTests
         Assert.NotEqual(a.TerrainLayer, Build(12).Map.TerrainLayer);
 
         // The water in a full game is the same water.
-        var game = CityGame.New(new GameConfig { Seed = 11 });
+        var game = CityGame.New(new GameConfig { Seed = 11, MapWidth = a.Width, MapHeight = a.Height });
         for (int i = 0; i < a.TerrainLayer.Length; i++)
         {
             Assert.Equal(IsWater(a, i % a.Width, i / a.Width), IsWater(game.Map, i % a.Width, i / a.Width));

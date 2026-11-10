@@ -317,8 +317,11 @@ public static class FootpathLayout
             tangent = tangent.LengthSquared() > 0.000001f ? Vector2.Normalize(tangent) : Vector2.UnitX;
             float contactDistance = Math.Min(stroke.StartsAtRoad ? Vector2.Distance(samples[index], firstContact) : float.PositiveInfinity,
                 stroke.EndsAtRoad ? Vector2.Distance(samples[index], lastContact) : float.PositiveInfinity);
-            float flare = Math.Clamp(1 - contactDistance / 0.45f, 0, 1);
-            float radius = halfWidth * (1 + 0.85f * flare * flare * (3 - 2 * flare));
+            float flare = Math.Clamp(1 - contactDistance / 1.1f, 0, 1);
+            float capDistance = Math.Min(stroke.StartsAtRoad ? float.PositiveInfinity : Vector2.Distance(samples[index], points[0]),
+                stroke.EndsAtRoad ? float.PositiveInfinity : Vector2.Distance(samples[index], points[^1]));
+            float capWidth = points.Length > 2 ? 0.4f + 0.6f * Math.Clamp(capDistance / 0.9f, 0, 1) : 1;
+            float radius = halfWidth * capWidth * (1 + 0.85f * flare * flare * (3 - 2 * flare));
             var normal = new Vector2(-tangent.Y, tangent.X) * radius;
             sections.Add(new(samples[index], samples[index] + normal, samples[index] - normal));
         }
