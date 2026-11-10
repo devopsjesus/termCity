@@ -11,8 +11,11 @@ public partial class CityMinimap : Control
     public GameSession Session { get; set; } = null!;
     public Func<(float Azimuth, float Elevation)?> CameraOrientation { get; set; } = () => null;
     public Func<Vector2[]?> CameraFootprint { get; set; } = () => null;
+    public Func<Vector2[]?> PendingCameraFootprint { get; set; } = () => null;
+    public Action<Pos>? JumpRequested { get; set; }
     private readonly MinimapImage _image = new();
     private ImageTexture? _texture;
+    private byte[] _pixels = [];
     private int _version = -1;
     private bool _areaOverlaysVisible;
     private TermCity.Core.Simulation.CityGame? _game;
@@ -81,24 +84,33 @@ public partial class CityMinimap : Control
         var game = Session.Game;
         int width = ImageWidth;
         int height = ImageHeight;
-        if (_version != game.MapVersion || !ReferenceEquals(game, _game) ||
+        if (_version != game.Map.NavigationVersion || !ReferenceEquals(game, _game) ||
             _areaOverlaysVisible != Session.AreaOverlaysVisible)
         {
             UpdateSize();
             _image.Update(game, width, height, Session.AreaOverlaysVisible);
-            using var image = Image.CreateEmpty(width, height, false, Image.Format.Rgb8);
+            if (_pixels.Length != width * height * 3) _pixels = new byte[width * height * 3];
             for (int y = 0; y < height; y++)
             {
                 for (int x = 0; x < width; x++)
                 {
                     var color = _image[x, y];
-                    image.SetPixel(x, y, new Color(color.R / 255f, color.G / 255f, color.B / 255f));
+                    int pixel = (y * width + x) * 3;
+                    _pixels[pixel] = color.R;
+                    _pixels[pixel + 1] = color.G;
+                    _pixels[pixel + 2] = color.B;
                 }
             }
-            _texture?.Dispose();
-            _texture = ImageTexture.CreateFromImage(image);
+            using var image = Image.CreateFromData(width, height, false, Image.Format.Rgb8, _pixels);
+            if (_texture is not null && _texture.GetWidth() == width && _texture.GetHeight() == height)
+                _texture.Update(image);
+            else
+            {
+                _texture?.Dispose();
+                _texture = ImageTexture.CreateFromImage(image);
+            }
             TextureBuilds++;
-            _version = game.MapVersion;
+            _version = game.Map.NavigationVersion;
             _game = game;
             _areaOverlaysVisible = Session.AreaOverlaysVisible;
         }
@@ -134,14 +146,19 @@ public partial class CityMinimap : Control
                 DrawLine(walls[start], walls[start + 1], new Color("#ffcc50"), 3);
             }
         }
-        var outline = ViewOutline;
-        for (int corner = 0; corner < outline.Length; corner++)
+        DrawOutline(ViewOutline, Colors.White);
+        if (PendingCameraFootprint() is { } pending) DrawOutline(pending.Select(MapPointToScreen).ToArray(), new Color("#ffcc50"));
+
+        void DrawOutline(Vector2[] outline, Color color)
         {
-            var start = (outline[corner] - picture.Position) / picture.Size;
-            var end = (outline[(corner + 1) % outline.Length] - picture.Position) / picture.Size;
-            if (MinimapProjection.ClipSegment(new(start.X, start.Y), new(end.X, end.Y)) is { } segment)
-                DrawLine(picture.Position + new Vector2(segment.Start.X, segment.Start.Y) * picture.Size,
-                    picture.Position + new Vector2(segment.End.X, segment.End.Y) * picture.Size, Colors.White, 2);
+            for (int corner = 0; corner < outline.Length; corner++)
+            {
+                var start = (outline[corner] - picture.Position) / picture.Size;
+                var end = (outline[(corner + 1) % outline.Length] - picture.Position) / picture.Size;
+                if (MinimapProjection.ClipSegment(new(start.X, start.Y), new(end.X, end.Y)) is { } segment)
+                    DrawLine(picture.Position + new Vector2(segment.Start.X, segment.Start.Y) * picture.Size,
+                        picture.Position + new Vector2(segment.End.X, segment.End.Y) * picture.Size, color, 2);
+            }
         }
     }
 
@@ -185,7 +202,9 @@ public partial class CityMinimap : Control
         var fraction = (position - picture.Position) / picture.Size;
         var point = Projection.MapPoint(new(fraction.X, fraction.Y));
         var map = Session.Game.Map;
-        Session.CenterOn(new Pos(Math.Clamp((int)Math.Floor(point.X), 0, map.Width - 1),
-            Math.Clamp((int)Math.Floor(point.Y), 0, map.Height - 1)));
+        var target = new Pos(Math.Clamp((int)Math.Floor(point.X), 0, map.Width - 1),
+            Math.Clamp((int)Math.Floor(point.Y), 0, map.Height - 1));
+        if (JumpRequested is { } requested) requested(target);
+        else Session.CenterOn(target);
     }
 }

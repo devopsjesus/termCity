@@ -8,6 +8,7 @@ using TermCity.Core.Session;
 using TermCity.Core.Simulation;
 using TermCity.Core.Util;
 using TermCity.Core.World;
+using TermCity.Core.Features;
 
 namespace TermCity.Tests;
 
@@ -65,6 +66,87 @@ public class WallConstructionTests
     }
 
     [Fact]
+    public void ShortWallPurchasePreservesUnchangedCityGeometryAndRoadCaches()
+    {
+        var game = Founded();
+        var roads = game.Network;
+        int version = game.MapVersion;
+        Build(game, new(10.5f, 30.5f), new(13.5f, 30.5f));
+        Assert.Equal(version, game.MapVersion);
+        Assert.Same(roads, game.Network);
+        Assert.False(game.Settlement!.CanWalk(new(12.5f, 29.5f), new(12.5f, 31.5f)));
+    }
+
+    [Theory]
+    [InlineData(3)]
+    [InlineData(30)]
+    public void AWallPurchaseCommitsOneTopologyInvalidationRegardlessOfRunLength(int length)
+    {
+        var game = Founded();
+        var siege = game.Settlement!;
+        int topology = siege.TopologyRevision;
+        Build(game, new(10.5f, 30.5f), new(10.5f + length, 30.5f));
+        Assert.Equal(topology + 1, siege.TopologyRevision);
+        Assert.Equal(length, siege.Walls.Count(wall => !wall.IsOriginal && !wall.IsTower));
+        int count = siege.Walls.Count;
+        Assert.False(game.BuildWallRun(new(10.5f, 30.5f), new(10.5f + length, 30.5f)).Success);
+        Assert.Equal(count, siege.Walls.Count);
+        Assert.Equal(topology + 1, siege.TopologyRevision);
+    }
+
+    [Fact]
+    public void GateInsertionBatchesRemovedAndReplacementSpansWithoutLosingSharedHealth()
+    {
+        var game = Founded();
+        var siege = game.Settlement!;
+        var plan = game.PlanGate(new(40.5f, 60.5f), MathF.PI / 2);
+        Assert.True(plan.Valid, plan.Error);
+        int topology = siege.TopologyRevision;
+        Build(game, plan.Start, plan.End, gate: true);
+        Assert.Equal(topology + 1, siege.TopologyRevision);
+        Assert.True(siege.CanWalk(new(39.5f, 60.5f), new(41.5f, 60.5f)));
+        var saved = SaveGameStore.Serialize(game);
+        Assert.Equal(saved, SaveGameStore.Serialize(SaveGameStore.Deserialize(saved)));
+    }
+
+    [Fact]
+    public void WallPurchaseStillInvalidatesMapArtworkWhenClearingTrees()
+    {
+        var game = Founded();
+        game.Map.SetFeature(12, 30, game.Map.Content.Features.Get(DefaultFeatures.TreeName));
+        game.Touch();
+        int version = game.MapVersion;
+        Build(game, new(10.5f, 30.5f), new(13.5f, 30.5f));
+        Assert.True(game.MapVersion > version);
+        Assert.Null(game.Map.FeatureAt(12, 30));
+    }
+
+    [Fact]
+    public void UnchangedWallPointerReusesItsPreviewButMoneyAndTopologyChangesRefreshIt()
+    {
+        var game = Founded();
+        var session = new GameSession(game, showGuide: false);
+        session.PlaceCursor(new(10, 30));
+        session.BeginWallPlacement();
+        Assert.True(session.ConfirmPreview().Success);
+        session.MoveFixedPlacement(new(13, 30));
+        var preview = session.Preview;
+        session.MoveFixedPlacement(session.Cursor);
+        Assert.Same(preview, session.Preview);
+        game.Money = 0;
+        session.MoveFixedPlacement(session.Cursor);
+        Assert.NotSame(preview, session.Preview);
+        Assert.False(session.Preview!.WallPlan!.Valid);
+        game.Money = 2_000_000;
+        session.MoveFixedPlacement(session.Cursor);
+        preview = session.Preview;
+        Build(game, new(20.5f, 30.5f), new(23.5f, 30.5f));
+        session.MoveFixedPlacement(session.Cursor);
+        Assert.NotSame(preview, session.Preview);
+        Assert.True(session.Preview!.WallPlan!.Valid);
+    }
+
+    [Fact]
     public void TowerConnectionsTakePriorityOverDirectionSnapping()
     {
         var game = Founded();
@@ -72,6 +154,36 @@ public class WallConstructionTests
         var anchor = tower.Center + new Vector2(9, 4);
         Assert.Equal(tower.Center, game.SnapWallEndpoint(anchor, tower.Center + new Vector2(.5f, .5f)));
         Assert.Equal(anchor, game.SnapWallEndpoint(anchor, anchor));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(30)]
+    [InlineData(45)]
+    [InlineData(60)]
+    [InlineData(90)]
+    [InlineData(180)]
+    [InlineData(270)]
+    public void TowerAnchorPivotsTowardThePointerEvenWithinItsFootprint(int degrees)
+    {
+        var game = Founded();
+        var tower = game.Settlement!.Walls.First(wall => wall.IsTower);
+        float radians = degrees * MathF.PI / 180;
+        var direction = new Vector2(MathF.Cos(radians), MathF.Sin(radians));
+        var pointer = tower.Center + direction * 1.5f;
+        var endpoint = game.SnapWallEndpoint(tower.Center, pointer);
+        Assert.InRange(Vector2.Distance(endpoint, pointer), 0, .0001f);
+        var session = new GameSession(game, showGuide: false);
+        session.PlaceCursor(tower.Cell);
+        session.RememberWallPick(tower.Id);
+        session.BeginWallPlacement();
+        Assert.True(session.ConfirmPreview().Success);
+        Assert.Equal(tower.Center, session.Preview!.WallPlan!.Start);
+        Assert.Same(tower, session.WallPlacementStartTower);
+        session.MoveFixedPlacement(new((int)(tower.Center.X + direction.X * 8),
+            (int)(tower.Center.Y + direction.Y * 8)));
+        Assert.Equal(tower.Center, session.Preview!.WallPlan!.Start);
+        Assert.True(Vector2.Dot(Vector2.Normalize(session.Preview.WallPlan.End - tower.Center), direction) > .999f);
     }
 
     [Fact]
@@ -276,9 +388,11 @@ public class WallConstructionTests
         typeof(CityGame).GetProperty(nameof(CityGame.HighestPopulation))!.SetValue(game, 250);
         typeof(CityGame).GetProperty(nameof(CityGame.HighestMilestone))!.SetValue(game, 250);
         var state = game.Settlement!;
+        game.SetFunding(ServiceKind.Defence, 0);
         var type = game.Map.Content.Buildings.Get("Archer Barracks");
         var home = state.Bounds.Cells().First(p => game.CanPlaceBuilding(type, p.X, p.Y));
         Assert.True(game.PlaceBuilding(type, type.FootprintAt(home.X, home.Y)).Success);
+        Assert.True(game.DebugRemoveGoblins().Success);
         Build(game, new(79.5f, 50.5f), new(94.5f, 43.5f));
         var target = state.Walls.Last();
         var gate = state.Walls.First(w => w.IsGate);

@@ -4,7 +4,7 @@ namespace TermCity.GodotApp;
 
 public partial class CitySplit : HSplitContainer
 {
-    public const int MinimumSidebar = 280, MaximumSidebar = 480, DefaultSidebar = 280;
+    public const int MinimumSidebar = 320, MaximumSidebar = 480, DefaultSidebar = 320;
     public float SidebarWidth => GetChild<Control>(1).Size.X;
     public const int Divider = TerminalFrame.Inset;
 

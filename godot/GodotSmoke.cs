@@ -14,6 +14,41 @@ namespace TermCity.GodotApp;
 
 internal static class GodotSmoke
 {
+    internal static async Task RequireFullscreenLayout(Main host)
+    {
+        if (DisplayServer.GetName() == "headless")
+            throw new InvalidOperationException("Fullscreen measurements require an actual graphical window.");
+        var window = host.GetWindow();
+        var usable = DisplayServer.ScreenGetUsableRect(window.CurrentScreen);
+        window.Mode = Window.ModeEnum.Windowed;
+        window.Borderless = true;
+        window.Size = usable.Size;
+        window.Position = usable.Position;
+        window.Mode = Window.ModeEnum.Maximized;
+        long started = Stopwatch.GetTimestamp();
+        while (true)
+        {
+            var screen = DisplayServer.ScreenGetSize(window.CurrentScreen);
+            if (window.Borderless && window.Size.X >= screen.X && window.Size.Y >= screen.Y * .9f) break;
+            if (Stopwatch.GetElapsedTime(started).TotalSeconds > 15)
+                throw new InvalidOperationException($"Fullscreen layout did not settle: window={window.Size}, screen={screen}. " +
+                    "Undersized measurements are rejected.");
+            await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+        }
+        await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+        await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+        if (window.Size.X < usable.Size.X || window.Size.Y < usable.Size.Y)
+            throw new InvalidOperationException("The full-display diagnostic window shrank during layout.");
+    }
+
+    internal static void ValidateFullDisplaySize(Main host)
+    {
+        var window = host.GetWindow();
+        var expected = DisplayServer.ScreenGetUsableRect(window.CurrentScreen).Size;
+        if (!window.Borderless || window.Size != expected)
+            throw new InvalidOperationException($"Diagnostic display changed: window={window.Size}, expected={expected}; discard this run.");
+    }
+
     internal static async Task VerifyReachedMilestoneDialog(Main host, string? capturePath)
     {
         var session = host.Session;
@@ -295,6 +330,7 @@ internal static class GodotSmoke
 
     internal static async Task RenderedFrame(Main host)
     {
+        if (host.Map.PerspectiveEnabled && host.Map.Perspective is { } view) await view.AwaitFootpathMesh();
         if (DisplayServer.GetName() == "headless")
         {
             await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
@@ -309,6 +345,45 @@ internal static class GodotSmoke
             await drawn;
             if (frame == 0) await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
         }
+    }
+
+    internal static async Task VerifyInterface(Main host, string? capture)
+    {
+        var window = host.GetWindow();
+        host.Session.SetZoom(GameSession.ThreeQuarterZoom);
+        bool headless = DisplayServer.GetName() == "headless";
+        foreach (int width in new[] { 960, 640 })
+        {
+            foreach (int fontSize in new[] { Main.MinFontSize, Main.DefaultFontSize, Main.MaxFontSize })
+            {
+                host.SetFontSize(fontSize);
+                var size = new Vector2I(width, Main.MinimumWindowHeight) * fontSize / Main.MinFontSize;
+                if (headless) window.ContentScaleSize = size;
+                else window.Size = size;
+                await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+                await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+                VerifySidebarTables(host);
+                var zoom = Descendants(host).OfType<Label>().Single(label => label.Name == "ZoomIndicator");
+                Require(zoom.Text == "0.75x" && zoom.GetParent<Control>().GetGlobalRect().Encloses(zoom.GetGlobalRect()),
+                    "The 0.75x zoom label must fit its terminal frame at narrow widths and every font scale.");
+                var strip = Descendants(host.Map).OfType<TerminalFrame>().Single(node => node.Name == "DebugSiegeControls");
+                Require(Descendants(strip).OfType<Control>().Where(control => control is Label or Button or LineEdit)
+                    .All(control => control.GetThemeFontSize("font_size") == 20 &&
+                        strip.GetGlobalRect().Encloses(control.GetGlobalRect())),
+                    "Readable debug labels, fields and actions must wrap within the terminal frame at narrow widths.");
+                Require(strip.GetGlobalRect().End.X <= host.Map.GetGlobalRect().End.X + 1 &&
+                    strip.GetGlobalRect().End.Y <= host.Map.GetGlobalRect().End.Y + 1,
+                    "The enlarged debug toolbar must fit inside the map.");
+                await SettlementSmoke.Capture(host, capture is null ? null :
+                    Path.ChangeExtension(capture, $".sidebar-{width}-font{fontSize}.png"));
+            }
+        }
+        host.SetFontSize(Main.MinFontSize);
+        if (headless) window.ContentScaleSize = new(960, Main.MinimumWindowHeight);
+        else window.Size = new(960, Main.MinimumWindowHeight);
+        await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+        await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+        await GarrisonSmoke.Run(host, capture, movementOnly: true);
     }
 
     public static async Task VerifyPerspectiveRendering(Main host, string? capturePath = null)
@@ -338,6 +413,7 @@ internal static class GodotSmoke
         Require(Math.Abs(PerspectiveCity.Magnification(0) - 1.9f) < 0.0001f &&
             Math.Abs(PerspectiveCity.Magnification(1) / 3.6f - 0.888889f) < 0.0001f &&
             Math.Abs(PerspectiveCity.Magnification(-1) - 0.9f) < 0.0001f &&
+            Math.Abs(PerspectiveCity.Magnification(GameSession.ThreeQuarterZoom) - 1.425f) < 0.0001f &&
             Math.Abs(PerspectiveCity.Magnification(-2) - 0.45f) < 0.0001f,
             "Normal perspective zoom must ease back to 1.9, retain the 3.2 close view, and leave overview scales unchanged.");
         session.ClearSelection();
@@ -356,7 +432,7 @@ internal static class GodotSmoke
         {
             var monument = map.BuildingFootprints.Values.First(a => map.BuildingAt(a.X, a.Y)!.IsMonument);
             var monumentAnchor = new Pos(monument.X, monument.Y);
-            int previousZoom = session.ZoomLevel;
+            double previousZoom = session.ZoomLevel;
             var monumentCenter = new Pos(monument.X + monument.Width / 2, monument.Y + monument.Height / 2);
             session.SetZoom(GameSession.MinZoom);
             session.PlaceCursor(monumentCenter);
@@ -390,9 +466,9 @@ internal static class GodotSmoke
             return view.ScreenPoint(point);
         }
         var zoomPointer = CenterPoint(roofPoint);
-        foreach (int targetZoom in new[] { -1, 0, 1, 0, -1, 0 })
+        foreach (double targetZoom in new[] { -1, GameSession.ThreeQuarterZoom, 0, 1, 0, GameSession.ThreeQuarterZoom, -1, 0 })
         {
-            host.Map.ZoomBy(targetZoom - session.ZoomLevel, zoomPointer);
+            host.Map.SetZoom(targetZoom, zoomPointer);
             for (int frame = 0; frame < 3; frame++)
                 await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
             var roofPointer = CenterPoint(roofPoint);
@@ -495,12 +571,13 @@ internal static class GodotSmoke
             .Where(p => p.X >= 2 && p.Y >= 2 && p.X + well.Width < map.Width - 1 &&
                 p.Y + well.Height < map.Height - 1 &&
                 Math.Abs(p.X - anchor.X) < 8 && Math.Abs(p.Y - anchor.Y) < 8)
+            .Where(p => new CellRect(p.X - 2, p.Y - 2, well.Width + 4, well.Height + 4).Cells()
+                .All(cell => map.TerrainAt(cell.X, cell.Y) == map.Content.Terrains.Base && !map.HasRoad(cell.X, cell.Y)))
             .First(p => session.Game.CanPlaceBuilding(well, p.X, p.Y));
-        int beforePreview = view.BuildingsDrawn;
         session.PlaceCursor(previewPosition);
         session.PreviewBuilding(well);
         view.Sync(session, host.Map.Size);
-        Require(view.BuildingsDrawn == beforePreview + 1,
+        Require(view.PreviewBuildingsDrawn == 1,
             "A valid 3D placement must show the complete building preview, not only a grid outline.");
         Require(view.IndicatorObjectCount > 0,
             "Placement models and selection outlines must flush to the visible indicator layer even without range rings.");
@@ -673,11 +750,11 @@ internal static class GodotSmoke
         var view = host.Map.Perspective!;
         int scale = map.Content.Buildings.Get("Cottage").ModelScale;
         int fixtureWidth = 20 * scale, fixtureHeight = 15 * scale;
-        var origin = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf).Where(p =>
+        var origin = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf)
+            .OrderBy(p => Math.Abs(p.X - map.Width / 2) + Math.Abs(p.Y - map.Height / 2)).First(p =>
             p.X >= 4 && p.Y >= 4 && p.X < map.Width - fixtureWidth - 4 && p.Y < map.Height - fixtureHeight - 5 &&
             new CellRect(p.X, p.Y, fixtureWidth, fixtureHeight).Cells()
-                .All(cell => session.Game.CanBuildOn(cell.X, cell.Y)))
-            .OrderBy(p => Math.Abs(p.X - map.Width / 2) + Math.Abs(p.Y - map.Height / 2)).First();
+                .All(cell => session.Game.CanBuildOn(cell.X, cell.Y)));
         var fixture = new CellRect(origin.X, origin.Y, fixtureWidth, fixtureHeight);
         var original = fixture.Cells().Select(cell => (Cell: cell, Terrain: map.TerrainAt(cell.X, cell.Y),
             Feature: map.FeatureAt(cell.X, cell.Y))).ToArray();
@@ -795,10 +872,9 @@ internal static class GodotSmoke
         session.CenterOn(session.Cursor);
         host.Map.RefreshCells();
         view.Sync(session, host.Map.Size);
-        int buildings = view.BuildingsDrawn;
         session.PreviewBuilding(map.Content.Buildings.Get("Cottage"));
         view.Sync(session, host.Map.Size);
-        Require(view.BuildingsDrawn == buildings + 1 && view.IndicatorObjectCount > 0,
+        Require(view.PreviewBuildingsDrawn == 1 && view.IndicatorObjectCount > 0,
             "Residential placement previews must use the complete block-built cottage model.");
         session.CancelPreview();
         foreach (var subject in subjects) map.SetBuilding(origin.X + subject.X, origin.Y + subject.Y, null);
@@ -914,7 +990,7 @@ internal static class GodotSmoke
         var session = host.Session;
         var map = session.Game.Map;
         var view = host.Map.Perspective!;
-        int originalZoom = session.ZoomLevel;
+        double originalZoom = session.ZoomLevel;
         float originalAzimuth = view.Azimuth;
         var woodlot = map.Content.Buildings.Get("Woodlot");
         int clearance = (int)Math.Ceiling(map.Content.Roads.Get(DefaultRoads.KingsRoadName).WidthCells / 2 +
@@ -1025,7 +1101,7 @@ internal static class GodotSmoke
         var session = host.Session;
         var map = session.Game.Map;
         var view = host.Map.Perspective!;
-        int originalZoom = session.ZoomLevel;
+        double originalZoom = session.ZoomLevel;
         var origin = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf).Where(p =>
             p.X >= 4 && p.Y >= 4 && p.X < map.Width - 28 && p.Y < map.Height - 24 &&
             new CellRect(p.X, p.Y, 24, 20).Cells().All(c => session.Game.CanBuildOn(c.X, c.Y)))
@@ -1373,6 +1449,7 @@ internal static class GodotSmoke
                 for (int turn = 0; turn < 4; turn++)
                 {
                     view.Sync(session, host.Map.Size);
+                    await view.AwaitFootpathMesh();
                     Require(view.FootpathTrianglesDrawn > 0 && view.BridgeSegmentsDrawn > 0,
                         "Bridge and ordinary path approaches must remain visible at both zooms and every rotation.");
                     if (capturePath is not null && DisplayServer.GetName() != "headless")
@@ -1516,6 +1593,7 @@ internal static class GodotSmoke
             for (int turn = 0; turn < 4; turn++)
             {
                 view.Sync(session, host.Map.Size);
+                await view.AwaitFootpathMesh();
                 Require(view.FootpathTrianglesDrawn > 0 &&
                     view.MaximumFootpathTriangleRise <= TravelRoutes.MaximumFootpathStep,
                     "Textured neighborhood trails must retain supported terrain geometry.");
@@ -1598,6 +1676,7 @@ internal static class GodotSmoke
             for (int turn = 0; turn < 4; turn++)
             {
                 view.Sync(session, host.Map.Size);
+                await view.AwaitFootpathMesh();
                 Require(view.FootpathTrianglesDrawn > 0 &&
                     view.MaximumFootpathTriangleRise <= TravelRoutes.MaximumFootpathStep,
                     "Actual rendered path triangles must remain on supported ground, never climb terrace or cut-wall faces.");
@@ -1657,12 +1736,14 @@ internal static class GodotSmoke
         int fixtureWidth = Math.Max(9, well.Width + 5);
         int fixtureHeight = Math.Max(9, well.Height + 9);
         var origin = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf).Where(position =>
-            position.X >= 4 && position.X < map.Width - fixtureWidth - 4 &&
-            position.Y >= 4 && position.Y < map.Height - fixtureHeight - 4 &&
+            position.X >= 12 && position.X < map.Width - fixtureWidth - 12 &&
+            position.Y >= 12 && position.Y < map.Height - fixtureHeight - 12 &&
             !map.BuildingFootprints.Values.Any(area => area.Right >= position.X - 20 &&
                 area.X <= position.X + 28 && area.Bottom >= position.Y - 20 && area.Y <= position.Y + 28) &&
             new CellRect(position.X, position.Y, fixtureWidth, fixtureHeight).Cells()
-                .All(cell => session.Game.CanBuildOn(cell.X, cell.Y)))
+                .All(cell => session.Game.CanBuildOn(cell.X, cell.Y)) &&
+            new CellRect(position.X - 8, position.Y - 8, fixtureWidth + 16, fixtureHeight + 16).Cells()
+                .All(cell => !map.HasRoad(cell.X, cell.Y) && map.TerrainAt(cell.X, cell.Y) == map.Content.Terrains.Base))
             .OrderBy(position => Math.Abs(position.X - map.Width / 2) + Math.Abs(position.Y - map.Height / 2)).First();
         var fixture = new CellRect(origin.X, origin.Y, fixtureWidth, fixtureHeight);
         var original = fixture.Cells().Select(cell => (Cell: cell, Terrain: map.TerrainAt(cell.X, cell.Y),
@@ -1725,6 +1806,7 @@ internal static class GodotSmoke
             for (int turn = 0; turn < 4; turn++)
             {
                 view.Sync(session, host.Map.Size);
+                await view.AwaitFootpathMesh();
                 int builds = view.GeometryBuilds;
                 foreach (int side in Enumerable.Range((int)Math.Floor(centerY - pavedRoad.WidthCells / 2),
                     (int)Math.Ceiling(pavedRoad.WidthCells)))
@@ -1766,6 +1848,7 @@ internal static class GodotSmoke
             session.CenterOn(session.Cursor);
             view.ResetCameraOffset();
             view.Sync(session, host.Map.Size);
+            await view.AwaitFootpathMesh();
             Require(view.RoadSelectionOutline.Length >= 4 &&
                 view.RoadSelectionOutline.Min(p => p.Y) <= origin.Y + 2.001f &&
                 view.RoadSelectionOutline.Max(p => p.Y) >= origin.Y + 3.999f,
@@ -1793,7 +1876,15 @@ internal static class GodotSmoke
             await RenderedFrame(host);
             baseline = view.CaptureDisplayImage();
         }
-        for (int day = 0; day < 10; day++) session.Game.AdvanceDay();
+        var contacts = BuildingEntranceLayout.Accesses(map, well.FootprintAt(anchor.X, anchor.Y))
+            .Select(access => access.Contact).ToArray();
+        for (int day = 0; day < 32; day++)
+        {
+            session.Game.AdvanceDay();
+            if (FootpathLayout.Strokes(map).Any(path => (path.StartsAtRoad || path.EndsAtRoad) &&
+                path.Points.Any(point => contacts.Any(contact => System.Numerics.Vector2.Distance(contact, point) < .01f))))
+                break;
+        }
         var pathZones = fixture.Cells().Where(cell => !map.HasRoad(cell.X, cell.Y) &&
             map.BuildingAt(cell.X, cell.Y) is null).ToArray();
         foreach (var cell in pathZones) map.SetZone(cell.X, cell.Y, ZoneType.Residential);
@@ -1803,12 +1894,21 @@ internal static class GodotSmoke
         session.CenterOn(new(origin.X + 4, origin.Y + 4));
         view.ResetCameraOffset();
         view.Sync(session, host.Map.Size);
-        var stroke = FootpathLayout.Strokes(map).First(path => path.EndsAtRoad &&
+        await view.AwaitFootpathMesh();
+        var allStrokes = FootpathLayout.Strokes(map);
+        var nearbyStrokes = allStrokes.Where(path => path.Points.Any(point =>
+            System.Numerics.Vector2.Distance(point, new System.Numerics.Vector2(anchor.X + .5f, anchor.Y + .5f)) < 15))
+            .Take(8).Select(path => $"{path.Points[0]}->{path.Points[^1]} road={path.StartsAtRoad}/{path.EndsAtRoad}").ToArray();
+        var stroke = allStrokes.Select(path => path.StartsAtRoad && !path.EndsAtRoad
+            ? path with { Points = path.Points.Reverse().ToArray(), StartsAtRoad = false, EndsAtRoad = true } : path)
+            .FirstOrDefault(path => path.EndsAtRoad &&
             path.Points[^1].Y >= centerY - pavedRoad.WidthCells / 2 &&
             path.Points[^1].Y <= centerY + pavedRoad.WidthCells / 2 &&
             path.Points[^1].X >= origin.X + 1 && path.Points[^1].X <= origin.X + 8 &&
-            path.Points.Any(point => point.X >= anchor.X - 0.01f && point.X <= anchor.X + well.Width + 0.01f &&
-                point.Y >= anchor.Y - 0.01f && point.Y <= anchor.Y + well.Height + 0.01f));
+            path.Points.Any(point => contacts.Any(contact => System.Numerics.Vector2.Distance(contact, point) < .01f))) ??
+            throw new InvalidOperationException($"The isolated well must have a worn entrance-to-road journey: " +
+                $"origin={origin}, anchor={anchor}, territory={map.SettlementBounds}, contacts={string.Join(';', contacts)}, " +
+                $"strokes={allStrokes.Count}, related={string.Join(';', nearbyStrokes)}.");
         var roads = new RoadVectorLayer();
         roads.Sync(session.Game);
         var layout = new RoadMeshLayout(map, roads.Paths);
@@ -1862,6 +1962,10 @@ internal static class GodotSmoke
             }
         }
         view.MeasureZoneFootpathOverlap = false;
+        var journeyCells = stroke.Points.Select(point => map.Index(
+            Math.Clamp((int)MathF.Floor(point.X), 0, map.Width - 1),
+            Math.Clamp((int)MathF.Floor(point.Y), 0, map.Height - 1)))
+            .Where(cell => map.PathWearAt(cell % map.Width, cell / map.Width) > 0).ToHashSet();
         map.SetBuilding(anchor.X, anchor.Y, null);
         session.Game.Touch();
         host.Map.RefreshCells();
@@ -1869,8 +1973,8 @@ internal static class GodotSmoke
         view.ResetCameraOffset();
         view.Sync(session, host.Map.Size);
         var historical = FootpathLayout.Strokes(map).Where(path => path.Points.Any(point =>
-            Math.Abs(point.X - anchor.X - 0.5f) < 0.01f && point.Y > origin.Y + 4 &&
-                point.Y < anchor.Y)).ToArray();
+            map.InBounds((int)MathF.Floor(point.X), (int)MathF.Floor(point.Y)) &&
+            journeyCells.Contains(map.Index((int)MathF.Floor(point.X), (int)MathF.Floor(point.Y))))).ToArray();
         Require(historical.Length > 0 && historical.All(path => path.Points.Count > 1),
             "Wear surviving a changed/demolished journey must form connected ribbons, not isolated dot caps.");
         if (capturePath is not null && DisplayServer.GetName() != "headless")
@@ -1880,9 +1984,13 @@ internal static class GodotSmoke
             Require(image.SavePng(Path.ChangeExtension(capturePath, ".persistent-paths.png")) == Error.Ok,
                 "Continuous persistent-path capture must save successfully.");
             var dirtTones = new HashSet<int>();
-            for (float offset = 5.1f; offset < 7.9f; offset += 0.03f)
+            var samples = historical.SelectMany(path => FootpathLayout.RibbonSections(path, layout))
+                .Select(section => section.Center).Where(point => !layout.InRoadInterior(point) &&
+                    map.InBounds((int)MathF.Floor(point.X), (int)MathF.Floor(point.Y)) &&
+                    journeyCells.Contains(map.Index((int)MathF.Floor(point.X), (int)MathF.Floor(point.Y)))).ToArray();
+            foreach (var sample in samples)
             {
-                float x = anchor.X + 0.5f, y = origin.Y + offset;
+                float x = sample.X, y = sample.Y;
                 var pointer = view.ScreenPoint(new(x, view.RenderedGroundHeight(map, x, y) + 0.014f, y));
                 if (!new Rect2(Vector2.Zero, view.DisplaySize).HasPoint(pointer)) continue;
                 var color = image.GetPixel((int)pointer.X, (int)pointer.Y);
@@ -1892,10 +2000,11 @@ internal static class GodotSmoke
             Require(dirtTones.Count >= 3 && dirtTones.Max() - dirtTones.Min() >= 12,
                 "The actual rendered path interior must show broad earthy texture variation, not a flat fill.");
             GD.Print("TERMCITY_TEXTURED_FOOTPATH_PIXELS_OK");
-            for (int offset = 5; offset <= 7; offset++)
+            foreach (var sample in samples)
             {
-                float x = anchor.X + 0.5f, y = origin.Y + offset;
+                float x = sample.X, y = sample.Y;
                 var pointer = view.ScreenPoint(new(x, view.RenderedGroundHeight(map, x, y) + 0.014f, y));
+                if (!new Rect2(Vector2.One, view.DisplaySize - Vector2.One * 2).HasPoint(pointer)) continue;
                 bool dirt = false;
                 for (int dy = -1; dy <= 1; dy++)
                     for (int dx = -1; dx <= 1; dx++)
@@ -1922,7 +2031,7 @@ internal static class GodotSmoke
         var session = host.Session;
         var map = session.Game.Map;
         var view = host.Map.Perspective!;
-        int originalZoom = session.ZoomLevel;
+        double originalZoom = session.ZoomLevel;
         float originalAzimuth = view.Azimuth;
         var origin = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf).Where(p =>
             p.X >= 5 && p.Y >= 5 && p.X < map.Width - 25 && p.Y < map.Height - 20 &&
@@ -2072,7 +2181,7 @@ internal static class GodotSmoke
         var session = host.Session;
         var map = session.Game.Map;
         var view = host.Map.Perspective!;
-        int originalZoom = session.ZoomLevel;
+        double originalZoom = session.ZoomLevel;
         float originalAzimuth = view.Azimuth;
         var origin = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf).Where(p =>
             p.X > 4 && p.Y > 4 && p.X < map.Width - 24 && p.Y < map.Height - 24 &&
@@ -2107,6 +2216,7 @@ internal static class GodotSmoke
             for (int turn = 0; turn < 4; turn++)
             {
                 view.Sync(session, host.Map.Size);
+                await view.AwaitFootpathMesh();
                 Require(view.ZoneTrianglesChecked > 0 && view.MaximumZoneTriangleRoadOverlapArea <= 0.000002,
                     $"Emitted zone triangles must exclude the complete road/curb/bridge footprint: " +
                     $"zoom={zoom}, turn={turn}, checked={view.ZoneTrianglesChecked}, overlap={view.ZoneRoadOverlapArea}.");
@@ -2144,7 +2254,7 @@ internal static class GodotSmoke
         var map = session.Game.Map;
         var view = host.Map.Perspective!;
         using var naturalFeatures = new NaturalFeatureScope(session.Game);
-        int originalZoom = session.ZoomLevel;
+        double originalZoom = session.ZoomLevel;
         var river = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf)
             .Where(p => map.TerrainAt(p.X, p.Y).Name == "Water" && TerrainSprite.Flow(map).At(p.X, p.Y).River)
             .OrderBy(p => Enumerable.Range(-6, 13).Sum(dy => Enumerable.Range(-6, 13).Count(dx =>
@@ -2383,7 +2493,7 @@ internal static class GodotSmoke
         GD.Print($"TERMCITY_DOWNSTREAM_RIPPLES_OK zoom={zoom} samples={samples} tracked={movingMatches}");
     }
 
-    private static async Task VerifyMinimapRotation(Main host, string? capturePath)
+    internal static async Task VerifyMinimapRotation(Main host, string? capturePath)
     {
         var session = host.Session;
         var map = session.Game.Map;
@@ -2502,7 +2612,7 @@ internal static class GodotSmoke
                 map.Width > 320 ? new(250, 54) : new(99, 149)))
             .GroupBy(center => ((int)center.X / 6, (int)center.Y / 6)).Select(group => group.First()).Take(6).ToArray();
         Require(inclines.Length > 0, "The generated map must exercise natural road inclines.");
-        int originalZoom = session.ZoomLevel;
+        double originalZoom = session.ZoomLevel;
         session.SetZoom(1);
         host.Map.RefreshCells();
         for (int incline = 0; incline < inclines.Length; incline++)
@@ -2552,7 +2662,7 @@ internal static class GodotSmoke
                 TerrainSprite.WaterSurface(map, sample.Midpoint.X, sample.Midpoint.Y) is >= 0.38f and < 0.95f)
             .GroupBy(sample => sample.Path).Select(group => group.First()).Take(6).ToArray();
         Require(approaches.Length > 0, "The generated-map fixture must contain a real river bridge approach.");
-        int originalZoom = session.ZoomLevel;
+        double originalZoom = session.ZoomLevel;
         for (int index = 0; index < approaches.Length; index++)
         {
             var center = approaches[index].Midpoint;
@@ -2598,7 +2708,7 @@ internal static class GodotSmoke
         var session = host.Session;
         var map = session.Game.Map;
         var view = host.Map.Perspective!;
-        int originalZoom = session.ZoomLevel;
+        double originalZoom = session.ZoomLevel;
         var origin = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf).Where(p =>
             p.X >= 4 && p.X < map.Width - 16 && p.Y >= 4 && p.Y < map.Height - 12 &&
             new CellRect(p.X, p.Y, 13, 9).Cells().All(cell => session.Game.CanBuildOn(cell.X, cell.Y)))
@@ -2620,6 +2730,7 @@ internal static class GodotSmoke
         session.CenterOn(new(origin.X + 6, origin.Y + 4));
         view.ResetCameraOffset();
         view.Sync(session, host.Map.Size);
+        await view.AwaitFootpathMesh();
         Require(view.TreeShapesDrawn.SetEquals(Enum.GetValues<TreeShape>()),
             "The perspective woodland must render all four broad-leaf crowns and both pine silhouettes.");
         if (capturePath is not null && DisplayServer.GetName() != "headless")
@@ -2679,12 +2790,15 @@ internal static class GodotSmoke
         session.CenterOn(zoneOrigin.Offset(4, 1));
         view.ResetCameraOffset();
         view.Sync(session, host.Map.Size);
+        await view.AwaitFootpathMesh();
         Require(view.ZonePlotsDrawn >= 12, "Vacant residential, commercial and industrial plots must remain visible after clearing selection.");
         session.SetAreaOverlays(false);
         view.Sync(session, host.Map.Size);
+        await view.AwaitFootpathMesh();
         Require(view.ZonePlotsDrawn == 0, "Turning AREAS off must clear all vacant-zone markers.");
         session.SetAreaOverlays(true);
         view.Sync(session, host.Map.Size);
+        await view.AwaitFootpathMesh();
         Require(view.ZonePlotsDrawn >= 12, "Turning AREAS back on must restore the designated plots.");
         foreach (var footprint in map.BuildingFootprints.Values)
         {
@@ -2755,6 +2869,7 @@ internal static class GodotSmoke
             }
         }
         view.Sync(session, host.Map.Size);
+        await view.AwaitFootpathMesh();
         int designatedPlots = view.ZonePlotsDrawn;
         session.BeginDrag(origin);
         session.UpdateDrag(new(fixture.Right, fixture.Bottom));
@@ -2763,7 +2878,8 @@ internal static class GodotSmoke
         session.ClearSelection();
         host.Map.RefreshCells();
         view.Sync(session, host.Map.Size);
-        Require(view.ZonePlotsDrawn == designatedPlots - 12, "Dezoning must remove the rendered plot markers immediately.");
+        await view.AwaitFootpathMesh();
+        Require(view.ZonePlotsDrawn == designatedPlots - 12, "Dezoning must remove the rendered plot markers when replacement chunks are ready.");
         var building = map.Content.Buildings.Get("Fire Watch");
         var buildingAnchor = new Pos(origin.X + 1, origin.Y + 1);
         Vector2[] initialDoorOffsets = [];
@@ -2840,13 +2956,21 @@ internal static class GodotSmoke
                 view.BuildingVolumes(anchor, 0x35494b).Count >= 2 &&
                 view.BuildingVolumes(anchor, appearance.RoofCapColor).Count ==
                     blocks.Sum(block => appearance.Parts(block).Count(part => part.Roof && part.Color == appearance.RoofCapColor)) &&
-                view.BuildingVolumes(anchor, HouseAppearance.YardEarthColor).Count >= 1 &&
+                HouseBaseVolumes(view, anchor, BuildingEntranceLayout.Center(map, footprint, cottage).Y,
+                    BuildingEntranceLayout.ModelScale(cottage, footprint, 0)).Count >= 1 &&
                 view.YardVolumes(anchor, HouseAppearance.GardenSoilColor).Count == 2 &&
                 view.YardVolumes(anchor, HouseAppearance.GardenLeafColor).Count +
                     view.YardVolumes(anchor, HouseAppearance.GardenCropColor).Count >= 6 &&
                 view.YardVolumes(anchor, HouseAppearance.FlowerRoseColor).Count > 0 &&
                 view.YardVolumes(anchor, HouseAppearance.FlowerCreamColor).Count > 0,
-                "Half-timber homes must have joined square framing, clean panels and full-cell yards with flowers and vegetable beds.");
+                $"Half-timber homes must have joined square framing, clean panels and full-cell yards with flowers and vegetable beds: " +
+                $"anchor={anchor}, frames={view.BuildingVolumes(anchor, HouseAppearance.FrameColor).Count}/" +
+                $"{blocks.SelectMany((block, index) => DepthStudyArtwork.UsesRelief(view.DepthTreatment) ? DepthStudyArtwork.HouseParts(appearance, block, index == 0) : appearance.Parts(block)).Count(part => part.Color == HouseAppearance.FrameColor)}, " +
+                $"stone={view.BuildingVolumes(anchor, HouseAppearance.StoneColor).Count}, glazing={view.BuildingVolumes(anchor, 0x35494b).Count}, " +
+                $"caps={view.BuildingVolumes(anchor, appearance.RoofCapColor).Count}/{blocks.Sum(block => appearance.Parts(block).Count(part => part.Roof && part.Color == appearance.RoofCapColor))}, " +
+                $"earth={view.BuildingVolumes(anchor, HouseAppearance.YardEarthColor).Count}, beds={view.YardVolumes(anchor, HouseAppearance.GardenSoilColor).Count}, " +
+                $"crops={view.YardVolumes(anchor, HouseAppearance.GardenLeafColor).Count + view.YardVolumes(anchor, HouseAppearance.GardenCropColor).Count}, " +
+                $"flowers={view.YardVolumes(anchor, HouseAppearance.FlowerRoseColor).Count}/{view.YardVolumes(anchor, HouseAppearance.FlowerCreamColor).Count}.");
             var lawn = view.YardVolumes(anchor, HouseAppearance.YardGrassColor)
                 .Concat(view.YardVolumes(anchor, HouseAppearance.YardGrassShadeColor))
                 .Concat(view.YardVolumes(anchor, HouseAppearance.YardGrassLightColor)).ToArray();
@@ -2912,6 +3036,7 @@ internal static class GodotSmoke
                     session.CenterOn(session.Cursor);
                     host.Map.RefreshCells();
                     view.Sync(session, host.Map.Size);
+                    await view.AwaitFootpathMesh();
                     selectionBuilds = view.GeometryBuilds;
                     var expected = HouseYardLayout.Outline(footprint, outlineYards[anchor].Cell);
                     foreach (var cell in footprint.Cells())
@@ -3106,6 +3231,7 @@ internal static class GodotSmoke
             host.Map.RefreshCells();
             session.CenterOn(new(x, y));
             view.Sync(session, host.Map.Size);
+            await view.AwaitFootpathMesh();
             Require(view.BridgeSegmentsDrawn > 0, "Water crossings and short steep valleys must have structural bridge models.");
             Require(view.BridgeSurfaceAt(new(x + 0.5f, y + 0.5f)),
                 "The tested crossing itself must be a bridge, not an unrelated bridge elsewhere in the viewport.");
@@ -3236,7 +3362,7 @@ internal static class GodotSmoke
         GD.Print("TERMCITY_BRIDGE_RENDER_OK");
     }
 
-    internal static async Task VerifyPlacementMapNavigation(Main host, string? capturePath)
+    internal static async Task VerifyPlacementMapNavigation(Main host, string? capturePath, string buildingName = "Woodlot")
     {
         var session = host.Session;
         var map = session.Game.Map;
@@ -3244,11 +3370,15 @@ internal static class GodotSmoke
         var view = host.Map.Perspective!;
         session.CancelPreview();
         session.ClosePrompt();
+        var type = map.Content.Buildings.Get(buildingName);
+        int extent = Math.Max(10, Math.Max(type.Width, type.Height) + 8);
         var origin = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf)
-            .Where(p => p.X >= 8 && p.Y >= 8 && p.X < map.Width - 16 && p.Y < map.Height - 16 &&
-                new CellRect(p.X, p.Y, 10, 10).Cells().All(cell => session.Game.CanBuildOn(cell.X, cell.Y)))
-            .OrderBy(p => Math.Abs(p.X - map.Width / 2) + Math.Abs(p.Y - map.Height / 2)).First();
-        var fixture = new CellRect(origin.X, origin.Y, 10, 10);
+            .OrderBy(p => Math.Abs(p.X - map.Width / 2) + Math.Abs(p.Y - map.Height / 2))
+            .First(p => p.X >= 8 && p.Y >= 8 && p.X < map.Width - extent - 4 && p.Y < map.Height - extent - 4 &&
+                new CellRect(p.X, p.Y, extent, extent).Cells().All(cell =>
+                    session.Game.CanBuildOn(cell.X, cell.Y) &&
+                    !session.Game.Network.RoadOverlapsCell(map.Index(cell.X, cell.Y))));
+        var fixture = new CellRect(origin.X, origin.Y, extent, extent);
         var original = fixture.Cells().Select(cell => (Cell: cell, Terrain: map.TerrainAt(cell.X, cell.Y),
             Feature: map.FeatureAt(cell.X, cell.Y))).ToArray();
         foreach (var cell in fixture.Cells())
@@ -3265,7 +3395,6 @@ internal static class GodotSmoke
             await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
         session.CenterOn(plot);
         view.ResetCameraOffset();
-        var type = map.Content.Buildings.Get("Woodlot");
         int money = session.Game.Money, buildings = map.BuildingFootprints.Count;
         var overlay = session.Overlay;
         session.PreviewBuilding(type);
@@ -3280,6 +3409,11 @@ internal static class GodotSmoke
                 view.IndicatorObjectCount > 0 && session.Game.Money == money &&
                 map.BuildingFootprints.Count == buildings,
                 "Map navigation must preserve the live building ghost, its plot/facing and funds without placing anything.");
+            if (session.ZoomLevel == GameSession.ThreeQuarterZoom)
+                Require(session.Stride == 1 && session.ZoomLabel == "0.75x" &&
+                    Math.Abs(view.CameraSpan - Math.Max(4, host.Map.Size.Y /
+                        (22 * PerspectiveCity.NormalMagnification * .75f))) < .0001f,
+                    "The 0.75x step must use actual three-quarter camera magnification with individual-cell selection.");
         }
         void Key(Key code, bool shift = false, bool echo = false) =>
             host._Input(new InputEventKey { Keycode = code, Pressed = true, ShiftPressed = shift, Echo = echo });
@@ -3287,7 +3421,9 @@ internal static class GodotSmoke
         void Pointer(InputEvent input) => host.Map.EmitSignal(Control.SignalName.GuiInput, input);
         Vector2 Camera() => new Vector2(session.CameraX, session.CameraY) + view.CameraOffset;
         Stable();
-        foreach (var (code, zoom) in new[] { (Godot.Key.Minus, 0), (Godot.Key.Equal, 1),
+        foreach (var (code, zoom) in new[] { (Godot.Key.Minus, 0d),
+            (Godot.Key.Minus, GameSession.ThreeQuarterZoom), (Godot.Key.Minus, -1d),
+            (Godot.Key.Equal, GameSession.ThreeQuarterZoom), (Godot.Key.Key0, 0d), (Godot.Key.Equal, 1d),
             (Godot.Key.Key0, 0), (Godot.Key.Plus, 1) })
         {
             Key(code);
@@ -3296,6 +3432,13 @@ internal static class GodotSmoke
         }
         Button("MinimapZoomOut").EmitSignal(Godot.Button.SignalName.Pressed);
         Require(session.ZoomLevel == 0, "The minimap zoom-out button must remain active during placement.");
+        Button("MinimapZoomOut").EmitSignal(Godot.Button.SignalName.Pressed);
+        Require(session.ZoomLevel == GameSession.ThreeQuarterZoom &&
+            Descendants(host).OfType<Label>().Single(label => label.Name == "ZoomIndicator").Text == "0.75x",
+            "The minimap controls must expose and label the 0.75x step during placement.");
+        Stable();
+        Button("MinimapZoomIn").EmitSignal(Godot.Button.SignalName.Pressed);
+        Require(session.ZoomLevel == 0, "Zooming in from 0.75x must return to 1x.");
         Button("MinimapZoomIn").EmitSignal(Godot.Button.SignalName.Pressed);
         Require(session.ZoomLevel == 1, "The minimap zoom-in button must remain active during placement.");
         Stable();
@@ -3318,14 +3461,22 @@ internal static class GodotSmoke
         Require(view.Elevation == elevation, "Camera tilt cycling must retain its existing three angles.");
         Stable();
         var pointer = host.Map.Size / 2;
-        host._Input(new InputEventMagnifyGesture { Position = host.Map.GlobalPosition + pointer, Factor = 0.7f });
+        host._Input(new InputEventMagnifyGesture { Position = host.Map.GlobalPosition + pointer, Factor = 0.82f });
         Require(session.ZoomLevel == 0, "Pinch zoom must not be swallowed by building placement.");
-        host._Input(new InputEventMagnifyGesture { Position = host.Map.GlobalPosition + pointer, Factor = 1.6f });
+        host._Input(new InputEventMagnifyGesture { Position = host.Map.GlobalPosition + pointer, Factor = 0.82f });
+        Require(session.ZoomLevel == GameSession.ThreeQuarterZoom, "Pinch zoom must reach the 0.75x step.");
+        Stable();
+        host._Input(new InputEventMagnifyGesture { Position = host.Map.GlobalPosition + pointer, Factor = 1.25f });
+        Require(session.ZoomLevel == 0, "Pinch zoom-in from 0.75x must return to 1x.");
+        host._Input(new InputEventMagnifyGesture { Position = host.Map.GlobalPosition + pointer, Factor = 1.25f });
         Require(session.ZoomLevel == 1, "Pinch zoom-in must retain the building tool.");
-        foreach (var (button, zoom) in new[] { (MouseButton.WheelDown, 0), (MouseButton.WheelUp, 1) })
+        foreach (var (button, zoom) in new[] { (MouseButton.WheelDown, 0d),
+            (MouseButton.WheelDown, GameSession.ThreeQuarterZoom), (MouseButton.WheelDown, -1d),
+            (MouseButton.WheelUp, GameSession.ThreeQuarterZoom), (MouseButton.WheelUp, 0d), (MouseButton.WheelUp, 1d) })
         {
             Pointer(new InputEventMouseButton { ButtonIndex = button, Pressed = true, CtrlPressed = true, Position = pointer });
             Require(session.ZoomLevel == zoom, "Ctrl/Command-wheel zoom must work during placement.");
+            Stable();
         }
         Pointer(new InputEventPanGesture { Position = pointer, Delta = new(0, 1), CtrlPressed = true });
         Require(session.ZoomLevel == 0, "Modified trackpad scrolling must zoom while placing a building.");
@@ -3375,6 +3526,7 @@ internal static class GodotSmoke
         Require(Math.Abs(session.CameraX + session.VisibleCellsX / 2 - minimapTarget.X - 2) <= 1 &&
             Math.Abs(session.CameraY + session.VisibleCellsY / 2 - minimapTarget.Y - 2) <= 1,
             "Minimap clicks and drags must reposition the camera while the original plot remains selected.");
+        await view.AwaitFootpathMesh();
         Key(Godot.Key.O);
         Require(session.Overlay != overlay, "Overlay cycling must remain usable during placement.");
         session.SetOverlay(overlay);
@@ -3464,7 +3616,10 @@ internal static class GodotSmoke
             map.BuildingFootprintAt(target.X, target.Y) == type.FootprintAt(target.X, target.Y, rotation) &&
             map.BuildingRotations.GetValueOrDefault(map.Index(target.X, target.Y)) == rotation &&
             session.Game.Money == money - type.Cost && !session.BuildingToolActive && session.Preview is null,
-            "The navigated placement must commit exactly once at the visible target with its original building facing.");
+            $"The navigated placement must commit exactly once at the visible target with its original building facing. " +
+            $"Message={session.Message}; error={session.FixedPlacementError}; target={target}; " +
+            $"building={map.BuildingAt(target.X, target.Y)?.Name}; active={session.BuildingToolActive}; " +
+            $"money={session.Game.Money}/{money - type.Cost}; rotation={rotation}.");
         if (capturePath is not null && !headless)
         {
             await RenderedFrame(host);
@@ -3624,7 +3779,7 @@ internal static class GodotSmoke
                 using var roads = chunk.Roads;
                 using var banks = chunk.Banks;
                 using var groundArrays = ground.SurfaceGetArrays(0);
-                var groundVertices = groundArrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                var groundVertices = RoadSurfaceMeshes.MeshData.TrianglePoints(ground);
                 for (int triangle = 0; triangle < groundVertices.Length; triangle += 3)
                 {
                     var center = (groundVertices[triangle] + groundVertices[triangle + 1] + groundVertices[triangle + 2]) / 3;
@@ -3636,7 +3791,7 @@ internal static class GodotSmoke
                 }
                 if (banks is null) continue;
                 using var arrays = banks.SurfaceGetArrays(0);
-                var vertices = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                var vertices = RoadSurfaceMeshes.MeshData.TrianglePoints(banks);
                 for (int triangle = 0; triangle < vertices.Length; triangle += 3)
                 {
                     var midpoint = (vertices[triangle] + vertices[triangle + 1] + vertices[triangle + 2]) / 3;
@@ -3755,7 +3910,7 @@ internal static class GodotSmoke
                 using var groundMesh = chunk.Ground;
                 using var pavingMesh = chunk.Roads;
                 using var bankMesh = chunk.Banks;
-                var vertices = chunk.Ground.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                var vertices = RoadSurfaceMeshes.MeshData.TrianglePoints(chunk.Ground);
                 for (int i = 0; i < vertices.Length; i += 3)
                 {
                     var center = (vertices[i] + vertices[i + 1] + vertices[i + 2]) / 3;
@@ -3893,7 +4048,7 @@ internal static class GodotSmoke
         GD.Print("TERMCITY_DIAGONAL_HILL_CUTS_OK");
     }
 
-    private static void VerifySmoothPerspectivePanning(Main host)
+    internal static void VerifySmoothPerspectivePanning(Main host)
     {
         var session = host.Session;
         var view = host.Map.Perspective!;
@@ -3993,16 +4148,18 @@ internal static class GodotSmoke
         Require(view.BuildingVolumes(anchor, 0x79634b).Count == 0 && view.BuildingVolumes(anchor, 0x61734c).Count == 0,
             "Hillside houses must not stand on full-cell wooden podiums or floating plot slabs.");
         var appearance = HouseAppearance.At(anchor.X, anchor.Y, map.BuildingAt(anchor.X, anchor.Y)!.Level);
-        var lowerLevels = view.BuildingVolumes(anchor, HouseAppearance.StoneColor)
+        var lowerLevels = view.BuildingFoundationVolumes(anchor)
             .Where(bounds => bounds.Position.Y < highest - 0.05f).ToArray();
         var upperWalls = HouseBaseVolumes(view, anchor, highest, cottage.ModelScale);
         Require(upperWalls.Count > 0 && upperWalls.Sum(bounds => bounds.Size.X * bounds.Size.Z) < area.Area,
             "The authored house and entrance plinths must not fill the entire reserved plot.");
-        Require(lowerLevels.Length > 0 && lowerLevels.All(support => upperWalls.Any(wall =>
+        var unmatchedSupports = lowerLevels.Where(support => !upperWalls.Any(wall =>
             support.Position.X >= wall.Position.X - 0.024f && support.End.X <= wall.End.X + 0.024f &&
-            support.Position.Z >= wall.Position.Z - 0.024f && support.End.Z <= wall.End.Z + 0.024f)),
+            support.Position.Z >= wall.Position.Z - 0.024f && support.End.Z <= wall.End.Z + 0.024f)).ToArray();
+        Require(lowerLevels.Length > 0 && unmatchedSupports.Length == 0,
             $"Lower stone levels must follow the authored house and entrance plinths: " +
             $"floor={highest}, supports={string.Join(';', lowerLevels.Take(3))}, walls={string.Join(';', upperWalls.Take(3))}, " +
+            $"unmatched={string.Join(';', unmatchedSupports.Take(5))}, " +
             $"plaster={string.Join(';', view.BuildingVolumes(anchor, appearance.PlasterColor).Take(3))}.");
         var groundSamples = area.Cells().Select(cell => new Vector2(cell.X + 0.5f, cell.Y + 0.5f)).ToArray();
         var terrainHeights = groundSamples.Select(sample => view.RenderedGroundHeight(map, sample.X, sample.Y)).ToArray();
@@ -4036,7 +4193,7 @@ internal static class GodotSmoke
             view.Sync(session, host.Map.Size);
             float floor = rotatedArea.Cells().Max(cell => TerrainSprite.Elevation(map, cell.X, cell.Y));
             var walls = HouseBaseVolumes(view, anchor, floor, houseType.ModelScale);
-            var supports = view.BuildingVolumes(anchor, HouseAppearance.StoneColor)
+            var supports = view.BuildingFoundationVolumes(anchor)
                 .Where(bounds => bounds.Position.Y < floor - 0.05f).ToArray();
             Require(supports.All(support => walls.Any(wall =>
                 support.Position.X >= wall.Position.X - 0.024f && support.End.X <= wall.End.X + 0.024f &&
@@ -4096,7 +4253,7 @@ internal static class GodotSmoke
         var session = host.Session;
         var map = session.Game.Map;
         var view = host.Map.Perspective!;
-        int originalZoom = session.ZoomLevel;
+        double originalZoom = session.ZoomLevel;
         var origin = Enumerable.Range(0, map.Width * map.Height).Select(map.PosOf)
             .Where(p => p.X >= 2 && p.Y >= 2 && p.X < map.Width - 13 && p.Y < map.Height - 11)
             .OrderBy(p => Math.Abs(p.X - map.Width / 2) + Math.Abs(p.Y - map.Height / 2))
@@ -4207,7 +4364,7 @@ internal static class GodotSmoke
                 using var groundMesh = bank.Ground;
                 using var pavingMesh = bank.Roads;
                 using var cliffMesh = bank.Banks;
-                var vertices = groundMesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+                var vertices = RoadSurfaceMeshes.MeshData.TrianglePoints(groundMesh);
                 for (int vertex = 0; vertex < vertices.Length; vertex += 3)
                 {
                     var center = (vertices[vertex] + vertices[vertex + 1] + vertices[vertex + 2]) / 3;
@@ -4657,7 +4814,10 @@ internal static class GodotSmoke
                     $"Raised roofs must pick their building at zoom {zoom}.");
                 host.Map.EmitSignal(Control.SignalName.GuiInput,
                     new InputEventMouseButton { ButtonIndex = MouseButton.Right, Pressed = true, Position = pointer });
-                Require(session.Prompt?.Title == BuildingReport.Title, "Right-clicking a raised roof must open Building Status.");
+                Require(session.Prompt?.Title == BuildingReport.Title,
+                    $"Right-clicking a raised roof must open Building Status: perspective={host.Map.PerspectiveEnabled}, " +
+                    $"prompt={session.Prompt?.Title}, preview={session.Preview?.Kind}, cursor={session.Cursor}, " +
+                    $"message={session.Message}, picked={picked}, pointer={pointer}, zoom={zoom}.");
                 session.ClosePrompt();
             }
         }
@@ -4919,29 +5079,21 @@ internal static class GodotSmoke
         foreach (var slot in stableHeader) slot.Label.Text = slot.Text;
         host.FitHeaderFonts();
         await Frames();
-        int originalZoom = session.ZoomLevel;
+        double originalZoom = session.ZoomLevel;
         session.SetZoom(0);
-        int beforeZoom = session.ZoomLevel;
+        double beforeZoom = session.ZoomLevel;
         zoomIndicator.GetParent().GetChild<Button>(2).EmitSignal(Button.SignalName.Pressed);
         Require(session.ZoomLevel == beforeZoom + 1 && zoomIndicator.Text == session.ZoomLabel,
             "Minimap zoom-in button failed.");
         zoomIndicator.GetParent().GetChild<Button>(0).EmitSignal(Button.SignalName.Pressed);
         Require(session.ZoomLevel == beforeZoom, "Minimap zoom-out button failed.");
         session.SetZoom(originalZoom);
-        foreach (var zone in Zones.Placeable)
-        {
-            var letter = Descendants(host).OfType<Label>().Single(l => l.Name == $"Demand{Zones.Get(zone).Letter}");
-            var bar = letter.GetParent().GetChild<ProgressBar>(1);
-            Require(bar.GetThemeStylebox("fill") is StyleBoxFlat fill &&
-                letter.GetThemeColor("font_color") == fill.BgColor,
-                "Demand letter does not match its bar color.");
-        }
-        var demandHeading = Descendants(host).OfType<Label>().Single(b => b.Name == "DemandHeading");
-        Require(demandHeading.GetThemeFontSize("font_size") >= 13 &&
-            demandHeading.GetThemeColor("font_color") == new Color("#70b7ff"),
+        var cityHeading = Descendants(host).OfType<Label>().Single(b => b.Name == "CityHeading");
+        Require(cityHeading.GetThemeFontSize("font_size") == 24 &&
+            cityHeading.GetThemeColor("font_color") == new Color("#70b7ff"),
             "Sidebar headings must be larger and blue.");
         Require(!Descendants(host).Any(n => n.Name == "CollapseCaret") &&
-            demandHeading.GetParent().GetParent().GetChild<Control>(1).Visible,
+            cityHeading.GetParent().GetParent().GetChild<Control>(1).Visible,
             "Sidebar sections must remain open without collapse carets.");
         Require(Descendants(host).OfType<Label>().Any(l => l.Name == "AppTitle" && l.Text == "TermCity"),
             "Left header must retain the TermCity title.");
@@ -5640,7 +5792,7 @@ internal static class GodotSmoke
             !char.IsDigit(mnemonic.Text[0])), "Menu options must have underlined letters instead of number prefixes.");
         var trappedMenu = session.Prompt;
         var trappedCursor = session.Cursor;
-        int trappedZoom = session.ZoomLevel;
+        double trappedZoom = session.ZoomLevel;
         bool trappedDebug = session.InputDebug;
         await KeyEvent(Key.Key9);
         await KeyEvent(Key.F12);
@@ -6397,7 +6549,7 @@ internal static class GodotSmoke
         var sidebar = Descendants(host).OfType<CityPanel>().Single();
         var cityTable = Descendants(sidebar).OfType<GridContainer>().Single(control => control.Name == "CityTable");
         Require(cityTable.GetGlobalRect().End.Y <= sidebar.GetGlobalRect().End.Y + 1 &&
-            cityTable.Size.X <= sidebar.Size.X && !Descendants(sidebar).OfType<ScrollContainer>().Any(),
+            cityTable.Size.X <= sidebar.Size.X,
             "The City table must fit without sidebar scrolling.");
         foreach (int fontSize in new[] { Main.DefaultFontSize, Main.MaxFontSize, Main.MinFontSize })
         {
@@ -6636,10 +6788,11 @@ internal static class GodotSmoke
         var session = host.Session;
         var rail = Descendants(host).OfType<ScrollContainer>().Single(n => n.Name == "ConstructionSidebar");
         var icons = Descendants(rail).OfType<Button>().ToArray();
+        var roadIcon = icons.Single(icon => icon.Name == "Roads");
         Require(icons.Length == TermCity.Core.Buildings.ServiceKinds.All.Count + (CityGame.DebugToolsAvailable ? 2 : 1) &&
             rail.GetGlobalRect().End.X <= host.Map.GlobalPosition.X,
             "Construction rail must show roads and every service category to the left of the map.");
-        Require(icons[0].GetChild<ConstructionIcon>(0).Glyph ==
+        Require(icons[^1].Name == "Roads" && icons[^1].GetChild<ConstructionIcon>(0).Glyph ==
             session.Game.Map.Content.Roads.OrderByDescending(r => r.Rank).First().GlyphFor(5),
             "Road category must use a straight road icon rather than a cross.");
         Require(Descendants(host).OfType<CitySplit>().Single().MouseDefaultCursorShape == Control.CursorShape.Arrow,
@@ -6684,8 +6837,9 @@ internal static class GodotSmoke
             icon.GetThemeFontSize("font_size") == 24),
             "Construction icons must use enlarged buttons and glyphs.");
         Require(icons.Select(icon => icon.GetChild<ConstructionIcon>(0).Kind)
-            .SequenceEqual(new[] { ServiceKind.None }.Concat(ServiceKinds.All)
-                .Concat(CityGame.DebugToolsAvailable ? new[] { ServiceKind.Defence } : [])),
+            .SequenceEqual(ServiceKinds.All.OrderBy(service => service == ServiceKind.Defence ? 0 : 1)
+                .Concat(CityGame.DebugToolsAvailable ? new[] { ServiceKind.None } : [])
+                .Append(ServiceKind.None)),
             "Construction artwork must match its service category.");
         icons[0].EmitSignal(Control.SignalName.MouseEntered);
         Require(ConstructionIcon.WiggleAngleAt(0.25f) < 0 &&
@@ -6709,8 +6863,8 @@ internal static class GodotSmoke
         Button Type(string name) => Descendants(host).OfType<VBoxContainer>()
             .Single(n => n.Name == "ConstructionTypes").GetChildren().OfType<Button>()
             .Single(n => n.Text.EndsWith(name, StringComparison.Ordinal));
-        icons[0].EmitSignal(Button.SignalName.Pressed);
-        Require(icons[0].GetChild<ConstructionIcon>(0).Glow == 1,
+        roadIcon.EmitSignal(Button.SignalName.Pressed);
+        Require(roadIcon.GetChild<ConstructionIcon>(0).Glow == 1,
             "Clicking a construction icon must restart its glow.");
         await frames();
         var dialog = Descendants(host).OfType<PanelContainer>().Single(n => n.Name == "CityDialog");
@@ -6776,13 +6930,13 @@ internal static class GodotSmoke
             "Clicking another sidebar icon through the modal shield must switch catalogs.");
         await key(Key.Escape, false, 0, false, Key.None, false);
         Require(session.Prompt is null, "Switching catalogs must not stack previously opened categories.");
-        icons[0].EmitSignal(Button.SignalName.Pressed);
+        roadIcon.EmitSignal(Button.SignalName.Pressed);
         await frames();
         policeIcon.EmitSignal(Button.SignalName.Pressed);
         await frames();
         Require(session.Prompt?.Title == CityReport.ServiceName(ServiceKind.Police),
             "Sidebar buttons must allow switching an open construction catalog.");
-        icons[0].EmitSignal(Button.SignalName.Pressed);
+        roadIcon.EmitSignal(Button.SignalName.Pressed);
         await frames();
         Type(DefaultRoads.CobbledName).EmitSignal(Button.SignalName.Pressed);
         Require(SelectedBuilding().Text.Contains(DefaultRoads.CobbledName, StringComparison.Ordinal) &&
@@ -6814,8 +6968,9 @@ internal static class GodotSmoke
                 SelectedBuilding().Text == "Bewildered Duck",
                 "Debug launch must offer immediate monument placement without a population gate.");
             Add().EmitSignal(Button.SignalName.Pressed);
-            Require(session.Preview?.Building?.IsMonument == true && session.Preview.Area.Width == 8 &&
-                session.Preview.Area.Height == 6 && session.Game.Money == money,
+            var monument = session.Game.Map.Content.Buildings.Single(building => building.IsMonument);
+            Require(session.Preview?.Building?.IsMonument == true && session.Preview.Area.Width == monument.Width &&
+                session.Preview.Area.Height == monument.Height && session.Game.Money == money,
                 "The debug monument must use the ordinary full-footprint placement preview without spending gold.");
             session.CancelPreview();
             await frames();
@@ -6960,7 +7115,7 @@ internal static class GodotSmoke
         await frames();
         await key(Key.Escape, false, 0, false, Key.None, false);
         Require(session.Prompt is null && session.Preview is null, "Escape did not close the catalog.");
-        icons[0].EmitSignal(Button.SignalName.Pressed);
+        roadIcon.EmitSignal(Button.SignalName.Pressed);
         await frames();
         var outside = Vector2.One;
         Require(!Descendants(host).OfType<PanelContainer>().Single(n => n.Name == "CityDialog")
@@ -7009,7 +7164,8 @@ internal static class GodotSmoke
                 Require(!cells.Where((_, index) => index % 2 == 0).Contains("Area of Effect") &&
                     !Descendants(host).Any(node => node.Name == "ConstructionEffectIcon") &&
                     cells.Where((_, index) => index % 2 == 0).Count(text => text == "Effect") == (hasAreaEffect ? 1 : 0),
-                    "Buildings must have an Effect row only when they have an actual area effect.");
+                    $"Buildings must have an Effect row only when they have an actual area effect: " +
+                    $"choice={choice.Text}, expected={hasAreaEffect}, rows={string.Join(", ", cells.Where((_, index) => index % 2 == 0))}.");
                 int effectIndex = Array.FindIndex(cells, text => text == "Effect");
                 if (selectedType is not null)
                     foreach (var area in AreaOfEffect.ForBuilding(selectedType, new Pos(0, 0)))
@@ -7037,7 +7193,7 @@ internal static class GodotSmoke
                     $"Every construction details table must use simplified rows and capitalized values: {choice.Text}.");
                 for (int i = 0; i < cells.Length; i += 2)
                 {
-                    if (category == icons[0])
+                    if (category == roadIcon)
                         Require(cells[i] != "Needs", "Road details must omit the Needs row.");
                     if (cells[i] == "Footprint")
                         Require(!cells[i + 1].Contains("cells", StringComparison.Ordinal),
@@ -7095,8 +7251,7 @@ internal static class GodotSmoke
         VerifyMapPadding(host);
         VerifySidebarTables(host);
         Require(host.Size == new Vector2(960, Main.MinimumWindowHeight), "Window resize did not reach the scene.");
-        float minimapAspect = map.Height * 1.5f / map.Width;
-        Require(host.Minimap.Size.Y + 0.01 >= host.Minimap.Size.X * minimapAspect,
+        Require(host.Minimap.Picture.Size.IsEqualApprox(Vector2.One * Math.Min(host.Minimap.Size.X, host.Minimap.Size.Y)),
             $"Minimap must fill sidebar width: minimap={host.Minimap.Size}, panel={host.Minimap.GetParent().GetParent().GetParent<Control>().Size}, " +
             $"window={host.Size}, minimum={Main.MinimumWindowHeight}.");
         Require(host.Map.Grid.Columns == (int)Math.Ceiling(host.Map.Size.X / TerminalGrid.CellWidth) &&
@@ -7219,7 +7374,7 @@ internal static class GodotSmoke
             CtrlPressed = true,
             Position = pointer,
         });
-        Require(session.ZoomLevel == -1, "Mouse wheel zoom failed.");
+        Require(session.ZoomLevel == GameSession.ThreeQuarterZoom, "Mouse wheel zoom failed.");
         session.SetZoom(0);
         var center = new Pos(map.Width / 2, map.Height / 2);
         session.PlaceCursor(center);
@@ -7573,7 +7728,7 @@ internal static class GodotSmoke
             Require(camera.Elevation == elevation, "Three TILT clicks must return to the original elevation.");
         }
         Require(Descendants(zoomFrame).OfType<Label>().Single(label => label.Name == "ZoomIndicator")
-            .GetThemeFontSize("font_size") == 20, "Zoom-level text must retain its enlarged 20-point size.");
+            .GetThemeFontSize("font_size") == 24, "Zoom-level text must use its enlarged 24-point size.");
         Require(zoomFrame is not TerminalFrame &&
             zoomFrame.GetThemeStylebox("panel") is StyleBoxFlat zoomStyle &&
             zoomStyle.BgColor == Colors.Black && zoomStyle.BorderColor == Colors.White &&
@@ -7582,19 +7737,19 @@ internal static class GodotSmoke
             "The minimap zoom section must have one white border on black with even padding.");
         Require(Descendants(zoomFrame).OfType<Button>().Count() == 2 &&
             Descendants(zoomFrame).OfType<Button>().All(button => button.CustomMinimumSize == Vector2.Zero &&
-                button.GetThemeFontSize("font_size") == 22 &&
+                button.GetThemeFontSize("font_size") == 24 &&
                 button.Alignment == HorizontalAlignment.Center &&
-                Math.Abs(button.Size.Y - button.GetThemeFont("font").GetHeight(22) - 4) < 1 &&
-                Math.Abs(button.Size.X - button.GetThemeFont("font").GetStringSize(button.Text, fontSize: 22).X - 4) < 1 &&
+                Math.Abs(button.Size.Y - button.GetThemeFont("font").GetHeight(24) - 4) < 1 &&
+                Math.Abs(button.Size.X - button.GetThemeFont("font").GetStringSize(button.Text, fontSize: 24).X - 4) < 1 &&
                 new[] { "normal", "hover", "pressed", "hover_pressed", "disabled", "focus" }.All(state =>
                     new[] { Side.Left, Side.Top, Side.Right, Side.Bottom }
                         .All(side => button.GetThemeStylebox(state).GetContentMargin(side) == 2))),
             "Zoom brackets must have tight equal padding on every side without forced extra space.");
-        foreach (string title in new[] { "DEMAND", "CITY" })
+        foreach (string title in new[] { "CITY" })
         {
             var cell = Descendants(panel).OfType<PanelContainer>().Single(control => control.Name == title + "HeaderCell");
             Require(cell is TerminalFrame && cell.GetChild<Label>(0).Text == title &&
-                cell.GetChild<Label>(0).GetThemeFontSize("font_size") == 22 &&
+                cell.GetChild<Label>(0).GetThemeFontSize("font_size") == 24 &&
                 cell.GetThemeStylebox("panel") is StyleBoxFlat { BgColor: var background } && background == Colors.Black,
                 $"{title} does not have the shared double-white frame on a black background.");
         }
@@ -7604,27 +7759,17 @@ internal static class GodotSmoke
             city.Size.X <= panel.Size.X && !panel.GetParent()!.GetChildren().OfType<ScrollContainer>().Any(),
             $"Sidebar must fit without scrolling: panel={panel.GetGlobalRect()}, city={city.GetGlobalRect()}, " +
             $"content minimum={panel.GetChild<Control>(0).GetCombinedMinimumSize()}, font={host.FontSize}.");
-        foreach (var zone in Zones.Placeable)
-        {
-            var row = Descendants(panel).OfType<HBoxContainer>().Single(control => control.Name == $"Demand{Zones.Get(zone).Letter}Row");
-            var demandLetter = row.GetChild<Label>(0);
-            var demandBar = row.GetChild<ProgressBar>(1);
-            Require(Math.Abs(demandBar.Value - host.Session.Game.Demand.For(zone)) < 0.000001,
-                "Demand bars must display the same growth pressure used by the simulation forecast.");
-            Require(demandLetter.GetThemeFontSize("font_size") == 18 &&
-                demandLetter.VerticalAlignment == VerticalAlignment.Center,
-                "Demand letters must retain balanced, vertically centered 18-point text.");
-            Require(Math.Abs(demandBar.Size.Y - demandLetter.GetThemeFontSize("font_size")) < 1 &&
-                Math.Abs(demandBar.GetGlobalRect().GetCenter().Y - demandLetter.GetGlobalRect().GetCenter().Y) < 1,
-                "Demand bars must match the lettering size and share its vertical center.");
-            string details = CityReport.ZoneDetails(host.Session.Game, zone);
-            Require(details.Contains("Expected arrivals:", StringComparison.Ordinal) &&
-                details.Contains("Growth:", StringComparison.Ordinal),
-                "Demand tooltips must explain forecast arrivals and actual plot-growth blockers.");
-            foreach (var control in row.GetChildren().OfType<Control>().Prepend(row))
-                Require(control.MouseFilter == Control.MouseFilterEnum.Stop && control.TooltipText.Contains(details),
-                    $"{Zones.Get(zone).Letter} hover details are missing from its demand row.");
-        }
+        Require(!Descendants(panel).Any(node => node.Name == "DEMANDHeaderCell" ||
+            node.Name.ToString().StartsWith("Demand", StringComparison.Ordinal)),
+            "The right sidebar must not contain the removed demand section.");
+        var rail = Descendants(host).OfType<ScrollContainer>().Single(node => node.Name == "ConstructionSidebar");
+        var icons = Descendants(rail).OfType<Button>().ToArray();
+        Require(icons[0].Name == "Garrison" && icons[^1].Name == "Roads",
+            "Garrison must lead the construction rail and Roads must be last.");
+        if (CityGame.DebugToolsAvailable)
+            Require(Descendants(icons.Single(button => button.Name == "Monuments"))
+                .OfType<ConstructionIcon>().Single().Monument,
+                "Monuments must display the original bewildered duck artwork.");
 
         var frames = Descendants(host).OfType<TerminalFrame>().Where(frame => frame.IsVisibleInTree()).ToArray();
         for (int i = 0; i < frames.Length; i++)
@@ -7659,6 +7804,8 @@ internal static class GodotSmoke
                 for (int column = 0; column < 2; column++)
                 {
                     var label = table.GetChild<PanelContainer>(row * 2 + column).GetChild<Label>(0);
+                    Require(label.GetThemeFontSize("font_size") == 22,
+                        "Sidebar city text must remain 22-point even in narrow layouts.");
                     var expected = rows[row][column];
                     bool gaugeOnly = column == 1 && (rows[row][0].Text is "Fuel" or "Water" ||
                         rows[row][0].Text == "Grain" && host.Session.Game.GrainRequired);

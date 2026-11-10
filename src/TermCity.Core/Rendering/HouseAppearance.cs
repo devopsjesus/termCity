@@ -192,6 +192,13 @@ public sealed record HouseAppearance(float Width, float Depth, float Height, flo
         ];
     }
 
+    public ModelEntrance EntranceOnPlot(int width, int depth, int level)
+    {
+        var block = BlocksOnPlot(width, depth, level)[0];
+        return new(new(block.X, block.WallPanel(0).Bottom, block.Z + block.Depth / 2),
+            Vector2.UnitY, BuildingDetailLayout.DoorWidth, BuildingAccessKind.Door);
+    }
+
     public IReadOnlyList<HouseModelPart> BaseParts(int width, int depth, int level)
     {
         var parts = new List<HouseModelPart>();
@@ -226,8 +233,6 @@ public sealed record HouseAppearance(float Width, float Depth, float Height, flo
         foreach (var block in BlocksOnPlot(width, depth, level))
             Add(block.X - (block.Width + 0.04f) / 2, block.Z - (block.Depth + 0.04f) / 2,
                 block.X + (block.Width + 0.04f) / 2, block.Z + (block.Depth + 0.04f) / 2);
-        float houseDepth = OnPlot(width, depth, level).Depth;
-        Add(-0.1f, houseDepth / 2 - 0.02f, 0.1f, houseDepth / 2 + 0.1f);
         return parts;
     }
 

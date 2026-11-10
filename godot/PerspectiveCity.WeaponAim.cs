@@ -1,5 +1,6 @@
 using Godot;
 using TermCity.Core.Simulation;
+using TermCity.Core.Rendering;
 
 namespace TermCity.GodotApp;
 
@@ -9,6 +10,7 @@ public partial class PerspectiveCity
         int Color, int Instance, int Pick, int Highlight);
     private readonly List<AimedPart> _aimedParts = [];
     private readonly Dictionary<int, float> _aimAngles = [];
+    private readonly Dictionary<int, (int Shot, float Angle)> _aimStarts = [];
 
     private Basis WeaponAim(WallComponent wall)
     {
@@ -17,9 +19,12 @@ public partial class PerspectiveCity
         float angle = _aimAngles.GetValueOrDefault(wall.Id);
         if (shot is not null)
         {
+            if (!_aimStarts.TryGetValue(wall.Id, out var start) || start.Shot != shot.Id)
+                _aimStarts[wall.Id] = start = (shot.Id, angle);
             float target = Mathf.Atan2(-(float)(shot.EndX - wall.Center.X), -(float)(shot.EndY - wall.Center.Y));
-            float fraction = (float)Math.Clamp(shot.Elapsed / Math.Max(.01, shot.Windup), 0, 1);
-            angle = Mathf.LerpAngle(angle, target, fraction);
+            float fraction = (float)Math.Clamp(SiegeMotion.ProjectileElapsed(_renderedSettlement!, shot) /
+                Math.Max(.01, shot.Windup), 0, 1);
+            angle = Mathf.LerpAngle(start.Angle, target, fraction);
             _aimAngles[wall.Id] = angle;
         }
         return new Basis(Vector3.Up, angle);
@@ -34,7 +39,7 @@ public partial class PerspectiveCity
             {
                 var transform = new Transform3D(basis * part.Canonical.Basis,
                     part.Origin + basis * (part.Canonical.Origin - part.Origin));
-                _wallInstances[part.Color].Multimesh.SetInstanceTransform(part.Instance, transform);
+                UpdateWallTransform(part.Color, part.Instance, transform);
                 _siegePickBoxes[part.Pick] = (DefenseBounds(transform), part.Wall.Cell, part.Color);
                 _siegePickTransforms[part.Pick] = transform;
                 _wallHighlightBoxes[part.Wall.Id][part.Highlight] = transform;

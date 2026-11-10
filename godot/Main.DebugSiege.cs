@@ -32,11 +32,11 @@ public partial class Main
         };
         var theme = CreateDialogButtonTheme();
         theme.DefaultFont = Theme.DefaultFont;
-        theme.DefaultFontSize = 14;
+        theme.DefaultFontSize = 20;
         _debugSiegeControls = new TerminalFrame
         {
             Name = "DebugSiegeControls", JoinAdjacent = false, Theme = theme,
-            MouseFilter = MouseFilterEnum.Stop,
+            MouseFilter = MouseFilterEnum.Stop, ClipContents = true,
         };
         _debugSiegeControls.MouseEntered += () => { StopPointerGesture(); _hover = false; };
         _debugSiegeControls.GuiInput += _ => _debugSiegeControls.AcceptEvent();
@@ -53,7 +53,7 @@ public partial class Main
             StartDebugSiegeWave);
         size.AddChild(_debugSwarmSize);
         row.AddChild(size);
-        var walls = new HBoxContainer { Name = "DebugWallDimensions" };
+        var walls = new HFlowContainer { Name = "DebugWallDimensions", SizeFlagsHorizontal = SizeFlags.ExpandFill };
         walls.AddChild(new Label { Text = "Walls", VerticalAlignment = VerticalAlignment.Center });
         string wallTip = $"Starting wall dimensions in cells ({SettlementState.MinimumEnclosureSize}-{SettlementState.MaximumEnclosureSize}, " +
             "map size and dry land permitting). Restart Game applies the selected width and height; Enter requests restart.";
@@ -85,7 +85,8 @@ public partial class Main
         _debugSiegeRestart = Action("DebugRestartGame", "RESTART GAME",
             "Restart this seed using the selected wall width/height, 100 residents and the first wave. Offers save/continue/cancel.",
             RestartDebugSiegeWithSize);
-        _debugSiegeStatus = new Label { Name = "DebugSiegeStatus", VerticalAlignment = VerticalAlignment.Center };
+        _debugSiegeStatus = new Label { Name = "DebugSiegeStatus", VerticalAlignment = VerticalAlignment.Center,
+            ClipText = true, TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis };
         _debugSiegeStatus.AddThemeColorOverride("font_color", new Color("#ffe066"));
         row.AddChild(_debugSiegeStatus);
         _debugSiegeControls.AddChild(row);
@@ -173,5 +174,6 @@ public partial class Main
             ? $"{siege.Bounds.Width}x{siege.Bounds.Height} | " +
                 $"{siege.Enemies.Count(g => g.Kind == SiegeEnemyKind.Goblin)} goblins, " +
                 $"{siege.Enemies.Count(g => g.Kind == SiegeEnemyKind.Orc)} Orcs" : "No bailey";
+        _debugSiegeStatus.TooltipText = _debugSiegeStatus.Text;
     }
 }

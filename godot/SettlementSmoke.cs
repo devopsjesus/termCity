@@ -13,6 +13,13 @@ internal static class SettlementSmoke
     {
         var session = host.Session;
         var game = session.Game;
+        game.Paused = true;
+        host.SetProcess(false);
+        while (session.BackgroundSimulationPending || session.PendingSimulationSeconds > 0)
+        {
+            session.UpdateResponsive(0);
+            await Task.Delay(1);
+        }
         var sidebar = Descendants(host).OfType<CityPanel>().Single();
         var countdownSection = Descendants(sidebar).OfType<VBoxContainer>().Single(node => node.Name == "NextWaveSection");
         var countdown = Descendants(sidebar).OfType<ProgressBar>().Single(node => node.Name == "NextWaveProgress");
@@ -28,9 +35,14 @@ internal static class SettlementSmoke
         await Frames(host);
         var previewView = host.Map.Perspective!;
         session.BeginSettlementPlacement();
+        await Frames(host);
+        session.CenterOn(firstCorner);
+        await Frames(host);
         ClickWorld(host, firstCorner);
         Require(game.Settlement is null && session.SettlementToolActive,
             "The first real mouse click must anchor the enclosure without purchasing it.");
+        session.CenterOn(lastCorner);
+        await Frames(host);
         int previewBuilds = previewView.GeometryBuilds;
         var endpoint = previewView.ScreenPoint(new(lastCorner.X + 0.5f,
             TerrainSprite.Elevation(game.Map, lastCorner.X, lastCorner.Y), lastCorner.Y + 0.5f));
@@ -38,7 +50,9 @@ internal static class SettlementSmoke
         await Frames(host);
         Require(session.Preview?.Area == proposed && session.FixedPlacementError is null &&
             previewView.GeometryBuilds == previewBuilds,
-            "Mouse-follow wall previews must match the enclosure without rebuilding the city.");
+            $"Mouse-follow wall previews must match the enclosure without rebuilding the city: " +
+            $"expected={proposed} actual={session.Preview?.Area} error={session.FixedPlacementError} " +
+            $"geometry={previewBuilds}/{previewView.GeometryBuilds} reason={previewView.GeometryInvalidationReason}.");
         await Capture(host, capturePath is null ? null : Path.ChangeExtension(capturePath, ".enclosure.png"));
         ClickWorld(host, lastCorner);
         Require(game.Settlement?.Bounds == proposed && session.Preview is null,
@@ -78,8 +92,8 @@ internal static class SettlementSmoke
         game.Map.SetZone(marker.X, marker.Y, ZoneType.Commercial);
         game.Touch();
         view.Sync(session, host.Map.Size);
-        Require(view.ZonePlotsDrawn > 0, "AREAS must show explicitly designated vacant commercial plots.");
         await Frames(host);
+        Require(view.ZonePlotsDrawn > 0, "AREAS must show explicitly designated vacant commercial plots.");
         await Capture(host, capturePath is null ? null : Path.ChangeExtension(capturePath, ".areas-on.png"));
         session.SetAreaOverlays(false);
         view.Sync(session, host.Map.Size);
@@ -168,6 +182,7 @@ internal static class SettlementSmoke
         await SiegeAnimationSmoke.VerifyWalking(host, capturePath);
         await SiegeAnimationSmoke.VerifyProjectileFlight(host, capturePath);
         await Capture(host, capturePath);
+        host.SetProcess(true);
         bool headless = DisplayServer.GetName() == "headless";
         var window = host.GetWindow();
         var size = headless ? window.ContentScaleSize : window.Size;
@@ -269,13 +284,26 @@ internal static class SettlementSmoke
         GD.Print($"TERMCITY_SETTLEMENT_RENDER_OK walls={view.WallsDrawn} goblins={view.EnemiesDrawn} " +
             $"initial-builds={geometryBuilds} combat-city-rebuilds=0 nodes={view.SceneObjectCount}");
         await DebugSiegeSmoke.Run(host, capturePath);
-        await SiegeAnimationSmoke.VerifyWallDamage(host, capturePath);
+        var performanceFailures = new List<string>();
+        try { await SiegeAnimationSmoke.VerifyWallDamage(host, capturePath); }
+        catch (PerformanceBudgetExceededException error)
+        {
+            performanceFailures.Add(error.Message);
+            GD.Print("TERMCITY_PERFORMANCE_BUDGET_FAILURE " + error.Message);
+        }
         await VerifyDevelopmentModels(host, capturePath);
-        await GarrisonSmoke.Run(host, capturePath);
+        try { await GarrisonSmoke.Run(host, capturePath); }
+        catch (PerformanceBudgetExceededException error)
+        {
+            performanceFailures.Add(error.Message);
+            GD.Print("TERMCITY_PERFORMANCE_BUDGET_FAILURE " + error.Message);
+        }
         await WallUpgradeSmoke.Run(host, capturePath);
         await SelectionHighlightSmoke.Run(host, capturePath);
         await ConstructionKeyboardSmoke.Run(host, capturePath);
         await SettlementGrowthSmoke.Run(host, capturePath);
+        if (performanceFailures.Count > 0)
+            throw new PerformanceBudgetExceededException(string.Join(" ", performanceFailures));
     }
 
     private static async Task VerifyDevelopmentModels(Main host, string? capturePath)
@@ -392,15 +420,31 @@ internal static class SettlementSmoke
 
     internal static async Task Frames(Main host)
     {
+        host.Map.Perspective?.RequestRender();
         host.Map.QueueRedraw();
         for (int frame = 0; frame < 3; frame++)
             await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+        if (host.Map.Perspective is { } view)
+        {
+            var wait = System.Diagnostics.Stopwatch.StartNew();
+            while (!view.CameraPresentationReady || !view.PathPresentationReady ||
+                !view.VisibleTerrainReady || view.ObjectStreamingPending)
+            {
+                Require(wait.Elapsed.TotalSeconds < 30,
+                    $"Visible scene publication did not finish: {view.PreparationPendingDescription}");
+                view.RequestRender();
+                host.Map.QueueRedraw();
+                await host.ToSignal(host.GetTree(), SceneTree.SignalName.ProcessFrame);
+            }
+            await view.AwaitFootpathMesh();
+        }
     }
 
     internal static async Task Capture(Main host, string? path)
     {
         if (path is null) return;
         Require(DisplayServer.GetName() != "headless", "Captures require a graphical display.");
+        if (host.Map.Perspective is { } view) await view.AwaitFootpathMesh();
         for (int frame = 0; frame < 2; frame++)
         {
             host.Map.Perspective?.RequestRender();

@@ -28,6 +28,7 @@ internal static class ArcherBowSmoke
         Set(target, nameof(target.X), unit.X);
         Set(target, nameof(target.Y), unit.Y - 7);
         typeof(SettlementState).GetField("Accumulator", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(state, 0d);
+        Set(state, nameof(state.Revision), state.Revision + 1);
         var view = host.Map.Perspective!;
         host.Session.ClearDefenderSelection();
         host.Session.CenterOn(tower.Cell);
@@ -47,6 +48,7 @@ internal static class ArcherBowSmoke
             {
                 Set(unit, nameof(unit.AttackCooldown), Math.Max(0, CombatProfiles.Archer.Interval - elapsed));
                 Set(state, nameof(state.Revision), state.Revision + 1);
+                host.Session.AdvancePresentation(0, false);
                 view.Sync(host.Session, host.Map.Size);
                 Require(view.ArcherArmSegmentsDrawn == 4 && view.ArcherStringSegmentsDrawn == 2,
                     "The archer needs two articulated arms and an actual two-segment bowstring.");

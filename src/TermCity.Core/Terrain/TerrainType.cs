@@ -51,6 +51,7 @@ public interface ITerrainGenerator
 /// <summary>Shared inputs for every generation stage.</summary>
 public sealed class GenerationContext(GameMap map, int seed)
 {
+    internal bool RegionalHillsComplete { get; set; }
     public GameMap Map { get; } = map;
 
     public int Seed { get; } = seed;
@@ -101,7 +102,7 @@ public static class DefaultTerrains
         Background = Rgb.Hex(0x3d3320),
         BuildCostModifier = 1.5,
         FeatureDensity = new Dictionary<string, double> { ["Tree"] = 0.5, ["Rock"] = 3.0 },
-        Generator = new HillGenerator(),
+        Generator = new HillGenerator { GeographicRegions = true, Coverage = .125 },
         Description = "Rolling downs (building costs 1.5x)",
     };
 

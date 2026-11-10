@@ -102,10 +102,56 @@ public sealed class WallComponent
     public WallDefenseKind Defense { get; internal set; }
     public int DefenseFacing { get; internal set; } = 1;
     internal double ArrowCooldown, DefenseCooldown;
+
+    internal WallComponent SnapshotCopy(SettlementState state)
+    {
+        var copy = (WallComponent)MemberwiseClone();
+        copy.Settlement = state;
+        copy.SharedSection = null;
+        return copy;
+    }
+
+    internal void CopySnapshot(WallComponent source)
+    {
+        _health = source._health;
+        _maxHealth = source._maxHealth;
+        _repairAnimationActive = source._repairAnimationActive;
+        Id = source.Id;
+        Start = source.Start;
+        End = source.End;
+        BuiltMaterial = source.BuiltMaterial;
+        BelongsToFoundingWall = source.BelongsToFoundingWall;
+        JunctionTower = source.JunctionTower;
+        Cell = source.Cell;
+        SectionBounds = source.SectionBounds;
+        IsTower = source.IsTower;
+        IsGate = source.IsGate;
+        IsGateWing = source.IsGateWing;
+        Defense = source.Defense;
+        DefenseFacing = source.DefenseFacing;
+        ArrowCooldown = source.ArrowCooldown;
+        DefenseCooldown = source.DefenseCooldown;
+    }
 }
 
 public sealed class SiegeProjectile
 {
+    internal SiegeProjectile SnapshotCopy() => (SiegeProjectile)MemberwiseClone();
+    internal void CopySnapshot(SiegeProjectile source)
+    {
+        Id = source.Id; SourceDefenderId = source.SourceDefenderId; TargetId = source.TargetId;
+        Melee = source.Melee; Damage = source.Damage; Elapsed = source.Elapsed;
+        Windup = source.Windup; TravelSeconds = source.TravelSeconds; ArcHeight = source.ArcHeight;
+        Applied = source.Applied;
+        WorldStartHeight = source.WorldStartHeight; WorldEndHeight = source.WorldEndHeight;
+        FootprintCenter = source.FootprintCenter; CoverageOrigin = source.CoverageOrigin;
+        FootprintForward = source.FootprintForward; StationIndex = source.StationIndex;
+        SourceWallId = source.SourceWallId; DropHeight = source.DropHeight;
+        StartHeight = source.StartHeight; EndHeight = source.EndHeight;
+        StartX = source.StartX; StartY = source.StartY; EndX = source.EndX; EndY = source.EndY;
+        Progress = source.Progress; Kind = source.Kind;
+    }
+
     public int Id { get; internal set; }
     public int SourceDefenderId { get; internal set; }
     public int? TargetId { get; internal set; }
@@ -171,7 +217,9 @@ public sealed partial class SettlementState
     public double NextWaveIntervalSeconds => WaveNumber == 0 ? 120 : Math.Max(45, 120 - 5 * WaveNumber);
     public double NextWaveFraction => Math.Clamp(NextWaveSeconds / NextWaveIntervalSeconds, 0, 1);
     public int Revision { get; internal set; }
-    public double InterpolationFraction => Math.Clamp(Accumulator / StepSeconds, 0, 1);
+    internal double? PresentationFraction, PresentationSeconds;
+    public double InterpolationFraction => PresentationFraction ?? Math.Clamp(Accumulator / StepSeconds, 0, 1);
+    public double VisualSeconds => PresentationSeconds ?? (Revision + InterpolationFraction) * StepSeconds;
 
     internal SettlementState(CellRect bounds, BaileyGateSide gateSide = BaileyGateSide.Right, bool groupWallSections = true,
         GameMap? terrain = null)
@@ -223,10 +271,25 @@ public sealed partial class SettlementState
     }
 
     public bool ContainsInterior(Pos p) => WallNetwork.Contains(new(p.X + .5f, p.Y + .5f));
-    internal WallComponent? WallAt(Pos p) => _wallAt.GetValueOrDefault(p) ??
-        WallList.Where(w => !w.IsOriginal && Vector2.Distance(w.Center, new(p.X + .5f, p.Y + .5f)) <= 2)
-            .OrderBy(w => Vector2.DistanceSquared(w.Center, new(p.X + .5f, p.Y + .5f)))
-            .FirstOrDefault(w => Rendering.WallDamageLayout.ContainsFootprint(w, p.X + .5, p.Y + .5));
+    internal WallComponent? WallAt(Pos p)
+    {
+        if (_wallAt.TryGetValue(p, out var original)) return original;
+        EnsureWallSpatial();
+        if (!_wallSpatial!.TryGetValue(p, out var walls)) return null;
+        var point = new Vector2(p.X + .5f, p.Y + .5f);
+        WallComponent? nearest = null;
+        float distance = float.PositiveInfinity;
+        foreach (var wall in walls)
+        {
+            if (wall.IsOriginal || Vector2.Distance(wall.Center, point) > 2 ||
+                !Rendering.WallDamageLayout.ContainsFootprint(wall, point.X, point.Y)) continue;
+            float current = Vector2.DistanceSquared(wall.Center, point);
+            if (current >= distance) continue;
+            distance = current;
+            nearest = wall;
+        }
+        return nearest;
+    }
 
     internal void EnsureFirstWave(CityGame game)
     {
@@ -262,19 +325,18 @@ public sealed partial class SettlementState
         spawns = spawns.Where(p => EnemySpawnClear(game, p.X + 0.5, p.Y + 0.5,
             SiegeEnemies.Goblin.CollisionRadius(tier))).ToList();
         int count = requestedCount ?? Math.Min(MaximumEnemySwarm, 20 + (WaveNumber + 1) * 4 + (tier - 1) * 8);
-        bool mixed = requestedCount is null && game.HighestPopulation >= 250 &&
-            (OrcsIntroduced || PlannedOrcWave > 0 && WaveNumber + 1 >= PlannedOrcWave);
+        bool mixed = requestedCount is null && game.HighestPopulation >= 250;
         var orcs = new List<Pos>();
         var orcRoutes = previous;
         if (mixed)
         {
             var accessible = BuildCrowdRoutes(game, SiegeEnemies.Orc.CollisionRadius(tier));
             orcRoutes = accessible.Previous;
-            var side = PlannedOrcSide ?? ChooseOrcSide(accessible.Spawns, orcRoutes);
-            var approach = accessible.Spawns.Where(p => SideOf(CrowdRoute(p, orcRoutes)[^1]) == side &&
-                EnemySpawnClear(game, p.X + 0.5, p.Y + 0.5, SiegeEnemies.Orc.CollisionRadius(tier))).ToList();
+            var available = OrcApproachSpawns(game, accessible.Spawns, orcRoutes, tier);
+            var side = PlannedOrcSide ?? ChooseOrcSide(available, orcRoutes);
+            var approach = available.Where(p => SideOf(CrowdRoute(p, orcRoutes)[^1]) == side).ToList();
             orcs = ChooseCrowdSpawns(approach, Math.Min(8, 3 + WaveNumber / 4), tier,
-                WaveNumber + 1, SiegeEnemyKind.Orc);
+                WaveNumber + 1, SiegeEnemyKind.Orc, orcRoutes);
             double separation = SiegeEnemies.Orc.CollisionRadius(tier) + SiegeEnemies.Goblin.CollisionRadius(tier);
             spawns = spawns.Where(p => orcs.All(o =>
                 Math.Pow(p.X - o.X, 2) + Math.Pow(p.Y - o.Y, 2) >= separation * separation)).ToList();
@@ -351,7 +413,16 @@ public sealed partial class SettlementState
                 Route = CrowdRoute(spawn, trollRoutes[kind]) });
         }
         if (trolls.Count > 0) TrollsIntroduced = true;
-        if (orcs.Count > 0) { OrcsIntroduced = true; PlannedOrcSide = null; }
+        if (orcs.Count > 0)
+        {
+            if (!OrcsIntroduced)
+            {
+                FirstAssaultSide = PlannedOrcSide ?? SideOf(CrowdRoute(orcs[0], orcRoutes)[^1]);
+                FirstAssaultLastOrcId = EnemyList.Where(e => e.Kind == SiegeEnemyKind.Orc).Max(e => e.Id);
+            }
+            OrcsIntroduced = true;
+            PlannedOrcSide = null;
+        }
         Revision++;
         game.Report(new CityEvent(game.Week, EventKind.Raid,
             $"Siege wave {WaveNumber}: {selected.Count} tier-{tier} goblins" +
@@ -395,6 +466,15 @@ public sealed partial class SettlementState
             double attackDamage = goblin.Definition.AttackDamage(goblin.Tier);
             if (IsDefenderEngaged(goblin))
             {
+                if (goblin.Kind == SiegeEnemyKind.Orc)
+                {
+                    var defender = EngagedDefender(goblin)!;
+                    if (!MakeOrcAttackSpace(game, goblin, new((float)defender.X, (float)defender.Y),
+                        OrcCombatAnimation.WallStandOff + WorldScale.HumanRadius)) continue;
+                    double damage = OrcCombatAnimation.Advance(goblin, StepSeconds);
+                    if (damage > 0) DefenderIntercepts(goblin, damage);
+                    continue;
+                }
                 goblin.AttackCooldown = Math.Max(0, goblin.AttackCooldown - StepSeconds);
                 if (goblin.AttackCooldown <= 1e-8)
                 {
@@ -406,11 +486,22 @@ public sealed partial class SettlementState
             if (AttackableWall(goblin) is { } wall)
             {
                 goblin.BlockedSeconds = 0;
-                goblin.AttackCooldown = Math.Max(0, goblin.AttackCooldown - StepSeconds);
-                if (goblin.AttackCooldown <= 1e-8)
+                double damage;
+                if (goblin.Kind == SiegeEnemyKind.Orc)
                 {
-                    wall.Health = Math.Max(0, wall.Health - attackDamage);
-                    goblin.AttackCooldown = goblin.Definition.AttackIntervalSeconds;
+                    if (!MakeOrcAttackSpace(game, goblin, WallAttackPoint(wall, goblin.X, goblin.Y),
+                        OrcCombatAnimation.WallStandOff, WallRetreatDirection(wall))) continue;
+                    damage = OrcCombatAnimation.Advance(goblin, StepSeconds);
+                }
+                else
+                {
+                    goblin.AttackCooldown = Math.Max(0, goblin.AttackCooldown - StepSeconds);
+                    damage = goblin.AttackCooldown <= 1e-8 ? attackDamage : 0;
+                    if (damage > 0) goblin.AttackCooldown = goblin.Definition.AttackIntervalSeconds;
+                }
+                if (damage > 0)
+                {
+                    wall.Health = Math.Max(0, wall.Health - damage);
                     if (wall.Health <= 0)
                     {
                         Breach(game, wall);
@@ -421,6 +512,7 @@ public sealed partial class SettlementState
             }
             else
             {
+                if (goblin.Kind == SiegeEnemyKind.Orc) OrcCombatAnimation.Stop(goblin);
                 var next = goblin.Route[goblin.RouteIndex];
                 double dx = next.X + 0.5 - goblin.X, dy = next.Y + 0.5 - goblin.Y;
                 double length = Math.Sqrt(dx * dx + dy * dy),

@@ -11,6 +11,37 @@ namespace TermCity.Tests;
 public class AreaOverlayVisibilityTests
 {
     [Fact]
+    public void MinimapTracksPhysicalChangesWithoutDependingOnGameNotifications()
+    {
+        var game = TestCity.Flat();
+        var map = game.Map;
+        const int x = 10, y = 10;
+        map.SetRoad(x, y, false);
+        map.SetZone(x, y, ZoneType.None);
+        map.SetBuilding(x, y, null);
+        var image = new MinimapImage();
+        image.Update(game, map.Width, map.Height);
+        var land = image[x, y];
+        int version = game.MapVersion;
+
+        map.SetZone(x, y, ZoneType.Residential);
+        map.SetBuilding(x, y, map.Content.Buildings.Get("Cottage"));
+        image.Update(game, map.Width, map.Height);
+        Assert.Equal(Zones.Get(ZoneType.Residential).Foreground, image[x, y]);
+
+        map.SetBuilding(x, y, null);
+        map.SetZone(x, y, ZoneType.None);
+        map.SetTerrain(x, y, map.Content.Terrains.Get("Water"));
+        image.Update(game, map.Width, map.Height);
+        Assert.NotEqual(land, image[x, y]);
+
+        map.SetTerrain(x, y, map.Content.Terrains.Base);
+        image.Update(game, map.Width, map.Height);
+        Assert.Equal(land, image[x, y]);
+        Assert.Equal(version, game.MapVersion);
+    }
+
+    [Fact]
     public void OrganicSettlementVacanciesDoNotBecomeZonedAreaMarkers()
     {
         var game = TestCity.Flat(config: new GameConfig { MapWidth = 80, MapHeight = 72 }, rules: CityRules.Full);

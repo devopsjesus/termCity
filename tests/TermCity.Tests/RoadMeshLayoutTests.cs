@@ -8,6 +8,26 @@ namespace TermCity.Tests;
 
 public class RoadMeshLayoutTests
 {
+    [Fact]
+    public void SnapshotForkRetainsExactGeometryAndRejectsDifferentMapDimensions()
+    {
+        var game = TestCity.Flat();
+        for (int x = 10; x <= 18; x++) game.Map.SetRoad(x, 12, true);
+        game.Touch();
+        var layout = new RoadMeshLayout(game.Map, RoadCurves.Extract(game.Map, (_, _) => false));
+        var snapshot = game.CreateSimulationSnapshot();
+        var fork = layout.ForkForMap(snapshot.Map);
+        Assert.Same(layout.Segments, fork.Segments);
+        foreach (var segment in layout.Segments)
+        {
+            var point = (segment.A + segment.B) / 2;
+            Assert.Equal(layout.HeightAt(point), fork.HeightAt(point));
+            Assert.Equal(layout.RoadAt(point), fork.RoadAt(point));
+        }
+        Assert.Throws<ArgumentNullException>(() => layout.ForkForMap(null!));
+        Assert.Throws<ArgumentException>(() => layout.ForkForMap(new GameMap(8, 8, game.Map.Content)));
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]

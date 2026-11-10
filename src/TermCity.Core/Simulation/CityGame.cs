@@ -82,7 +82,7 @@ public sealed partial class CityGame
 #endif
     // Real time is never allowed to jump the simulation forward by more than this in one update, so a stall (the
     // window in the background, a slow frame) does not fast-forward the game when it comes back.
-    private const double MaxSecondsPerUpdate = 0.5;
+    internal const double MaxSecondsPerUpdate = 0.5;
 
     private double _dayProgress;
     private bool _planned;
@@ -122,6 +122,8 @@ public sealed partial class CityGame
     public static CityGame New(GameConfig config, GameContent? content = null, DateTime? startingDate = null)
     {
         config = config with { StartingYear = config.StartingYear ?? DateTime.Now.Year - 800 };
+        if (config.Scenario == CityScenario.Top)
+            return TopSettlementScenario.Create(config, content, startingDate);
         if (config.Scenario != CityScenario.Random)
             config = config with { MapWidth = MapSize.ScenarioWidth, MapHeight = MapSize.ScenarioHeight };
         content ??= GameContent.ForScenario(config.Scenario);
@@ -194,6 +196,13 @@ public sealed partial class CityGame
     public GameSpeed Speed { get; set; } = GameSpeed.Medium;
 
     public bool Paused { get; set; }
+    public bool ProfileUpdates { get; set; }
+    public double LastSiegeUpdateMilliseconds { get; private set; }
+    public double LastDayUpdateMilliseconds { get; private set; }
+    public double LastPatrolAssignmentMilliseconds { get; internal set; }
+    public double LastPathWearMilliseconds { get; private set; }
+    public double LastPopulationWeekMilliseconds { get; private set; }
+    public double LastWeekFinishMilliseconds { get; private set; }
 
     public TaxRates Taxes { get; }
 
@@ -340,14 +349,37 @@ public sealed partial class CityGame
             bool insolvent = Insolvent;
             if (_services is null || _servicesKey != _serviceVersion || _servicesInsolvent != insolvent)
             {
+                long started = System.Diagnostics.Stopwatch.GetTimestamp();
                 _services = CityServices.Compute(Map, Network, Config, k => Budget.Effective(k, insolvent),
-                    Profile.WaterSupply, Profile.PowerDemand, ElapsedDays);
+                    Profile.WaterSupply, Profile.PowerDemand, ElapsedDays, _services);
+                ServiceComputeMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
                 _servicesKey = _serviceVersion;
                 _servicesInsolvent = insolvent;
             }
 
             return _services;
         }
+    }
+
+    public double ServiceComputeMilliseconds { get; private set; }
+    private int _serviceUnlockDefinitionCount = -1;
+    private readonly int?[] _serviceUnlocks = new int?[ServiceKinds.Count];
+
+    internal int? ServiceUnlockGate(ServiceKind kind)
+    {
+        var definitions = Map.Content.Buildings;
+        if (_serviceUnlockDefinitionCount != definitions.Count)
+        {
+            Array.Clear(_serviceUnlocks);
+            foreach (var building in definitions)
+                if (building.PlayerPlaceable)
+                {
+                    int slot = (int)building.Service, population = CityProgression.RequiredPopulation(building);
+                    _serviceUnlocks[slot] = Math.Min(_serviceUnlocks[slot] ?? int.MaxValue, population);
+                }
+            _serviceUnlockDefinitionCount = definitions.Count;
+        }
+        return _serviceUnlocks[(int)kind];
     }
 
     /// <summary>How the city is doing: happiness, jobs, crime, traffic and what is driving people in or out.</summary>
@@ -498,6 +530,7 @@ public sealed partial class CityGame
 
     /// <summary>Increases whenever what the map looks like may have changed (not on every clock tick).</summary>
     public int MapVersion { get; private set; }
+    public int AnalysisVersion => _version;
 
     /// <summary>
     /// Invalidates every cache and notifies listeners. Call this after changing the map directly;
@@ -563,13 +596,22 @@ public sealed partial class CityGame
 
         double seconds = Math.Min(elapsedSeconds, MaxSecondsPerUpdate);
         SimulationStarted = true;
+        long started = ProfileUpdates ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        if (ProfileUpdates)
+            LastPatrolAssignmentMilliseconds = LastDayUpdateMilliseconds = LastPathWearMilliseconds =
+                LastPopulationWeekMilliseconds = LastWeekFinishMilliseconds = 0;
         AdvanceSiege(seconds * Config.MediumSecondsPerWeek / Config.SecondsPerWeek(Speed));
+        if (ProfileUpdates)
+            LastSiegeUpdateMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         _dayProgress += seconds;
         double length = SecondsPerDay;
         while (_dayProgress >= length)
         {
             _dayProgress -= length;
+            started = ProfileUpdates ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
             AdvanceDayCore();
+            if (ProfileUpdates)
+                LastDayUpdateMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
             length = SecondsPerDay;
         }
 
@@ -603,6 +645,7 @@ public sealed partial class CityGame
 
     private void AdvanceDayCore()
     {
+        int navigation = Map.NavigationVersion;
         SimulationStarted = true;
         ClearSettlementReservations();
         if (!_planned)
@@ -612,20 +655,23 @@ public sealed partial class CityGame
 
         int day = Day;
         int homes = Config.FullRules ? MoveIn(Share(_planHomes, day)) : Grow(ZoneType.Residential, Share(_planHomes, day), int.MaxValue);
-        Invalidate();
+        if (homes > 0) Invalidate();
 
         int allowedC = SupportedCells(ZoneType.Commercial);
         int shops = Grow(ZoneType.Commercial, Share(_planShops, day), allowedC - Stats.Commercial.Occupied);
-        Invalidate();
+        if (shops > 0) Invalidate();
 
         int allowedI = SupportedCells(ZoneType.Industrial);
         int factories = Grow(ZoneType.Industrial, Share(_planFactories, day), allowedI - Stats.Industrial.Occupied);
-        Invalidate();
+        if (factories > 0) Invalidate();
 
         _weekHomes += homes;
         _weekShops += shops;
         _weekFactories += factories;
-        bool pathsChanged = TravelRoutes.WearPaths(Map);
+        long pathsStarted = ProfileUpdates ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        _ = TravelRoutes.AdvancePathWear(Map, out bool pathsChanged);
+        if (ProfileUpdates)
+            LastPathWearMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(pathsStarted).TotalMilliseconds;
         Invalidate(servicesChanged: true);
         Day++;
         int removed = RemoveDezonedBuildings((long)Week * Config.DaysPerWeek + Day);
@@ -637,7 +683,7 @@ public sealed partial class CityGame
             // (the week bar has its own, cheaper, redraw).
             if (homes + shops + factories + removed > 0 || pathsChanged || Map.ServiceCells.Count > 0)
             {
-                Notify(roadsChanged: false);
+                Notify(roadsChanged: false, mapChanged: Map.NavigationVersion != navigation || pathsChanged);
             }
 
             return;
@@ -645,11 +691,15 @@ public sealed partial class CityGame
 
         if (Config.FullRules)
         {
+            long populationStarted = ProfileUpdates ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
             PopulationEngine.RunWeek(this, Tally);
+            if (ProfileUpdates)
+                LastPopulationWeekMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(populationStarted).TotalMilliseconds;
             Invalidate(servicesChanged: true);
             Simulation.Settlement.RunWeek(this);
         }
 
+        long weekFinishStarted = ProfileUpdates ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         var finance = Finance;
         int income = finance.Income;
         bool wasInsolvent = Insolvent;
@@ -668,7 +718,10 @@ public sealed partial class CityGame
             Tally.Births, Tally.Deaths, Tally.MovedIn, Tally.MovedOut, Tally.Events);
         _weekHomes = _weekShops = _weekFactories = 0;
         Tally.Reset();
-        Notify(roadsChanged: false, mapChanged: true, servicesChanged: Config.FullRules);
+        Notify(roadsChanged: false, mapChanged: Map.NavigationVersion != navigation || pathsChanged,
+            servicesChanged: Config.FullRules);
+        if (ProfileUpdates)
+            LastWeekFinishMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(weekFinishStarted).TotalMilliseconds;
     }
 
     private int RemoveDezonedBuildings(double elapsedDays)

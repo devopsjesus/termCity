@@ -1,5 +1,6 @@
 using TermCity.Core.Util;
 using TermCity.Core.Rendering;
+using System.Numerics;
 
 namespace TermCity.Core.Simulation;
 
@@ -69,23 +70,20 @@ public sealed partial class SettlementState
         }
     }
 
-    internal WallComponent? AttackableWall(SiegeEnemy goblin)
+    internal WallComponent? AttackableWall(SiegeEnemy goblin, bool checkCrowd = true)
     {
         WallComponent? result = null;
-        double closest = Math.Pow(goblin.CollisionRadius + 0.35, 2);
-        foreach (var wall in WallsNear(new((float)goblin.X, (float)goblin.Y), (float)goblin.CollisionRadius + .4f))
+        double reach = goblin.Kind == SiegeEnemyKind.Orc ? OrcCombatAnimation.WallReach : goblin.CollisionRadius + .35;
+        double closest = reach * reach;
+        foreach (var wall in WallsNear(new((float)goblin.X, (float)goblin.Y), (float)reach + .05f))
             {
                 if (wall.Health <= 0 || wall.IsGateWing) continue;
-                var tangent = wall.Tangent;
-                double dx = goblin.X - wall.Center.X, dy = goblin.Y - wall.Center.Y;
-                double along = Math.Clamp(dx * tangent.X + dy * tangent.Y, -WallDamageLayout.Width(wall) / 2, WallDamageLayout.Width(wall) / 2);
-                double across = Math.Clamp(-dx * tangent.Y + dy * tangent.X, -WallDamageLayout.Depth(wall) / 2, WallDamageLayout.Depth(wall) / 2);
-                double ax = wall.Center.X + along * tangent.X - across * tangent.Y;
-                double ay = wall.Center.Y + along * tangent.Y + across * tangent.X;
+                var contact = WallAttackPoint(wall, goblin.X, goblin.Y);
+                double ax = contact.X, ay = contact.Y;
                 double distance = Math.Pow(goblin.X - ax, 2) + Math.Pow(goblin.Y - ay, 2);
                 if (distance > closest) continue;
                 double vx = ax - goblin.X, vy = ay - goblin.Y, length = vx * vx + vy * vy;
-                if (EnemyList.Any(other =>
+                if (checkCrowd && EnemyList.Any(other =>
                 {
                     if (other == goblin || other.Health <= 0 || length < 1e-8) return false;
                     double t = ((other.X - goblin.X) * vx + (other.Y - goblin.Y) * vy) / length;
@@ -97,5 +95,15 @@ public sealed partial class SettlementState
                 result = wall;
             }
         return result;
+    }
+
+    internal static Vector2 WallAttackPoint(WallComponent wall, double x, double y)
+    {
+        var tangent = wall.Tangent;
+        double dx = x - wall.Center.X, dy = y - wall.Center.Y;
+        double along = Math.Clamp(dx * tangent.X + dy * tangent.Y, -WallDamageLayout.Width(wall) / 2, WallDamageLayout.Width(wall) / 2);
+        double across = Math.Clamp(-dx * tangent.Y + dy * tangent.X, -WallDamageLayout.Depth(wall) / 2, WallDamageLayout.Depth(wall) / 2);
+        return new((float)(wall.Center.X + along * tangent.X - across * tangent.Y),
+            (float)(wall.Center.Y + along * tangent.Y + across * tangent.X));
     }
 }

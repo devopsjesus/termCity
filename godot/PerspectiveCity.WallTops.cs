@@ -8,10 +8,19 @@ public partial class PerspectiveCity
 {
     private sealed record WallTopFace(Transform3D Transform, int Color, NVector2[] Polygon, float Height, bool Extension);
     private readonly List<WallTopFace> _wallTopFaces = [];
+    private readonly record struct IndexedWallTop(int Order, WallTopFace Face, NVector2 Min, NVector2 Max);
+    private sealed record ClippedWallTop(WallTopFace[] Cutters, (Vector3 Point, Vector2 Uv)[] Vertices);
+    private readonly Dictionary<WallTopFace, ClippedWallTop> _clippedWallTops = [];
+    private readonly Dictionary<int, (Vector3 Point, Vector2 Uv)[]> _uploadedWallTops = [];
+    private readonly Dictionary<(int Height, int X, int Y), List<IndexedWallTop>> _wallTopSpatial = [];
+    private readonly Dictionary<int, List<(Vector3 Point, Vector2 Uv)>> _wallTopVertices = [];
+    private int _wallTopOrder;
     private readonly Dictionary<int, MultiMeshInstance3D> _extensionWallInstances = [];
     private readonly Dictionary<int, List<Transform3D>> _extensionWallBatches = [];
     private readonly Dictionary<int, MeshInstance3D> _wallTopMeshes = [];
     private ArrayMesh? _wallOpenCube;
+    internal IReadOnlyList<(int Color, Vector3 Point, Vector2 Uv)> WallTopGeometry =>
+        _wallTopVertices.SelectMany(pair => pair.Value.Select(vertex => (pair.Key, vertex.Point, vertex.Uv))).ToArray();
     internal bool WallTopWindingCorrect
     {
         get
@@ -38,13 +47,25 @@ public partial class PerspectiveCity
         _wallTopFaces.Add(new(transform, color, corners.Select(p => new NVector2(p.X, p.Z)).ToArray(), corners[0].Y, extension));
     }
 
-    private void SyncWallTops()
+    private void SyncWallTopsReference(int firstFace = 0, IReadOnlyDictionary<int, int>? previousBatches = null)
     {
+        bool append = previousBatches is not null;
+        if (!append)
+        {
+            foreach (var values in _wallTopSpatial.Values) values.Clear();
+            foreach (var values in _wallTopVertices.Values) values.Clear();
+            var live = _wallTopFaces.ToHashSet();
+            foreach (var retired in _clippedWallTops.Keys.Where(face => !live.Contains(face)).ToArray())
+                _clippedWallTops.Remove(retired);
+            _wallTopOrder = 0;
+            foreach (var instance in _wallTopMeshes.Values) instance.Visible = false;
+        }
         if (_extensionWallBatches.Values.All(batch => batch.Count == 0))
         {
+            SyncSpatialSiege(_fortifications, _extensionWallInstances, _extensionWallBatches, _wallOpenCube, buffered: true);
             foreach (var instance in _extensionWallInstances.Values) instance.Visible = false;
             foreach (var instance in _wallTopMeshes.Values) instance.Visible = false;
-            return;
+            if (_wallTopFaces.Count == 0) return;
         }
         if (_wallOpenCube is null)
         {
@@ -68,51 +89,81 @@ public partial class PerspectiveCity
             }
             _wallOpenCube = surface.Commit();
         }
-        SyncSiegeBatches(_fortifications, _extensionWallInstances, _extensionWallBatches, _wallOpenCube);
-        var surfaces = new Dictionary<int, SurfaceTool>();
-        var nonEmpty = new HashSet<int>();
-        foreach (var instance in _wallTopMeshes.Values) instance.Visible = false;
-        foreach (var group in _wallTopFaces.GroupBy(f => (int)MathF.Round(f.Height * 10000)))
+        SyncSiegeBatches(_fortifications, _extensionWallInstances, _extensionWallBatches, _wallOpenCube,
+            previousBatches, buffered: true);
+        var changedColors = new HashSet<int>();
+        IEnumerable<WallTopFace> faces = append ? _wallTopFaces.Skip(firstFace) : _wallTopFaces.OrderBy(face => face.Extension);
+        foreach (var face in faces)
         {
-            var earlier = new List<NVector2[]>();
-            foreach (var face in group.OrderBy(f => f.Extension))
+            int height = (int)MathF.Round(face.Height * 10000);
+            var min = face.Polygon.Aggregate(NVector2.Min);
+            var max = face.Polygon.Aggregate(NVector2.Max);
+            int left = (int)MathF.Floor(min.X / 4), right = (int)MathF.Floor(max.X / 4);
+            int top = (int)MathF.Floor(min.Y / 4), bottom = (int)MathF.Floor(max.Y / 4);
+            if (face.Extension)
             {
-                if (face.Extension)
+                if (!_wallTopVertices.TryGetValue(face.Color, out var vertices))
+                    _wallTopVertices.Add(face.Color, vertices = []);
+                changedColors.Add(face.Color);
+                var candidates = new HashSet<IndexedWallTop>();
+                for (int y = top; y <= bottom; y++)
+                    for (int x = left; x <= right; x++)
+                        if (_wallTopSpatial.TryGetValue((height, x, y), out var earlier)) candidates.UnionWith(earlier);
+                var cutterFaces = candidates.OrderBy(candidate => candidate.Order)
+                    .Where(p => p.Max.X > min.X && p.Min.X < max.X && p.Max.Y > min.Y && p.Min.Y < max.Y)
+                    .Select(p => p.Face).ToArray();
+                if (_clippedWallTops.TryGetValue(face, out var cached) && cached.Cutters.SequenceEqual(cutterFaces))
                 {
-                    if (!surfaces.TryGetValue(face.Color, out var surface))
-                    {
-                        surfaces.Add(face.Color, surface = new SurfaceTool());
-                        surface.Begin(Mesh.PrimitiveType.Triangles);
-                    }
-                    var min = face.Polygon.Aggregate(NVector2.Min);
-                    var max = face.Polygon.Aggregate(NVector2.Max);
-                    var cutters = earlier.Where(p => p.Max(v => v.X) > min.X && p.Min(v => v.X) < max.X &&
-                        p.Max(v => v.Y) > min.Y && p.Min(v => v.Y) < max.Y);
-                    var inverse = face.Transform.AffineInverse();
-                    foreach (var polygon in WallDamageLayout.ExposedTop(face.Polygon, cutters))
-                        for (int i = 1; i < polygon.Length - 1; i++)
-                        {
-                            var a = new Vector3(polygon[0].X, face.Height, polygon[0].Y);
-                            var b = new Vector3(polygon[i].X, face.Height, polygon[i].Y);
-                            var c = new Vector3(polygon[i + 1].X, face.Height, polygon[i + 1].Y);
-                            var normal = (b - a).Cross(c - a);
-                            if (normal.LengthSquared() < 1e-12f) continue;
-                            if (normal.Y > 0) (b, c) = (c, b);
-                            foreach (var point in new[] { a, b, c })
-                            {
-                                var local = inverse * point;
-                                surface.SetNormal(Vector3.Up);
-                                surface.SetUV(new(local.X + .5f, local.Z + .5f));
-                                surface.AddVertex(point);
-                                nonEmpty.Add(face.Color);
-                            }
-                        }
+                    vertices.AddRange(cached.Vertices);
                 }
-                earlier.Add(face.Polygon);
+                else
+                {
+                int firstVertex = vertices.Count;
+                var cutters = cutterFaces.Select(cutter => cutter.Polygon);
+                var inverse = face.Transform.AffineInverse();
+                foreach (var polygon in WallDamageLayout.ExposedTop(face.Polygon, cutters))
+                    for (int i = 1; i < polygon.Length - 1; i++)
+                    {
+                        var a = new Vector3(polygon[0].X, face.Height, polygon[0].Y);
+                        var b = new Vector3(polygon[i].X, face.Height, polygon[i].Y);
+                        var c = new Vector3(polygon[i + 1].X, face.Height, polygon[i + 1].Y);
+                        var normal = (b - a).Cross(c - a);
+                        if (normal.LengthSquared() < 1e-12f) continue;
+                        if (normal.Y > 0) (b, c) = (c, b);
+                        foreach (var point in new[] { a, b, c })
+                        {
+                            var local = inverse * point;
+                            vertices.Add((point, new(local.X + .5f, local.Z + .5f)));
+                        }
+                    }
+                _clippedWallTops[face] = new(cutterFaces, vertices.Skip(firstVertex).ToArray());
+                }
             }
+            var indexed = new IndexedWallTop(_wallTopOrder++, face, min, max);
+            for (int y = top; y <= bottom; y++)
+                for (int x = left; x <= right; x++)
+                {
+                    if (!_wallTopSpatial.TryGetValue((height, x, y), out var values))
+                        _wallTopSpatial.Add((height, x, y), values = []);
+                    values.Add(indexed);
+                }
         }
-        foreach (var (color, surface) in surfaces)
+        foreach (int color in changedColors)
         {
+            var vertices = _wallTopVertices[color];
+            if (_uploadedWallTops.TryGetValue(color, out var uploaded) && vertices.SequenceEqual(uploaded))
+            {
+                if (_wallTopMeshes.TryGetValue(color, out var retained)) retained.Visible = retained.Mesh is not null;
+                continue;
+            }
+            using var surface = new SurfaceTool();
+            surface.Begin(Mesh.PrimitiveType.Triangles);
+            foreach (var vertex in vertices)
+            {
+                surface.SetNormal(Vector3.Up);
+                surface.SetUV(vertex.Uv);
+                surface.AddVertex(vertex.Point);
+            }
             if (!_wallTopMeshes.TryGetValue(color, out var instance))
             {
                 instance = new MeshInstance3D { MaterialOverride = Material(color, solid: true) };
@@ -120,9 +171,9 @@ public partial class PerspectiveCity
                 _wallTopMeshes.Add(color, instance);
             }
             instance.Mesh?.Dispose();
-            instance.Mesh = nonEmpty.Contains(color) ? surface.Commit() : null;
+            instance.Mesh = vertices.Count > 0 ? surface.Commit() : null;
+            _uploadedWallTops[color] = vertices.ToArray();
             instance.Visible = instance.Mesh is not null;
-            surface.Dispose();
         }
     }
 

@@ -30,6 +30,7 @@ public sealed partial class SettlementState
     private int _eligibleArea;
     private CellRect _growthBounds;
     private bool? _onlyOriginalWalls;
+    private bool _changingWalls, _wallTopologyPending, _wallStructurePending;
     public bool UsesFoundingLayout => _onlyOriginalWalls ??=
         WallList.Count == 2 * Bounds.Width + 2 * Bounds.Height - 4 && WallList.All(w => w.IsOriginal);
     public WallNetwork WallNetwork => _network ??= new WallNetwork(NetworkSpans(),
@@ -49,6 +50,12 @@ public sealed partial class SettlementState
 
     internal void InvalidateWallTopology(bool structureChanged = true)
     {
+        if (_changingWalls)
+        {
+            _wallTopologyPending = true;
+            _wallStructurePending |= structureChanged;
+            return;
+        }
         if (structureChanged)
         {
             _artworkNetwork = null;
@@ -62,6 +69,14 @@ public sealed partial class SettlementState
         _walkLinks.Clear();
         _reserved.Clear();
         _wallDistances.Clear();
+        _defenderPathCells.Clear();
+        _defenderPathEdges.Clear();
+        _defenderInteriorCells.Clear();
+        _defenderWalkHeights.Clear();
+        _archerRangePosts.Clear();
+        _archerReachability.Clear();
+        _defenderPathNavigation = -1;
+        _garrisonNavigationVersion = -1;
         _onlyOriginalWalls = null;
         _topologyRevision++;
         _territoryRevision = -1;
@@ -71,6 +86,24 @@ public sealed partial class SettlementState
             defender.Path.Clear();
             defender.PathIndex = 0;
             defender.PathTarget = null;
+        }
+    }
+
+    internal void ChangeWalls(Action change)
+    {
+        if (_changingWalls) throw new InvalidOperationException("Wall changes cannot be nested.");
+        // Mutation callbacks must not query topology caches before the commit.
+        _changingWalls = true;
+        try { change(); }
+        finally
+        {
+            _changingWalls = false;
+            if (_wallTopologyPending)
+            {
+                bool structureChanged = _wallStructurePending;
+                _wallTopologyPending = _wallStructurePending = false;
+                InvalidateWallTopology(structureChanged);
+            }
         }
     }
 
@@ -196,10 +229,27 @@ public sealed partial class SettlementState
         return result;
     }
 
-    public bool GroundBlocked(Vector2 point, double radius = WorldScale.HumanRadius, bool allowGates = true) =>
-        WallsNear(point, (float)radius).Any(w => Math.Abs(w.Center.X - point.X) <= WallDamageLayout.HalfSize(w).X + radius &&
-            Math.Abs(w.Center.Y - point.Y) <= WallDamageLayout.HalfSize(w).Y + radius &&
-            WallDamageLayout.BlocksGround(w, point.X, point.Y, radius, allowGates));
+    public bool GroundBlocked(Vector2 point, double radius = WorldScale.HumanRadius, bool allowGates = true)
+    {
+        EnsureWallSpatial();
+        var first = new Pos((int)MathF.Floor(point.X - (float)radius), (int)MathF.Floor(point.Y - (float)radius));
+        var last = new Pos((int)MathF.Floor(point.X + (float)radius), (int)MathF.Floor(point.Y + (float)radius));
+        if (first == last)
+        {
+            if (!_wallSpatial!.TryGetValue(first, out var walls)) return false;
+            foreach (var wall in walls)
+                if (BlocksGroundAt(wall, point, radius, allowGates)) return true;
+            return false;
+        }
+        foreach (var wall in WallsNear(point, (float)radius))
+            if (BlocksGroundAt(wall, point, radius, allowGates)) return true;
+        return false;
+    }
+
+    private static bool BlocksGroundAt(WallComponent wall, Vector2 point, double radius, bool allowGates) =>
+        Math.Abs(wall.Center.X - point.X) <= WallDamageLayout.HalfSize(wall).X + radius &&
+        Math.Abs(wall.Center.Y - point.Y) <= WallDamageLayout.HalfSize(wall).Y + radius &&
+        WallDamageLayout.BlocksGround(wall, point.X, point.Y, radius, allowGates);
 
     public bool CanWalk(Vector2 a, Vector2 b)
     {

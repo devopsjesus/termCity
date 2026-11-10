@@ -93,6 +93,23 @@ public class WallNetworkTests
     }
 
     [Fact]
+    public void CellLengthWallSectionsKeepAllSourceIdsButOnlyNecessaryPolygonCorners()
+    {
+        var corners = new[] { new Vector2(0, 0), new(10, 0), new(10, 10), new(0, 10) };
+        var spans = corners.SelectMany((a, side) => Enumerable.Range(0, 10).Select(i =>
+            new WallNetworkSpan(side * 10 + i + 1, Vector2.Lerp(a, corners[(side + 1) % 4], i / 10f),
+                Vector2.Lerp(a, corners[(side + 1) % 4], (i + 1) / 10f)))).ToArray();
+        var network = new WallNetwork(spans, new(5, 5));
+        var region = Assert.Single(network.Regions);
+        Assert.Equal(4, region.Polygon.Count);
+        Assert.Equal(40, region.SpanIds.Count);
+        for (int y = -1; y <= 10; y++)
+            for (int x = -1; x <= 10; x++)
+                Assert.Equal(x >= 0 && x < 10 && y >= 0 && y < 10,
+                    region.Contains(new(x + .5f, y + .5f)));
+    }
+
+    [Fact]
     public void CoplanarJoinClippingProducesDisjointConvexTopsWithoutFilledHoles()
     {
         Vector2[] source = [new(0, 0), new(10, 0), new(10, 10), new(0, 10)];

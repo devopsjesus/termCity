@@ -10,7 +10,8 @@ public sealed record SiegeDeath(Vector2 Position, float Elevation, bool Friendly
     public int AppearanceSeed { get; init; }
     public SiegeEnemy EnemyAppearance => new() { Kind = Enemy, Tier = Tier, AppearanceSeed = AppearanceSeed };
     public double Seconds { get; internal set; }
-    public double Duration => Cause == SiegeDeathCause.Fall ? 1.8 : 1.4;
+    public double Duration => !Friendly && Enemy == SiegeEnemyKind.Orc ? 4 :
+        Cause == SiegeDeathCause.Fall ? 1.8 : 1.4;
 }
 
 public sealed partial class SettlementState

@@ -3,10 +3,37 @@ using TermCity.Core.Simulation;
 
 namespace TermCity.Core.Rendering;
 
-public readonly record struct SiegeEnemyPose(Vector2 Position, Vector2 Forward, float Stride, float Bob, float Sway, float Attack);
+public readonly record struct SiegeEnemyPose(Vector2 Position, Vector2 Forward, float Stride, float Bob, float Sway, float Attack)
+{
+    public bool OrcAttacking { get; init; }
+    public double OrcAnimationSeconds { get; init; }
+    public double WalkDistance { get; init; }
+}
 
 public static class SiegeMotion
 {
+    public static Vector2 IdleDefenderForward(SettlementState siege, SettlementDefender unit)
+    {
+        if (unit.Kind != DefenderKind.Archer) return -Vector2.UnitY;
+        var position = Vector2.Lerp(new((float)unit.PreviousX, (float)unit.PreviousY),
+            new((float)unit.X, (float)unit.Y), (float)siege.InterpolationFraction);
+        var map = siege.AttachedMap;
+        float level = unit.Elevation + (map is null ? 0 :
+            TerrainSprite.Elevation(map, (int)unit.X, (int)unit.Y));
+        var support = unit.Elevation > .01f ? siege.Walls
+            .Where(wall => !wall.IsGateWing && WallDamageLayout.ContainsWalkway(wall, position.X, position.Y))
+            .OrderBy(wall => Math.Abs(WallDamageLayout.WalkHeight(wall) +
+                (map is null ? 0 : WallDamageLayout.GroundHeight(wall, map)) - level))
+            .ThenBy(wall => wall.IsTower ? 0 : 1)
+            .ThenBy(wall => Vector2.DistanceSquared(wall.Center, position)).FirstOrDefault() : null;
+        if (support is not null)
+            return support.IsTower ? -WallDamageLayout.LadderInward(support) :
+                new Vector2(-support.Tangent.Y, support.Tangent.X) * WallDamageLayout.ExteriorSide(support);
+        var outward = position - new Vector2(siege.Bounds.X + siege.Bounds.Width / 2f,
+            siege.Bounds.Y + siege.Bounds.Height / 2f);
+        return outward.LengthSquared() > .00001f ? Vector2.Normalize(outward) : -Vector2.UnitY;
+    }
+
     public static SiegeEnemyPose Enemy(SettlementState siege, SiegeEnemy goblin)
     {
         float fraction = (float)siege.InterpolationFraction;
@@ -19,6 +46,8 @@ public static class SiegeMotion
         var wall = attackable?.Cell ?? goblin.Route[^1];
         var defender = siege.EngagedDefender(goblin);
         var towardWall = (defender is not null ? new Vector2((float)defender.X, (float)defender.Y) :
+            goblin.Kind == SiegeEnemyKind.Orc && attackable is not null ?
+                SettlementState.WallAttackPoint(attackable, goblin.X, goblin.Y) :
             new Vector2(wall.X + 0.5f, wall.Y + 0.5f)) - position;
         var forward = walking ? movement : towardWall;
         if (forward.LengthSquared() < 0.000001f)
@@ -31,7 +60,22 @@ public static class SiegeMotion
             towardWall.LengthSquared() <= Math.Pow(SettlementState.MeleeDistance(goblin), 2))
             ? AttackSwing((goblin.Definition.AttackIntervalSeconds - goblin.AttackCooldown +
                 siege.InterpolationFraction * SettlementState.StepSeconds) / goblin.Definition.AttackIntervalSeconds) : 0;
-        return new(position, forward, stride, Math.Abs(stride) * 0.065f, stride * 0.045f, attack);
+        if (goblin.Kind == SiegeEnemyKind.Orc)
+            attack = goblin.OrcAttacking ? OrcCombatAnimation.Swing(OrcAnimationTime(goblin, fraction)) : 0;
+        return new(position, forward, stride, Math.Abs(stride) * 0.065f, stride * 0.045f, attack)
+        {
+            OrcAttacking = goblin.OrcAttacking,
+            OrcAnimationSeconds = OrcAnimationTime(goblin, fraction),
+            WalkDistance = distance,
+        };
+    }
+
+    internal static double OrcAnimationTime(SiegeEnemy enemy, double fraction)
+    {
+        double current = enemy.OrcAttackSeconds;
+        if (current < enemy.PreviousOrcAttackSeconds) current += OrcCombatAnimation.Duration;
+        return (enemy.PreviousOrcAttackSeconds + (current - enemy.PreviousOrcAttackSeconds) * fraction) %
+            OrcCombatAnimation.Duration;
     }
 
     public static float AttackSwing(double progress)

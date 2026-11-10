@@ -240,8 +240,8 @@ public class ZoneSurfaceLayoutTests
     }
 
     [Theory]
-    [InlineData(1, 0.84)]
-    [InlineData(3, 0.76)]
+    [InlineData(1, 0.55)]
+    [InlineData(3, 0.45)]
     public void StraightFootpathRemovesOnlyItsActualWidth(int wear, double expectedArea)
     {
         var paths = new FootpathSurfaceLayout(
@@ -257,10 +257,10 @@ public class ZoneSurfaceLayoutTests
     public void FootpathEnclosedInsideCheckerPatchCutsRibbonAndRoundCapsWithoutFilledHole()
     {
         var paths = new FootpathSurfaceLayout(
-            [new FootpathLayout.Stroke([new(12.15f, 12.25f), new(12.35f, 12.25f)], 1)], null);
+            [new FootpathLayout.Stroke([new(12.24f, 12.25f), new(12.26f, 12.25f)], 1)], null);
         var patches = ZoneSurfaceLayout.Patches(null, 12, 12, paths);
-        // Twelve-sided caps have combined area 3*r*r; the ribbon remains 0.16 wide.
-        Assert.Equal(1 - 0.2 * 0.16 - 3 * 0.08 * 0.08, patches.Sum(Area), 5);
+        float width = FootpathLayout.WidthForWear(1);
+        Assert.InRange(Math.Abs(1 - .02 * width - 3 * width * width / 4 - patches.Sum(Area)), 0, .000001);
         AssertNoFootpathOverlap(patches, paths);
         Assert.Equal(3, patches.Count(patch => Math.Abs(Area(patch) - 0.25) < 0.000001));
     }

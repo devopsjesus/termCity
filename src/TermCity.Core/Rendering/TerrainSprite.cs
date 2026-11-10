@@ -35,6 +35,17 @@ public sealed record TerrainSprite(int Width, int Height, int Lift, byte[] Pixel
         return count > 0 ? sum / count : -0.16f;
     }
 
+    public static TerrainElevationField CaptureElevations(GameMap map)
+    {
+        if (map.TerrainSamples is { } cached && map.TerrainSamplesVersion == map.TerrainVersion) return cached;
+        var values = new float[map.Width * map.Height];
+        for (int y = 0; y < map.Height; y++)
+            for (int x = 0; x < map.Width; x++)
+                values[map.Index(x, y)] = Elevation(map, x, y);
+        map.TerrainSamplesVersion = map.TerrainVersion;
+        return map.TerrainSamples = new(map.Width, map.Height, values);
+    }
+
     public static float Elevation(GameMap map, int x, int y)
     {
         var terrain = map.TerrainAt(x, y);

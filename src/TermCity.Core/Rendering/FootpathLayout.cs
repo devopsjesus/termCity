@@ -12,6 +12,21 @@ public static class FootpathLayout
     public static IReadOnlyList<Stroke> Strokes(GameMap map)
     {
         if (!map.PathLayer.Any(wear => wear > 0)) return [];
+        _ = TravelRoutes.FootpathJourneys(map);
+        if (map.FootpathStrokeCache is { } cached && map.FootpathStrokeNavigation == map.NavigationVersion &&
+            map.FootpathStrokeVersion == map.FootpathVersion &&
+            ReferenceEquals(map.FootpathStrokeJourneys, map.FootpathJourneyCache))
+            return cached;
+        var strokes = BuildStrokes(map);
+        map.FootpathStrokeNavigation = map.NavigationVersion;
+        map.FootpathStrokeVersion = map.FootpathVersion;
+        map.FootpathStrokeJourneys = map.FootpathJourneyCache;
+        return map.FootpathStrokeCache = strokes;
+    }
+
+    private static IReadOnlyList<Stroke> BuildStrokes(GameMap map)
+    {
+        if (!map.PathLayer.Any(wear => wear > 0)) return [];
         var strokes = new List<Stroke>();
         var covered = new HashSet<int>();
         var edges = new HashSet<(int First, int Last)>();
@@ -92,7 +107,7 @@ public static class FootpathLayout
                     (startsAtRoad || Property(journey[start - 1])))
                 {
                     points.Add(startsAtRoad ? Center(journey[start - 1]) :
-                        (Center(journey[start - 1]) + Center(journey[start])) / 2);
+                        BuildingEntranceLayout.Contact(map, journey[start - 1], journey[start]));
                     JourneyEdge(journey[start - 1], journey[start]);
                 }
                 for (int index = start; index <= end; index++)
@@ -106,7 +121,7 @@ public static class FootpathLayout
                     (endsAtRoad || Property(journey[end + 1])))
                 {
                     points.Add(endsAtRoad ? Center(journey[end + 1]) :
-                        (Center(journey[end]) + Center(journey[end + 1])) / 2);
+                        BuildingEntranceLayout.Contact(map, journey[end + 1], journey[end]));
                     JourneyEdge(journey[end], journey[end + 1]);
                 }
                 if (points.Count > 1) strokes.Add(new(Smooth(points), wear, startsAtRoad, endsAtRoad));
@@ -292,7 +307,7 @@ public static class FootpathLayout
             for (int step = 1; step <= steps; step++)
                 samples.Add(Vector2.Lerp(points[index - 1], points[index], step / (float)steps));
         }
-        float halfWidth = stroke.Wear >= 3 ? 0.12f : 0.08f;
+        float halfWidth = WidthForWear(stroke.Wear) / 2;
         var sections = new List<Section>(samples.Count);
         for (int index = 0; index < samples.Count; index++)
         {
@@ -309,6 +324,8 @@ public static class FootpathLayout
         }
         return sections;
     }
+
+    public static float WidthForWear(int wear) => wear >= 3 ? .60f : .45f;
 
     private static IReadOnlyList<Vector2> Smooth(IReadOnlyList<Vector2> points)
     {

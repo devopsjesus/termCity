@@ -45,12 +45,11 @@ public static class CityProgression
                 game.Stats.Population) >= RequiredPopulation(building));
 
     public static bool IsServiceUnlocked(CityGame game, ServiceKind kind, int population) =>
-        kind == ServiceKind.None || game.Map.Content.Buildings.Any(b => b.PlayerPlaceable && b.Service == kind &&
-            RequiredPopulation(b) <= Math.Max(game.HighestMilestone, population));
+        kind == ServiceKind.None || game.ServiceUnlockGate(kind) is { } required &&
+            required <= Math.Max(game.HighestMilestone, population);
 
     public static int ServiceUnlockPopulation(CityGame game, ServiceKind kind) =>
-        game.Map.Content.Buildings.Where(b => b.PlayerPlaceable && b.Service == kind)
-            .Select(RequiredPopulation).DefaultIfEmpty(int.MaxValue).Min();
+        game.ServiceUnlockGate(kind) ?? int.MaxValue;
 
     public static int GoldBonus(CityGame game, CityMilestone milestone)
     {

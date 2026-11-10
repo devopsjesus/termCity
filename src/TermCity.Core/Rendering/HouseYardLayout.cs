@@ -9,6 +9,9 @@ public readonly record struct HouseOutlineEdge(Pos Start, Pos End, Pos Cell);
 /// <summary>One-cell garden extensions on free land, without changing saved building footprints.</summary>
 public static class HouseYardLayout
 {
+    public const float WalkwayWidth = .56f;
+    public const float BedCenter = .38f;
+    public const float BedWidth = .18f;
     internal static bool IsAdjoining(CellRect area, Pos cell) =>
         cell.X >= area.X && cell.X <= area.Right && (cell.Y == area.Y - 1 || cell.Y == area.Bottom + 1) ||
         cell.Y >= area.Y && cell.Y <= area.Bottom && (cell.X == area.X - 1 || cell.X == area.Right + 1);
@@ -43,6 +46,14 @@ public static class HouseYardLayout
 
     public static IReadOnlyDictionary<Pos, HouseYard> Create(GameMap map,
         RoadMeshLayout? roads = null, FootpathSurfaceLayout? footpaths = null)
+        => CreateCore(map, roads, footpaths, null);
+
+    public static IReadOnlyDictionary<Pos, HouseYard> CreateLazy(GameMap map, RoadMeshLayout? roads,
+        Func<Pos, FootpathSurfaceLayout> footpaths)
+        => CreateCore(map, roads, null, footpaths);
+
+    private static IReadOnlyDictionary<Pos, HouseYard> CreateCore(GameMap map,
+        RoadMeshLayout? roads, FootpathSurfaceLayout? footpaths, Func<Pos, FootpathSurfaceLayout>? createFootpaths)
     {
         var yards = new Dictionary<Pos, HouseYard>();
         var claimed = map.HouseYardCells.Values.Select(map.PosOf).ToHashSet();
@@ -88,13 +99,16 @@ public static class HouseYardLayout
         }
         return yards;
 
-        bool Available(Pos cell, bool established = false) =>
-            map.InBounds(cell) && map.TerrainAt(cell.X, cell.Y).Buildable &&
+        bool Available(Pos cell, bool established = false)
+        {
+            if (!(map.InBounds(cell) && map.TerrainAt(cell.X, cell.Y).Buildable &&
             !map.HasRoad(cell.X, cell.Y) && map.BuildingAt(cell.X, cell.Y) is null &&
             map.FeatureAt(cell.X, cell.Y) is null && map.ZoneAt(cell.X, cell.Y) == ZoneType.Residential &&
-            roads?.AtCell(cell.X, cell.Y).Any(segment =>
-                RoadMeshLayout.OverlapsCell(segment.Corridor, cell.X, cell.Y)) != true &&
-            (established || footpaths?.AtCell(cell.X, cell.Y).Any(polygon =>
-                RoadMeshLayout.OverlapsCell(polygon, cell.X, cell.Y)) != true);
+            roads?.RoadOverlapsCell(cell.X, cell.Y, includeShoulders: true) != true)) return false;
+            if (established) return true;
+            var paths = footpaths ?? createFootpaths?.Invoke(cell);
+            return paths?.AtCell(cell.X, cell.Y).Any(polygon =>
+                RoadMeshLayout.OverlapsCell(polygon, cell.X, cell.Y)) != true;
+        }
     }
 }

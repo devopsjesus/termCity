@@ -9,6 +9,10 @@ public enum WorkplaceForm { Stall, Shop, MarketHall, Smithy, Carpenter, Cooper, 
 public readonly record struct WorkplaceAppearance(WorkplaceForm Form, float Width, float Depth,
     float Height, float RoofRise, int WallColor, int RoofColor, int CanvasColor, bool CrosswiseRoof)
 {
+    public ModelEntrance Entrance => Form == WorkplaceForm.Stall
+        ? new(new(0, 0, Depth * .39f + .06f), System.Numerics.Vector2.UnitY, Width * .82f, BuildingAccessKind.OpenBay)
+        : new(new(0, BuildingDetailLayout.HalfTimberBeamHeight, Math.Max(.45f, Depth * .72f) / 2 - .06f),
+            System.Numerics.Vector2.UnitY, BuildingDetailLayout.DoorWidth, BuildingAccessKind.Door);
     public static WorkplaceAppearance At(BuildingType type, int x, int y, int plotWidth, int plotDepth)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(plotWidth);

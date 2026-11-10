@@ -6,17 +6,18 @@ namespace TermCity.Core.Simulation;
 
 public sealed partial class CityGame
 {
-    private (int Version, int Topology) _settlementGrowthVersion = (-1, -1);
+    private (int Version, int Topology, int Navigation, int Paths) _settlementGrowthVersion = (-1, -1, -1, -1);
     private readonly Dictionary<ZoneType, List<(BuildingType Type, CellRect Area, double Score)>> _settlementCandidates = [];
     private readonly Dictionary<(CellRect Area, int Owner), string?> _settlementAccessErrors = [];
     private readonly Dictionary<ZoneType, IReadOnlyList<CellRect>> _settlementGrowthSites = [];
     private readonly Dictionary<(Pos? Cell, ZoneType Zone), (bool Candidate, string? Error)> _settlementSiteChecks = [];
     private HashSet<Pos>? _settlementReachable;
     private Dictionary<Pos, Pos[]>? _settlementAccessLinks;
+    private readonly Dictionary<CellRect, int[,]> _settlementFreeCells = [];
 
     private void RefreshSettlementGrowthCache()
     {
-        var version = (_version, Settlement?.TopologyRevision ?? -1);
+        var version = (_version, Settlement?.TopologyRevision ?? -1, Map.NavigationVersion, Map.FootpathVersion);
         if (_settlementGrowthVersion == version) return;
         _settlementGrowthVersion = version;
         _settlementCandidates.Clear();
@@ -25,6 +26,7 @@ public sealed partial class CityGame
         _settlementSiteChecks.Clear();
         _settlementReachable = null;
         _settlementAccessLinks = null;
+        _settlementFreeCells.Clear();
     }
 
     public bool InsideSettlement(Pos p) => Settlement?.EstablishedAt(p) == true;
@@ -83,14 +85,53 @@ public sealed partial class CityGame
     private List<CellRect> SettlementSites(CellRect bounds, BuildingType type, CellRect[]? reserved = null, bool packed = true,
         IReadOnlySet<Pos>? unavailable = null)
     {
+        RefreshSettlementGrowthCache();
+        if (reserved is not null || !_settlementFreeCells.TryGetValue(bounds, out var blocked))
+        {
+            blocked = new int[bounds.Height + 1, bounds.Width + 1];
+            var state = Settlement;
+            var network = Network;
+            var gates = state?.Walls.Where(wall => wall.IsGate).Select(wall => wall.Cell).ToArray() ?? [];
+            var bridges = Map.Footbridges.SelectMany(bridge => bridge.Cells()).ToHashSet();
+            for (int row = 0; row < bounds.Height; row++)
+                for (int column = 0; column < bounds.Width; column++)
+                {
+                    var cell = new Pos(bounds.X + column, bounds.Y + row);
+                    bool free = Map.InBounds(cell) && Map.BuildingAt(cell.X, cell.Y) is null &&
+                        Map.TerrainAt(cell.X, cell.Y).Buildable && !bridges.Contains(cell) &&
+                        !Map.HasRoad(cell.X, cell.Y) && Map.PathWearAt(cell.X, cell.Y) < 3 &&
+                        WallDistance(bounds, CellRect.Single(cell)) >= 3 &&
+                        (state?.UsesFoundingLayout == false || cell.X > bounds.X && cell.Y > bounds.Y &&
+                            cell.X < bounds.Right && cell.Y < bounds.Bottom) &&
+                        !(state?.FortificationReserved(cell) ?? WorldScale.FortificationReserved(bounds, cell)) &&
+                        !network.RoadOverlapsCell(Map.Index(cell.X, cell.Y));
+                    if (free)
+                        foreach (var gate in gates)
+                            if (Math.Abs(cell.X - gate.X) + Math.Abs(cell.Y - gate.Y) <= 3) { free = false; break; }
+                    if (free && reserved is not null)
+                        foreach (var area in reserved)
+                            if (area.Contains(cell.X, cell.Y)) { free = false; break; }
+                    if (free && state is not null) free = state.AcceptsArrivals(this, cell);
+                    int occupied = free ? 0 : 1;
+                    blocked[row + 1, column + 1] = occupied + blocked[row, column + 1] +
+                        blocked[row + 1, column] - blocked[row, column];
+                }
+            if (reserved is null) _settlementFreeCells[bounds] = blocked;
+        }
         var result = new List<CellRect>();
         var claimed = new HashSet<int>();
         for (int y = bounds.Y + 1; y < bounds.Bottom; y++)
             for (int x = bounds.X + 1; x < bounds.Right; x++)
             {
                 var area = type.FootprintAt(x, y);
-                if (area.Cells().Any(p => claimed.Contains(Map.Index(p.X, p.Y)) || unavailable?.Contains(p) == true) ||
-                    !SettlementSiteAvailable(bounds, area, type.Name == "Wall House", reserved: reserved)) continue;
+                int left = area.X - bounds.X, top = area.Y - bounds.Y;
+                int right = left + area.Width, bottom = top + area.Height;
+                if (right > bounds.Width || bottom > bounds.Height ||
+                    blocked[bottom, right] - blocked[top, right] - blocked[bottom, left] + blocked[top, left] != 0 ||
+                    type.Name == "Wall House" && WallDistance(bounds, area) != 3 ||
+                    (claimed.Count > 0 || unavailable is not null) &&
+                        area.Cells().Any(p => claimed.Contains(Map.Index(p.X, p.Y)) || unavailable?.Contains(p) == true))
+                    continue;
                 result.Add(area);
                 if (packed)
                     foreach (var p in area.Cells()) claimed.Add(Map.Index(p.X, p.Y));

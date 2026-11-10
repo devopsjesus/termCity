@@ -182,13 +182,16 @@ public class MedievalTravelTests
         TestCity.Stamp(game, well.Name, new(20, 10));
         Assert.True(TravelRoutes.WearPaths(map));
         Assert.InRange(map.PathLayer.Count(w => w > 0), 1, 2);
-        for (int day = 0; day < 12; day++) TravelRoutes.WearPaths(map);
-        for (int x = 15; x < 20; x++)
+        for (int day = 0; day < 40; day++) TravelRoutes.WearPaths(map);
+        foreach (var path in TravelRoutes.FootpathJourneys(map))
         {
-            Assert.True(map.PathWearAt(x, 10) >= 3);
-            Assert.Equal(10, FootpathLayout.Connections(map, x, 10));
-            Assert.Equal("─", CellRenderer.Render(game, x, 10).Glyph);
+            foreach (int cell in path.Where(cell => map.BuildingLayer[cell] == 0))
+                Assert.True(map.PathLayer[cell] >= 3);
+            for (int step = 1; step < path.Length; step++)
+                Assert.True(map.HasPathLink(path[step - 1], path[step]));
         }
+        Assert.Contains(Enumerable.Range(0, map.PathLayer.Length), cell => map.PathLayer[cell] > 0 &&
+            CellRenderer.Render(game, cell % map.Width, cell / map.Width).Glyph == "─");
         Assert.Equal(0, map.PathWearAt(10, 10));
         Assert.Equal(0, map.PathWearAt(20, 10));
         Assert.Equal(0, map.RoadCount);

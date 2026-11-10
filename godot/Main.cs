@@ -89,7 +89,8 @@ public partial class Main : Control
             Session = new GameSession(game, savePath,
                 showGuide: !_options.Load && !_options.SmokeTest && !_options.DumpMap && !_options.DebugStarter && settlementFocus is null,
                 initialCameraTarget: settlementFocus ?? starter?.CameraTarget,
-                debugSiegeMode: _options.DebugSiege || _options.SettlementSmokeTest)
+                debugSiegeMode: _options.DebugSiege || _options.SettlementSmokeTest || _options.InterfaceSmokeTest ||
+                    _options.GarrisonSmokeTest)
             {
                 StartAtCurrentWeek = !_options.SmokeTest && !_options.DumpMap,
 #if DEBUG
@@ -131,6 +132,9 @@ public partial class Main : Control
                 Session = Session, CellFont = font,
                 DepthStudyTreatment = _options.DepthPerformanceBaseline ? DepthTreatment.Baseline : DepthStudyArtwork.DefaultTreatment,
                 TerrainStudyTreatment = _options.TerrainPerformanceTreatment ?? TerrainStudyTreatment.Balanced,
+                OverviewLodEnabled = _options.OverviewLod,
+                PersistentResidencyEnabled = _options.PersistentResidency,
+                RenderQuality = _options.RenderQuality,
             };
             Map.VerifyGlyphs(Session.Game.Map.Content);
             CreateEffects();
@@ -146,6 +150,7 @@ public partial class Main : Control
             Session.SiegeWaveStarted += PlayBattleHorn;
             Session.Changed += OnChanged;
             Session.CameraChanged += OnCameraChanged;
+            Session.PresentationChanged += OnPresentationChanged;
             Session.SelectionChanged += OnSelectionChanged;
             Session.QuitRequested += Quit;
             GetTree().AutoAcceptQuit = false;
@@ -179,6 +184,11 @@ public partial class Main : Control
         }
     }
 
+    internal double CameraSimulationMilliseconds { get; private set; }
+    internal double CameraHudMilliseconds { get; private set; }
+    internal double CameraInspectorMilliseconds, CameraPeasantMilliseconds, CameraPanelMilliseconds;
+    private bool _updatingSimulation, _simulationUiDirty;
+
     public override void _Process(double delta)
     {
         if (!_started)
@@ -191,32 +201,69 @@ public partial class Main : Control
             Session.SetMessage("Music playback failed; playback stopped.", MessageKind.Error);
             StopMusic();
         }
-        if (_focused && (!_editingName || !Session.Game.Paused))
+        if (_options.CameraPerformanceTest)
         {
-            Session.Update(delta);
-            EdgeScroll(delta);
+            CameraSimulationMilliseconds = 0;
+            CameraHudMilliseconds = 0;
+            CameraInspectorMilliseconds = CameraPeasantMilliseconds = CameraPanelMilliseconds = 0;
+        }
+        bool simulationFocused = _focused || _options.CameraPerformanceTest || _options.MinimapTraversalTest;
+        bool advanceClock = simulationFocused && (!_editingName || !Session.Game.Paused);
+        if (advanceClock || Session.BackgroundPresentationPending || Session.BackgroundSimulationPending ||
+            Session.PendingSimulationSeconds > 0)
+        {
+            long started = _options.CameraPerformanceTest ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+            _updatingSimulation = true;
+            try
+            {
+                if (Map.PerspectiveEnabled && Session.Game.CanSnapshotSimulation ||
+                    Session.BackgroundSimulationPending || Session.PendingSimulationSeconds > 0)
+                    Session.UpdateResponsive(advanceClock ? delta : 0, Map.PerspectiveEnabled
+                        ? Map.Perspective?.PathPresentationRequest(Session) : null);
+                else Session.Update(advanceClock ? delta : 0);
+            }
+            catch (TermCity.Core.Session.BackgroundSimulationException error)
+            {
+                GD.PushError(error.ToString());
+                Session.SetMessage(error.Message, MessageKind.Error);
+                if (_options.SmokeTest) GetTree().Quit(1);
+            }
+            finally { _updatingSimulation = false; }
+            if (_options.CameraPerformanceTest)
+                CameraSimulationMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            if (advanceClock) EdgeScroll(delta);
         }
         UpdateEffects(delta);
-        Map.AdvanceAnimation(delta, _focused);
+        Map.AdvanceAnimation(delta, simulationFocused);
         _hudElapsed += delta;
-        if (_hudElapsed >= 0.1)
+        if (_simulationUiDirty || _hudElapsed >= 0.1)
         {
+            bool force = _simulationUiDirty;
+            _simulationUiDirty = false;
             _hudElapsed = 0;
-            UpdateUi();
+            UpdateUi(force);
         }
     }
 
     private void OnChanged()
     {
         Map.Invalidate(true);
-        UpdateUi();
+        if (_updatingSimulation) _simulationUiDirty = true;
+        else UpdateUi();
     }
 
     private void OnCameraChanged()
     {
         Map.Perspective?.ResetCameraOffset();
         Map.Invalidate(true);
-        UpdateUi();
+        _panel.RefreshCamera();
+        UpdateDebugSiegeControls();
+    }
+
+    private void OnPresentationChanged()
+    {
+        Map.Perspective?.PublishSimulationPaths(Session);
+        Map.Invalidate(true);
     }
 
     private void OnSelectionChanged()
@@ -236,6 +283,7 @@ public partial class Main : Control
         _focused = false;
         _music.StreamPaused = true;
         StopSoundEffects();
+        if (_options.CameraPerformanceTest) return;
         StopPointerGesture();
         _hover = false;
         _panel.Minimap.StopDrag();
@@ -255,10 +303,32 @@ public partial class Main : Control
         }
     }
 
-    private void Quit()
+    private bool _quitting;
+    private async void Quit()
     {
+        if (_quitting) return;
+        _quitting = true;
+        SetProcess(false);
         StopMusic();
-        GetTree().CreateTimer(0.1).Timeout += () => GetTree().Quit();
+        GameSession session = Session;
+        session.Game.Paused = true;
+        var shutdown = System.Diagnostics.Stopwatch.StartNew();
+        double backlog = session.PendingSimulationSeconds;
+        try
+        {
+            await session.StopForQuitAsync();
+        }
+        catch (TermCity.Core.Session.BackgroundSimulationException error)
+        {
+            GD.PushError(error.ToString());
+            session.SetMessage(error.Message, MessageKind.Error);
+            _quitting = false;
+            SetProcess(true);
+            return;
+        }
+        if (_options.CameraPerformanceTest)
+            GD.Print($"TERMCITY_QUIT_COMPLETE backlog-discarded={backlog:0.000}s shutdown={shutdown.Elapsed.TotalMilliseconds:0.0}ms");
+        GetTree().Quit();
     }
 
     public override void _ExitTree()
@@ -273,8 +343,10 @@ public partial class Main : Control
         Session.SiegeWaveStarted -= PlayBattleHorn;
         Session.Changed -= OnChanged;
         Session.CameraChanged -= OnCameraChanged;
+        Session.PresentationChanged -= OnPresentationChanged;
         Session.SelectionChanged -= OnSelectionChanged;
         Session.QuitRequested -= Quit;
+        Session.RequestSimulationStop();
         Director?.Dispose();
         GetWindow().FocusEntered -= OnFocusEntered;
         GetWindow().FocusExited -= OnFocusExited;
@@ -290,11 +362,117 @@ public partial class Main : Control
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
             bool headless = DisplayServer.GetName() == "headless";
+            if (_options.MediumCheckpointsPath is { } checkpointDirectory)
+            {
+                if (!headless) throw new InvalidOperationException("Checkpoint generation requires --headless; it does not benchmark rendered frames.");
+                var result = await Task.Run(() => MediumGrowthCheckpoints.Generate(_options.Config,
+                    checkpointDirectory, report: GD.Print, resumePath: _options.LoadPath));
+                GD.Print($"TERMCITY_MEDIUM_CHECKPOINTS complete={result.Complete} peak={result.PeakPopulation} " +
+                    $"days={result.Days:0} output={Path.GetFullPath(checkpointDirectory)} limit={result.Limit}");
+                StopMusic();
+                GetTree().Quit(result.Complete ? 0 : 2);
+                return;
+            }
             if (!headless)
             {
                 GetWindow().GrabFocus();
                 await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
                 await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            }
+            if (_options.PersistentResidencyTest)
+            {
+                var verification = PerspectiveCity.VerifyPersistentResidency(this, _options.CacheExperiment == CacheExperiment.Current
+                    ? CacheExperiment.PersistentScene : _options.CacheExperiment);
+                if (await Task.WhenAny(verification, Task.Delay(TimeSpan.FromSeconds(120))) != verification)
+                    throw new InvalidOperationException("Persistent residency validation stopped progressing within its watchdog.");
+                await verification;
+                GD.Print("TERMCITY_PERSISTENT_RESIDENCY_OK");
+                StopMusic();
+                GetTree().Quit();
+                return;
+            }
+            if (_options.FootpathArtworkSmokeTest)
+            {
+                await FootpathArtworkSmoke.Run(this, _options.CapturePath);
+                GD.Print("TERMCITY_FOOTPATH_ART_SMOKE_OK");
+                StopMusic();
+                GetTree().Quit();
+                return;
+            }
+            if (_options.InterfaceSmokeTest)
+            {
+                await GodotSmoke.VerifyInterface(this, _options.CapturePath);
+                GD.Print("TERMCITY_INTERFACE_SMOKE_OK");
+                StopMusic();
+                GetTree().Quit();
+                return;
+            }
+            if (_options.GarrisonSmokeTest)
+            {
+                await GarrisonSmoke.Run(this, _options.CapturePath);
+                GD.Print("TERMCITY_GARRISON_SMOKE_OK");
+                StopMusic();
+                GetTree().Quit();
+                return;
+            }
+            if (_options.CameraPerformanceTest)
+            {
+                await CameraPerformanceSmoke.Run(this, _options.CapturePath, _options.Load, _options.CameraProfileSeconds,
+                    _options.BenchmarkSpeed, _options.CameraQuitTest);
+                GD.Print("TERMCITY_CAMERA_PERFORMANCE_OK");
+                StopMusic();
+                GetTree().Quit();
+                return;
+            }
+            if (_options.WholeMapCacheTest)
+            {
+                await WholeMapCacheSmoke.Run(this, _options.CapturePath);
+                GD.Print("TERMCITY_WHOLE_MAP_CACHE_OK");
+                StopMusic();
+                GetTree().Quit();
+                return;
+            }
+            if (_options.RecentRegionTest)
+            {
+                Map.SetPerspective(true);
+                Map.Perspective!.ConfigureCacheExperiment(_options.CacheExperiment == CacheExperiment.Current
+                    ? CacheExperiment.Tuned : _options.CacheExperiment);
+                await RecentRegionSmoke.Run(this, _options.CacheExperiment == CacheExperiment.Current
+                    ? CacheExperiment.Tuned : _options.CacheExperiment, _options.CapturePath, _options.BenchmarkZoom);
+                GD.Print("TERMCITY_RECENT_REGION_OK");
+                StopMusic(); GetTree().Quit(); return;
+            }
+            if (_options.HaloScrollTest)
+            {
+                Map.SetPerspective(true);
+                var view = Map.Perspective!;
+                view.ConfigureCacheExperiment(_options.CacheExperiment == CacheExperiment.Current
+                    ? CacheExperiment.Tuned : _options.CacheExperiment);
+                await TerrainHaloScrollSmoke.Run(this, _options.CapturePath);
+                StopMusic();
+                GetTree().Quit();
+                return;
+            }
+            if (_options.MinimapTraversalTest)
+            {
+                Map.SetPerspective(true);
+                var view = Map.Perspective!;
+                view.ConfigureCacheExperiment(_options.CacheExperiment);
+                await MinimapTraversalSmoke.Run(this, _options.CapturePath, _options.CacheExperiment.ToString(),
+                    () => view.PresentedTexture, () => (view.CpuRetirementMilliseconds, view.GpuRetirementMilliseconds),
+                    _options.BenchmarkZoom, _options.BenchmarkSpeed);
+                GD.Print("TERMCITY_MINIMAP_TRAVERSAL_OK");
+                StopMusic();
+                GetTree().Quit();
+                return;
+            }
+            if (_options.MinimapJumpTest)
+            {
+                await MinimapJumpSmoke.Run(this, _options.CapturePath);
+                GD.Print("TERMCITY_MINIMAP_JUMP_OK");
+                StopMusic();
+                GetTree().Quit();
+                return;
             }
             if (_options.WallNetworkSmokeTest)
             {
@@ -417,7 +595,8 @@ public partial class Main : Control
             await ToSignal(GetTree().CreateTimer(0.1), SceneTreeTimer.SignalName.Timeout);
             GetTree().Quit();
         }
-        catch (Exception error) when (error is InvalidOperationException or IOException or ArgumentException)
+        catch (Exception error) when (error is InvalidOperationException or IOException or ArgumentException or
+            System.Reflection.AmbiguousMatchException or System.Reflection.TargetInvocationException)
         {
             GD.PushError($"TermCity Godot smoke failed: {error}");
             GetTree().Quit(1);

@@ -12,13 +12,17 @@ public sealed record WallRunPlan(Vector2 Start, Vector2 End, IReadOnlyList<(Vect
     public bool Valid => Error is null && Length > WallNetwork.Tolerance;
 }
 
+public readonly record struct WallRunTimings(double Validation, double Mutation, double Notification, double Territory);
+
 public sealed partial class CityGame
 {
+    public WallRunTimings LastWallRunTimings { get; private set; }
     public Vector2 SnapWallEndpoint(Vector2 start, Vector2 pointer)
     {
         var target = SnapWallPoint(pointer);
         if (Settlement?.Walls.Any(w => w.IsTower &&
-            Vector2.DistanceSquared(w.Center, target) < WallNetwork.Tolerance * WallNetwork.Tolerance) == true)
+            Vector2.DistanceSquared(w.Center, target) < WallNetwork.Tolerance * WallNetwork.Tolerance &&
+            Vector2.DistanceSquared(w.Center, start) > WallNetwork.Tolerance * WallNetwork.Tolerance) == true)
             return target;
         var delta = pointer - start;
         if (delta.LengthSquared() < WallNetwork.Tolerance * WallNetwork.Tolerance) return start;
@@ -184,17 +188,42 @@ public sealed partial class CityGame
 
     public ActionResult BuildWallRun(Vector2 start, Vector2 end, bool gate = false)
     {
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
         var plan = PlanWallRun(start, end, gate);
+        double validation = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        LastWallRunTimings = new(validation, 0, 0, 0);
         if (!plan.Valid) return ActionResult.Fail(plan.Error ?? "There is no new wall to build.");
+        started = System.Diagnostics.Stopwatch.GetTimestamp();
         var state = Settlement!;
         var material = state.UpgradeTargetMaterial ?? state.Material;
-        if (gate) OpenGateSpan(state, start, end);
+        bool featuresChanged = false;
+        void ClearFeature(int x, int y)
+        {
+            if (Map.FeatureAt(x, y) is null) return;
+            Map.SetFeature(x, y, null);
+            featuresChanged = true;
+        }
+        state.ChangeWalls(() =>
+        {
+            if (gate) OpenGateSpan(state, start, end);
+            foreach (var span in plan.Spans)
+            {
+                int count = gate ? 1 : Math.Max(1, (int)Math.Ceiling(Vector2.Distance(span.A, span.B)));
+                for (int i = 0; i < count; i++)
+                    AddSpan(state, Vector2.Lerp(span.A, span.B, i / (float)count),
+                        Vector2.Lerp(span.A, span.B, (i + 1) / (float)count), material, gate);
+            }
+            foreach (var point in plan.Towers)
+            {
+                var cell = new Pos((int)point.X, (int)point.Y);
+                state.AddWall(new WallComponent { Id = state.NextWallId, Cell = cell, SectionBounds = CellRect.Single(cell),
+                    Start = point - Vector2.UnitX * .05f, End = point + Vector2.UnitX * .05f,
+                    IsTower = true, JunctionTower = true, BuiltMaterial = material,
+                    MaxHealth = SettlementState.MaterialHealth(material), Health = SettlementState.MaterialHealth(material) });
+            }
+        });
         foreach (var span in plan.Spans)
         {
-            int count = gate ? 1 : Math.Max(1, (int)Math.Ceiling(Vector2.Distance(span.A, span.B)));
-            for (int i = 0; i < count; i++)
-                AddSpan(state, Vector2.Lerp(span.A, span.B, i / (float)count),
-                    Vector2.Lerp(span.A, span.B, (i + 1) / (float)count), material, gate);
             var footprint = WallDamageLayout.Preview(span.A, span.B, material, gate);
             var half = WallDamageLayout.HalfSize(footprint);
             for (int y = Math.Max(0, (int)MathF.Floor(footprint.Center.Y - half.Y - .7f));
@@ -202,22 +231,24 @@ public sealed partial class CityGame
                 for (int x = Math.Max(0, (int)MathF.Floor(footprint.Center.X - half.X - .7f));
                     x <= Math.Min(Map.Width - 1, (int)MathF.Ceiling(footprint.Center.X + half.X + .7f)); x++)
                     if (WallDamageLayout.ContainsFootprint(footprint, x + .5, y + .5, .7))
-                        Map.SetFeature(x, y, null);
+                        ClearFeature(x, y);
         }
         foreach (var point in plan.Towers)
         {
             var cell = new Pos((int)point.X, (int)point.Y);
-            foreach (var p in new CellRect(cell.X - 2, cell.Y - 2, 5, 5).Cells()) Map.SetFeature(p.X, p.Y, null);
-            state.AddWall(new WallComponent { Id = state.NextWallId, Cell = cell, SectionBounds = CellRect.Single(cell),
-                Start = point - Vector2.UnitX * .05f, End = point + Vector2.UnitX * .05f,
-                IsTower = true, JunctionTower = true, BuiltMaterial = material,
-                MaxHealth = SettlementState.MaterialHealth(material), Health = SettlementState.MaterialHealth(material) });
+            foreach (var p in new CellRect(cell.X - 2, cell.Y - 2, 5, 5).Cells()) ClearFeature(p.X, p.Y);
         }
         Money -= plan.Cost;
         Map.InvalidateTravel();
-        Notify(roadsChanged: true);
+        double mutation = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        started = System.Diagnostics.Stopwatch.GetTimestamp();
+        Notify(roadsChanged: false, mapChanged: featuresChanged, servicesChanged: true);
+        double notification = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        started = System.Diagnostics.Stopwatch.GetTimestamp();
         state.RefreshTerritory(this);
+        double territory = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         SiegeChanged?.Invoke();
+        LastWallRunTimings = new(validation, mutation, notification, territory);
         return ActionResult.Ok($"Built {(gate ? "gate" : "wall run")} for {plan.Cost:N0} gold.", plan.Cost);
     }
 

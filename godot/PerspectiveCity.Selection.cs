@@ -7,7 +7,9 @@ namespace TermCity.GodotApp;
 
 public partial class PerspectiveCity
 {
-    private readonly List<(Transform3D Transform, Pos Anchor)> _structureHighlightBoxes = [];
+    private readonly List<(Transform3D Transform, Pos Anchor)> _sceneHighlights = [];
+    private List<(Transform3D Transform, Pos Anchor)> _structureHighlightBoxes =>
+        _objectCapture?.Highlights ?? _sceneHighlights;
     private readonly Dictionary<int, List<Transform3D>> _wallHighlightBoxes = [];
     private int? _highlightWallId;
     private readonly StandardMaterial3D _selectionHighlightMaterial = new()
@@ -131,7 +133,7 @@ public partial class PerspectiveCity
                         if (_wallHighlightBoxes.TryGetValue(member.Id, out var boxes)) transforms.AddRange(boxes);
             }
             else
-                foreach (var box in _structureHighlightBoxes)
+                foreach (var box in SceneHighlights)
                     if (box.Anchor == anchor) transforms.Add(box.Transform);
         }
         var mesh = _selectionHighlightBoxes.Multimesh;
@@ -143,7 +145,7 @@ public partial class PerspectiveCity
         if (selected is not { } roofAnchor || wall) return;
         using var surface = new SurfaceTool();
         surface.Begin(Mesh.PrimitiveType.Triangles);
-        foreach (var face in _roofFaces)
+        foreach (var face in SceneRoofFaces)
         {
             if (face.Anchor != roofAnchor) continue;
             surface.SetNormal((face.B - face.A).Cross(face.C - face.A).Normalized());

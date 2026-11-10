@@ -2,6 +2,7 @@ using TermCity.Core.Buildings;
 using TermCity.Core.Rendering;
 using TermCity.Core.Util;
 using TermCity.Core.World;
+using System.Collections;
 
 namespace TermCity.Core.Simulation;
 
@@ -32,6 +33,31 @@ public sealed class SettlementDefender
     internal int? PathEnemyId;
     internal int PathIndex;
     internal int? PatrolWallId;
+    internal Pos? PatrolCell;
+    internal double PathRetrySeconds;
+
+    internal SettlementDefender SnapshotCopy()
+    {
+        var copy = (SettlementDefender)MemberwiseClone();
+        copy.Path = new(Path);
+        return copy;
+    }
+
+    internal void CopySnapshot(SettlementDefender source)
+    {
+        Id = source.Id; Home = source.Home; Kind = source.Kind;
+        X = source.X; Y = source.Y;
+        PreviousX = source.PreviousX; PreviousY = source.PreviousY;
+        Elevation = source.Elevation; PreviousElevation = source.PreviousElevation;
+        Health = source.Health; Order = source.Order;
+        TargetEnemyId = source.TargetEnemyId; Destination = source.Destination;
+        AttackCooldown = source.AttackCooldown;
+        Path = new(source.Path);
+        PathTarget = source.PathTarget; PathEnemyId = source.PathEnemyId;
+        PathIndex = source.PathIndex;
+        PatrolWallId = source.PatrolWallId; PatrolCell = source.PatrolCell;
+        PathRetrySeconds = source.PathRetrySeconds;
+    }
 }
 
 public sealed partial class SettlementState
@@ -59,6 +85,8 @@ public sealed partial class SettlementState
 
     public ActionResult CommandDefenders(CityGame game, IReadOnlyCollection<int> ids, Pos? destination, int? enemyId)
     {
+        _defenderPathCells.Clear();
+        _defenderWalkHeights.Clear();
         var units = DefenderList.Where(d => ids.Contains(d.Id) && d.Health > 0).ToArray();
         if (units.Length == 0 || units.Length != ids.Distinct().Count())
             return ActionResult.Fail("Choose living defenders from this settlement.");
@@ -83,6 +111,7 @@ public sealed partial class SettlementState
             unit.Path = paths[i];
             unit.PathIndex = 0;
             unit.PathTarget = target;
+            unit.PathRetrySeconds = 0;
         }
         Revision++;
         return ActionResult.Ok(enemy is null ? "Defenders moving; automatic defense resumes on arrival." :
@@ -168,90 +197,319 @@ public sealed partial class SettlementState
         return true;
     }
 
-    private List<Pos>? DefenderPath(CityGame game, SettlementDefender unit, Pos target)
+    private readonly Dictionary<Pos, (bool Ground, WallComponent? Support)> _defenderPathCells = [];
+    private readonly Dictionary<int, (Pos Cell, bool OnWall)[]> _defenderPathEdges = [];
+    private readonly Dictionary<int, bool> _defenderInteriorCells = [];
+    private readonly Dictionary<int, float> _defenderWalkHeights = [];
+    private readonly Dictionary<int, (double X, double Y, WallComponent[] Posts)> _archerRangePosts = [];
+    private sealed record ArcherReachability(bool StayInside, BitArray Transit, BitArray Nodes, int[] Barriers);
+    private readonly List<ArcherReachability> _archerReachability = [];
+    internal int ArcherReachabilityBuilds { get; private set; }
+    private int _defenderPathNavigation = -1, _defenderPathTowerState;
+
+    private void RefreshDefenderPathCells(CityGame game)
     {
-        if (!game.Map.InBounds(target)) return null;
-        var cells = new Dictionary<Pos, (bool Ground, WallComponent? Support, bool Passable)>();
-        (bool Ground, WallComponent? Support, bool Passable) Cell(Pos p)
+        var towers = new HashCode();
+        towers.Add(TopologyRevision);
+        towers.Add(game.Map.TerrainVersion);
+        towers.Add(EstablishedLand.Count);
+        foreach (var wall in Walls)
         {
-            if (cells.TryGetValue(p, out var cached)) return cached;
-            bool ground = GroundPassable(game, p);
-            var support = unit.Kind == DefenderKind.Archer ? WallWalkSupport(p) : null;
-            bool passable = ground || support is not null;
-            return cells[p] = (ground, support, passable);
+            towers.Add(wall.Id);
+            towers.Add(wall.Material);
+            towers.Add(WallDamageLayout.WalkHeight(wall) > 0);
+            towers.Add(SupportsWallWalk(wall));
         }
-        if (!Cell(target).Passable) return null;
-        var start = new Pos((int)unit.X, (int)unit.Y);
-        if (start == target)
-            return Math.Abs(unit.X - target.X - .5) + Math.Abs(unit.Y - target.Y - .5) < .01 ? [] : [target];
-        var first = (Cell: start, OnWall: unit.Kind == DefenderKind.Archer && unit.Elevation > .01f &&
-            Cell(start).Support is not null);
-        var previous = new Dictionary<(Pos Cell, bool OnWall), (Pos Cell, bool OnWall)>();
-        var visited = new HashSet<(Pos Cell, bool OnWall)> { first };
-        var queue = new Queue<(Pos Cell, bool OnWall)>();
-        queue.Enqueue(first);
-        while (queue.TryDequeue(out var current))
+        int state = towers.ToHashCode();
+        if (_defenderPathNavigation == game.Map.NavigationVersion && _defenderPathTowerState == state) return;
+        _defenderPathNavigation = game.Map.NavigationVersion;
+        _defenderPathTowerState = state;
+        _defenderPathCells.Clear();
+        _defenderPathEdges.Clear();
+        _defenderInteriorCells.Clear();
+        _defenderWalkHeights.Clear();
+        _archerRangePosts.Clear();
+        _archerReachability.Clear();
+        _garrisonNavigationVersion = -1;
+    }
+
+    private (bool Ground, WallComponent? Support) DefenderPathCell(CityGame game, Pos cell)
+    {
+        if (!_defenderPathCells.TryGetValue(cell, out var cached))
+            _defenderPathCells[cell] = cached = (GroundPassable(game, cell), WallWalkSupport(cell));
+        return cached;
+    }
+
+    private bool DefenderInteriorCell(CityGame game, Pos cell)
+    {
+        int key = game.Map.Index(cell.X, cell.Y);
+        if (!_defenderInteriorCells.TryGetValue(key, out bool inside))
+            _defenderInteriorCells[key] = inside = EstablishedAt(cell) || game.Map.HasFootbridge(cell.X, cell.Y) ||
+                game.Map.HasRoad(cell.X, cell.Y) && ContainsInterior(cell) ||
+                DefenderPathCell(game, cell).Support is not null || WallAt(cell)?.IsGate == true;
+        return inside;
+    }
+
+    private (Pos Cell, bool OnWall)[] DefenderPathEdges(CityGame game, (Pos Cell, bool OnWall) current)
+    {
+        int key = game.Map.Index(current.Cell.X, current.Cell.Y) * 2 + (current.OnWall ? 1 : 0);
+        if (_defenderPathEdges.TryGetValue(key, out var cached)) return cached;
+        var edges = new List<(Pos Cell, bool OnWall)>();
+        var p = current.Cell;
+        var fromWall = DefenderPathCell(game, p).Support;
+        foreach (var next in Neighbors(p))
         {
-            var p = current.Cell;
-            foreach (var next in Neighbors(p))
+            var cell = DefenderPathCell(game, next);
+            var toWall = cell.Support;
+            for (int level = 0; level < 2; level++)
             {
-                var cell = Cell(next);
-                if (!cell.Passable) continue;
-                var fromWall = Cell(p).Support;
-                var toWall = cell.Support;
-                for (int level = 0; level < (unit.Kind == DefenderKind.Archer ? 2 : 1); level++)
+                bool nextWall = level == 1;
+                if (nextWall ? toWall is null : !cell.Ground) continue;
+                bool onWall = current.OnWall;
+                if (onWall && nextWall && !JoinedWalkway(p, fromWall!, next, toWall!)) continue;
+                if (!onWall && !nextWall && !CanWalk(new(p.X + .5f, p.Y + .5f), new(next.X + .5f, next.Y + .5f))) continue;
+                if (onWall != nextWall && !WallDamageLayout.HasAccessLadder(onWall ? fromWall! : toWall!)) continue;
+                if (!onWall && nextWall && !EstablishedAt(p)) continue;
+                if (onWall != nextWall)
                 {
-                    bool nextWall = level == 1;
-                    if (nextWall ? toWall is null : !cell.Ground) continue;
-                    if (next != target)
-                    {
-                        var destination = nextWall ? WallWalkPoint(next, toWall!) :
-                            new System.Numerics.Vector2(next.X + .5f, next.Y + .5f);
-                        float height = nextWall ? WallDamageLayout.ActorWalkHeight(toWall!, game.Map) : 0;
-                        if (DefenderList.Any(other => other.Id != unit.Id &&
-                            Math.Abs(other.Elevation - height) < .3f &&
-                            Math.Pow(other.X - destination.X, 2) + Math.Pow(other.Y - destination.Y, 2) <
-                                Math.Pow(WorldScale.HumanRadius * 2, 2))) continue;
-                    }
-                    var node = (Cell: next, OnWall: nextWall);
-                    if (visited.Contains(node)) continue;
-                    bool onWall = current.OnWall;
-                    if (onWall && nextWall && !JoinedWalkway(p, fromWall!, next, toWall!)) continue;
-                    if (!onWall && !nextWall && !CanWalk(new(p.X + .5f, p.Y + .5f), new(next.X + .5f, next.Y + .5f))) continue;
-                    if (onWall != nextWall && !WallDamageLayout.HasAccessLadder(onWall ? fromWall! : toWall!)) continue;
-                    if (!onWall && nextWall && !EstablishedAt(p)) continue;
-                    if (onWall != nextWall)
-                    {
-                        var access = onWall ? fromWall! : toWall!;
-                        var ground = onWall ? next : p;
-                        var offset = new System.Numerics.Vector2(ground.X + .5f, ground.Y + .5f) -
-                            WallDamageLayout.LadderClimbPosition(access);
-                        var inward = WallDamageLayout.LadderInward(access);
-                        if (offset.LengthSquared() > 1.5f ||
-                            Math.Abs(offset.X * inward.Y - offset.Y * inward.X) > .6f)
-                            continue;
-                    }
-                    previous[node] = current;
-                    visited.Add(node);
-                    if (next == target)
-                    {
-                        var path = new List<Pos>();
-                        for (var step = node; step != first; step = previous[step]) path.Add(step.Cell);
-                        path.Reverse();
-                        return path;
-                    }
-                    queue.Enqueue(node);
+                    var access = onWall ? fromWall! : toWall!;
+                    var ground = onWall ? next : p;
+                    var offset = new System.Numerics.Vector2(ground.X + .5f, ground.Y + .5f) -
+                        WallDamageLayout.LadderClimbPosition(access);
+                    var inward = WallDamageLayout.LadderInward(access);
+                    if (offset.LengthSquared() > 1.5f ||
+                        Math.Abs(offset.X * inward.Y - offset.Y * inward.X) > .6f) continue;
                 }
+                edges.Add((next, nextWall));
             }
         }
-        return null;
+        return _defenderPathEdges[key] = edges.ToArray();
+    }
+
+    internal void PrepareGarrisonNavigation(CityGame game)
+    {
+        if (!game.Map.BuildingFootprints.Values.Any(area =>
+            RosterCapacity(game.Map.BuildingAt(area.X, area.Y)!) > 0)) return;
+        RefreshDefenderPathCells(game);
+        var bounds = WallBounds;
+        for (int y = Math.Max(0, bounds.Y - 3); y <= Math.Min(game.Map.Height - 1, bounds.Bottom + 3); y++)
+            for (int x = Math.Max(0, bounds.X - 3); x <= Math.Min(game.Map.Width - 1, bounds.Right + 3); x++)
+            {
+                var cell = new Pos(x, y);
+                if (!_defenderPathCells.ContainsKey(cell))
+                    _defenderPathCells.Add(cell, (GroundPassable(game, cell), WallWalkSupport(cell)));
+            }
+    }
+
+    internal List<Pos>? DefenderPath(CityGame game, SettlementDefender unit, Pos target, bool ignoreBodies = false,
+        bool stayInside = false)
+    {
+        using var paths = DefenderPaths(game, unit, [target], ignoreBodies, stayInside);
+        return paths.PathTo(target);
+    }
+
+    internal sealed class DefenderSearchWorkspace(int nodes)
+    {
+        internal readonly int[] Visited = new int[nodes], Previous = new int[nodes], Queue = new int[nodes];
+        internal int Generation;
+        internal void Begin()
+        {
+            if (Generation == int.MaxValue) { Array.Clear(Visited); Generation = 0; }
+            Generation++;
+        }
+    }
+    private readonly Stack<DefenderSearchWorkspace> _defenderSearchPool = [];
+
+    internal sealed class DefenderPathSearch : IDisposable
+    {
+        internal readonly Dictionary<Pos, int> Goals = [];
+        private DefenderSearchWorkspace? _workspace;
+        private Stack<DefenderSearchWorkspace>? _pool;
+        private int _width, _first;
+        private bool _disposed;
+        internal int VisitedCount;
+        internal Pos? StartGoal;
+        internal bool Centered;
+        internal IEnumerator<Pos>? Search;
+        internal HashSet<Pos> Remaining = [];
+
+        internal void Initialize(DefenderSearchWorkspace workspace, Stack<DefenderSearchWorkspace> pool, int width, int first)
+        {
+            _workspace = workspace; _pool = pool; _width = width; _first = first;
+        }
+
+        internal bool CanReach(Pos target)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (StartGoal == target) return true;
+            while (!Goals.ContainsKey(target) && Remaining.Contains(target) && Search is { } search)
+            {
+                if (search.MoveNext()) continue;
+                search.Dispose();
+                Search = null;
+            }
+            return Goals.ContainsKey(target);
+        }
+
+        internal List<Pos>? PathTo(Pos target)
+        {
+            if (!CanReach(target)) return null;
+            if (StartGoal == target) return Centered ? [] : [target];
+            var node = Goals[target];
+            var path = new List<Pos>();
+            for (var step = node; step != _first; step = _workspace!.Previous[step])
+                path.Add(new(step / 2 % _width, step / 2 / _width));
+            path.Reverse();
+            return path;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            Search?.Dispose();
+            Search = null;
+            if (_workspace is { } workspace) _pool!.Push(workspace);
+            _workspace = null;
+            _pool = null;
+        }
+    }
+
+    internal DefenderPathSearch DefenderPaths(CityGame game, SettlementDefender unit,
+        IReadOnlyCollection<Pos> targets, bool ignoreBodies = false, bool stayInside = false)
+    {
+        RefreshDefenderPathCells(game);
+        var result = new DefenderPathSearch();
+        (bool Ground, WallComponent? Support, bool Passable) Cell(Pos p)
+        {
+            var cached = DefenderPathCell(game, p);
+            var support = unit.Kind == DefenderKind.Archer ? cached.Support : null;
+            return (cached.Ground, support, cached.Ground || support is not null);
+        }
+        var remaining = targets.Where(target => game.Map.InBounds(target) && Cell(target).Passable).ToHashSet();
+        result.Remaining = remaining;
+        if (remaining.Count == 0) return result;
+        var start = new Pos((int)unit.X, (int)unit.Y);
+        if (remaining.Remove(start))
+        {
+            result.StartGoal = start;
+            result.Centered = Math.Abs(unit.X - start.X - .5) + Math.Abs(unit.Y - start.Y - .5) < .01;
+            if (remaining.Count == 0) return result;
+        }
+        var first = (Cell: start, OnWall: unit.Kind == DefenderKind.Archer && unit.Elevation > .01f &&
+            Cell(start).Support is not null);
+        var workspace = _defenderSearchPool.Count > 0 ? _defenderSearchPool.Pop() :
+            new DefenderSearchWorkspace(checked(game.Map.Width * game.Map.Height * 2));
+        workspace.Begin();
+        int firstNode = game.Map.Index(start.X, start.Y) * 2 + (first.OnWall ? 1 : 0);
+        result.Initialize(workspace, _defenderSearchPool, game.Map.Width, firstNode);
+        result.Search = Search().GetEnumerator();
+        return result;
+
+        IEnumerable<Pos> Search()
+        {
+            const double bodyRadius = WorldScale.HumanRadius * 2;
+            var blockers = !ignoreBodies && unit.Kind == DefenderKind.Archer ? new HashSet<int>() : null;
+            var bodies = new Dictionary<Pos, List<SettlementDefender>>();
+            if (!ignoreBodies)
+                foreach (var other in DefenderList)
+                {
+                    if (other.Id == unit.Id) continue;
+                    for (int y = (int)Math.Floor(other.Y - bodyRadius); y <= (int)Math.Floor(other.Y + bodyRadius); y++)
+                        for (int x = (int)Math.Floor(other.X - bodyRadius); x <= (int)Math.Floor(other.X + bodyRadius); x++)
+                        {
+                            var cell = new Pos(x, y);
+                            if (!bodies.TryGetValue(cell, out var bucket)) bodies[cell] = bucket = [];
+                            bucket.Add(other);
+                        }
+                }
+            var previous = workspace.Previous;
+            var visited = workspace.Visited;
+            var queue = workspace.Queue;
+            int head = 0, tail = 1, generation = workspace.Generation;
+            queue[0] = firstNode;
+            visited[firstNode] = generation;
+            while (head < tail)
+            {
+                int currentNode = queue[head++];
+                var current = (Cell: new Pos(currentNode / 2 % game.Map.Width, currentNode / 2 / game.Map.Width),
+                    OnWall: currentNode % 2 != 0);
+                foreach (var node in DefenderPathEdges(game, current))
+                {
+                    var next = node.Cell;
+                    if (!game.Map.InBounds(next)) continue;
+                    int nextNode = game.Map.Index(next.X, next.Y) * 2 + (node.OnWall ? 1 : 0);
+                    if (visited[nextNode] == generation || unit.Kind != DefenderKind.Archer && node.OnWall ||
+                        stayInside && !DefenderInteriorCell(game, next)) continue;
+                    bool occupied = false;
+                    if (!ignoreBodies)
+                    {
+                        var toWall = Cell(next).Support;
+                        var destination = node.OnWall ? WallWalkPoint(next, toWall!) :
+                            new System.Numerics.Vector2(next.X + .5f, next.Y + .5f);
+                        if (bodies.TryGetValue(new((int)Math.Floor(destination.X), (int)Math.Floor(destination.Y)),
+                            out var nearby))
+                        {
+                            float height = 0;
+                            if (node.OnWall && !_defenderWalkHeights.TryGetValue(toWall!.Id, out height))
+                            {
+                                height = WallDamageLayout.ActorWalkHeight(toWall, game.Map);
+                                _defenderWalkHeights[toWall.Id] = height;
+                            }
+                            foreach (var other in nearby)
+                                if (Math.Abs(other.Elevation - height) < .3f &&
+                                    Math.Pow(other.X - destination.X, 2) + Math.Pow(other.Y - destination.Y, 2) <
+                                        bodyRadius * bodyRadius)
+                                {
+                                    occupied = true;
+                                    break;
+                                }
+                        }
+                        if (occupied)
+                        {
+                            blockers?.Add(nextNode);
+                            if (!remaining.Contains(next)) continue;
+                        }
+                    }
+                    previous[nextNode] = currentNode;
+                    visited[nextNode] = generation;
+                    result.VisitedCount++;
+                    if (remaining.Remove(next))
+                    {
+                        result.Goals.Add(next, nextNode);
+                        yield return next;
+                        if (remaining.Count == 0) yield break;
+                    }
+                    // An occupied goal is a valid endpoint, never a route through another defender.
+                    if (!occupied) queue[tail++] = nextNode;
+                }
+            }
+            if (blockers is not null)
+            {
+                var transit = new BitArray(checked(game.Map.Width * game.Map.Height * 2));
+                for (int i = 0; i < tail; i++) transit[queue[i]] = true;
+                var nodes = new BitArray(transit);
+                foreach (int node in blockers) nodes[node] = true;
+                var barriers = blockers.Where(node => DefenderPathEdges(game,
+                    (new(node / 2 % game.Map.Width, node / 2 / game.Map.Width), node % 2 != 0)).Any(next =>
+                    game.Map.InBounds(next.Cell) && (!stayInside || DefenderInteriorCell(game, next.Cell)) &&
+                    !nodes[game.Map.Index(next.Cell.X, next.Cell.Y) * 2 + (next.OnWall ? 1 : 0)])).ToArray();
+                if (_archerReachability.Count == 4) _archerReachability.RemoveAt(0);
+                _archerReachability.Add(new(stayInside, transit, nodes, barriers));
+                ArcherReachabilityBuilds++;
+            }
+        }
     }
 
     private static bool SupportsWallWalk(WallComponent wall) => wall.Health > 0 &&
         (!(wall.IsGate || wall.IsGateWing) || WallDamageLayout.DamageBand(wall) < 4);
 
-    public bool DefenderCanReach(CityGame game, SettlementDefender unit, Pos target) =>
-        DefenderPath(game, unit, target) is not null;
+    public bool DefenderCanReach(CityGame game, SettlementDefender unit, Pos target)
+    {
+        _defenderPathCells.Clear();
+        _defenderWalkHeights.Clear();
+        return DefenderPath(game, unit, target) is not null;
+    }
 
     internal bool SavedDefenderCellValid(GameMap map, DefenderKind kind, Pos cell)
     {
@@ -262,29 +520,77 @@ public sealed partial class SettlementState
             WallDamageLayout.ContainsFootprint(w, point.X, point.Y, .5f));
     }
 
-    private IOrderedEnumerable<WallComponent> ArcherPosts(SettlementDefender unit, SiegeEnemy? enemy) =>
-        Walls.Where(w => SupportsWallWalk(w) && !w.IsGate && !w.IsGateWing)
-            .OrderBy(w => enemy is null
-                ? DefenderList.Where(other => other.Id != unit.Id).Sum(other =>
-                    150 / (1 + Math.Pow(other.X - w.Center.X, 2) + Math.Pow(other.Y - w.Center.Y, 2))) -
-                    (w.IsTower ? 12 : 0) + Math.Sqrt(Math.Pow(w.Center.X - unit.Home.X, 2) +
-                        Math.Pow(w.Center.Y - unit.Home.Y, 2)) * 2 +
-                    DefenderList.Count(other => other.Id != unit.Id && other.PatrolWallId == w.Id) * 100
-                : Math.Pow(w.Center.X - enemy.X, 2) + Math.Pow(w.Center.Y - enemy.Y, 2) +
+    private IOrderedEnumerable<WallComponent> ArcherPosts(SettlementDefender unit, SiegeEnemy enemy,
+        IEnumerable<WallComponent>? posts = null) =>
+        (posts ?? Walls.Where(w => SupportsWallWalk(w) && !w.IsGate && !w.IsGateWing))
+            .OrderBy(w => Math.Pow(w.Center.X - enemy.X, 2) + Math.Pow(w.Center.Y - enemy.Y, 2) +
                     DefenderList.Where(other => other.Id != unit.Id).Sum(other =>
                         80 / (1 + Math.Pow(other.X - w.Center.X, 2) + Math.Pow(other.Y - w.Center.Y, 2))))
             .ThenBy(w => w.Cell.Y).ThenBy(w => w.Cell.X);
 
+    private WallComponent[] ArcherRangePosts(SiegeEnemy enemy)
+    {
+        if (_archerRangePosts.TryGetValue(enemy.Id, out var cached) && cached.X == enemy.X && cached.Y == enemy.Y)
+            return cached.Posts;
+        var posts = Walls.Where(post => SupportsWallWalk(post) && !post.IsGate && !post.IsGateWing)
+            .Where(post =>
+            {
+                var point = WallWalkPoint(post.Cell, post);
+                return Math.Pow(point.X - enemy.X, 2) + Math.Pow(point.Y - enemy.Y, 2) <=
+                    Math.Pow(CombatProfiles.Archer.Range, 2);
+            }).ToArray();
+        _archerRangePosts[enemy.Id] = (enemy.X, enemy.Y, posts);
+        return posts;
+    }
+
+    private BitArray? ArcherReachabilityUpperBound(CityGame game, SettlementDefender unit, bool stayInside)
+    {
+        const double bodyRadius = WorldScale.HumanRadius * 2;
+        var cell = new Pos((int)unit.X, (int)unit.Y);
+        bool onWall = unit.Elevation > .01f && DefenderPathCell(game, cell).Support is not null;
+        int start = game.Map.Index(cell.X, cell.Y) * 2 + (onWall ? 1 : 0);
+        foreach (var cached in _archerReachability)
+        {
+            if (cached.StayInside != stayInside || !cached.Transit[start]) continue;
+            bool closed = true;
+            foreach (int barrier in cached.Barriers)
+            {
+                var at = new Pos(barrier / 2 % game.Map.Width, barrier / 2 / game.Map.Width);
+                var support = barrier % 2 != 0 ? DefenderPathCell(game, at).Support : null;
+                var point = support is null ? new System.Numerics.Vector2(at.X + .5f, at.Y + .5f) : WallWalkPoint(at, support);
+                float height = support is null ? 0 : WallDamageLayout.ActorWalkHeight(support, game.Map);
+                bool occupied = false;
+                foreach (var other in DefenderList)
+                    if (other.Id != unit.Id && Math.Abs(other.Elevation - height) < .3f &&
+                        Math.Pow(other.X - point.X, 2) + Math.Pow(other.Y - point.Y, 2) <
+                            bodyRadius * bodyRadius)
+                    {
+                        occupied = true;
+                        break;
+                    }
+                if (occupied) continue;
+                closed = false;
+                break;
+            }
+            // Only reject outside a fully explored region whose blocked exits remain closed.
+            // Extra bodies inside it can remove routes, but cannot create an outside route.
+            if (closed) return cached.Nodes;
+        }
+        return null;
+    }
+
     private (SiegeEnemy Enemy, Pos? Goal, List<Pos>? Path)? AssignArcherTarget(CityGame game,
         SettlementDefender unit, WallComponent? support)
     {
-        var candidates = EnemyList.Where(enemy => enemy.Health > 0)
-            .OrderBy(enemy => DefenderList.Count(other => other.Id != unit.Id && other.Health > 0 &&
-                other.Kind == DefenderKind.Archer && other.Order != DefenderOrder.Move &&
-                other.TargetEnemyId == enemy.Id))
-            .ThenBy(enemy => enemy.Id == unit.TargetEnemyId ? 0 : 1)
-            .ThenBy(enemy => Math.Pow(enemy.X - unit.X, 2) + Math.Pow(enemy.Y - unit.Y, 2))
-            .ThenBy(enemy => enemy.Id);
+        RefreshDefenderPathCells(game);
+        var candidates = DefenseTargets(unit).ToArray();
+        Dictionary<int, WallComponent[]>? eligiblePosts = null;
+        DefenderPathSearch? paths = null;
+        HashSet<Pos>? occupiedPosts = null;
+        bool stayInside = unit.Elevation > .01f || EstablishedAt(new((int)unit.X, (int)unit.Y));
+        var reachable = ArcherReachabilityUpperBound(game, unit, stayInside);
+        try
+        {
         foreach (var candidate in candidates)
         {
             if (unit.PathEnemyId == candidate.Id && unit.PathIndex < unit.Path.Count &&
@@ -292,18 +598,42 @@ public sealed partial class SettlementState
                     Math.Pow(goal.Y + .5 - candidate.Y, 2) <= Math.Pow(CombatProfiles.Archer.Range, 2))
                 return (candidate, null, null);
             if (ArcherHasShot(game, unit, support, candidate)) return (candidate, null, null);
-            foreach (var post in ArcherPosts(unit, candidate))
+            if (occupiedPosts is null)
             {
-                var point = WallWalkPoint(post.Cell, post);
-                if (Math.Pow(point.X - candidate.X, 2) + Math.Pow(point.Y - candidate.Y, 2) >
-                    Math.Pow(CombatProfiles.Archer.Range, 2)) continue;
-                if (DefenderList.Any(other => other.Id != unit.Id &&
-                    Math.Pow(other.X - post.Cell.X - .5, 2) + Math.Pow(other.Y - post.Cell.Y - .5, 2) <= .12)) continue;
-                var path = DefenderPath(game, unit, post.Cell);
+                occupiedPosts = [];
+                foreach (var other in DefenderList)
+                {
+                    if (other.Id == unit.Id) continue;
+                    int x = (int)Math.Floor(other.X), y = (int)Math.Floor(other.Y);
+                    if (Math.Pow(other.X - x - .5, 2) + Math.Pow(other.Y - y - .5, 2) <= .12)
+                        occupiedPosts.Add(new(x, y));
+                }
+            }
+            eligiblePosts ??= candidates.ToDictionary(enemy => enemy.Id, enemy =>
+            {
+                var posts = ArcherRangePosts(enemy).Where(post =>
+                    game.Map.InBounds(post.Cell) && !occupiedPosts.Contains(post.Cell)).ToArray();
+                if (posts.Length == 0) return posts;
+                if (reachable is null) return posts;
+                return posts.Where(post =>
+                {
+                    int node = game.Map.Index(post.Cell.X, post.Cell.Y) * 2;
+                    return reachable[node] || reachable[node + 1];
+                }).ToArray();
+            });
+            var posts = eligiblePosts[candidate.Id];
+            if (posts.Length == 0) continue;
+            paths ??= DefenderPaths(game, unit, eligiblePosts.Values.SelectMany(posts => posts)
+                .Select(post => post.Cell).Distinct().ToArray(), stayInside: stayInside);
+            foreach (var post in ArcherPosts(unit, candidate, posts.Where(post => paths.CanReach(post.Cell))))
+            {
+                var path = paths.PathTo(post.Cell);
                 if (path is not null) return (candidate, post.Cell, path);
             }
         }
         return null;
+        }
+        finally { paths?.Dispose(); }
     }
 
     private bool ArcherHasShot(CityGame game, SettlementDefender unit, WallComponent? support, SiegeEnemy enemy) =>
@@ -316,21 +646,28 @@ public sealed partial class SettlementState
             new((float)unit.X, Ground(game, new((float)unit.X, (float)unit.Y)) + unit.Elevation +
                 WorldScale.Feet(4.5f), (float)unit.Y), CombatProfiles.Archer.Damage, support.Id, unit.Id, commit: false);
 
+    private HashSet<Pos>? _garrisonGround;
+    private int _garrisonNavigationVersion = -1;
+
     private HashSet<Pos> GateGroundReachable(CityGame game)
     {
+        if (_garrisonGround is not null && _garrisonNavigationVersion == game.Map.NavigationVersion)
+            return _garrisonGround;
         var reached = new HashSet<Pos>();
         var queue = new Queue<Pos>();
         foreach (var gate in Walls.Where(w => w.IsGate).Select(w => w.Cell))
             if (GroundPassable(game, gate) && reached.Add(gate)) queue.Enqueue(gate);
         while (queue.TryDequeue(out var cell))
             foreach (var next in Neighbors(cell))
-                if (!reached.Contains(next) && GroundPassable(game, next) &&
+                if (!reached.Contains(next) && (EstablishedAt(next) || game.Map.HasFootbridge(next.X, next.Y) ||
+                    game.Map.HasRoad(next.X, next.Y) && ContainsInterior(next)) && GroundPassable(game, next) &&
                     CanWalk(new(cell.X + .5f, cell.Y + .5f), new(next.X + .5f, next.Y + .5f)))
                 {
                     reached.Add(next);
                     queue.Enqueue(next);
                 }
-        return reached;
+        _garrisonNavigationVersion = game.Map.NavigationVersion;
+        return _garrisonGround = reached;
     }
 
     private bool GroundFightVisible(CityGame game, double ax, double ay, double bx, double by)
@@ -349,6 +686,7 @@ public sealed partial class SettlementState
     internal bool GarrisonHomeExists(Pos home) => _defenderGame is { } game && game.Map.InBounds(home) &&
         game.Map.BuildingAt(home.X, home.Y) is { } type && RosterCapacity(type) > 0;
     public static double MeleeDistance(SiegeEnemy enemy) =>
+        enemy.Kind == SiegeEnemyKind.Orc ? OrcCombatAnimation.WallReach + WorldScale.HumanRadius :
         Math.Max(CombatProfiles.Guard.Range, enemy.CollisionRadius + WorldScale.HumanRadius + 0.25);
 
     internal SettlementDefender? EngagedDefender(SiegeEnemy enemy) => _defenderGame is { } game
@@ -377,8 +715,13 @@ public sealed partial class SettlementState
     internal void AdvanceDefenders(CityGame game, double seconds)
     {
         if (game.Paused || seconds <= 0) return;
+        RefreshDefenderPathCells(game);
+        _defenderWalkHeights.Clear();
+        var enemies = EnemyList.Select(enemy => enemy.Id).ToHashSet();
+        foreach (var stale in _archerRangePosts.Keys.Where(id => !enemies.Contains(id)).ToArray())
+            _archerRangePosts.Remove(stale);
         _defenderGame = game;
-        var homes = game.Map.BuildingFootprints.Values.Where(a => ContainsInterior(new(a.X, a.Y)) &&
+        var homes = game.Map.BuildingFootprints.Values.Where(a => EstablishedAt(new(a.X, a.Y)) &&
             RosterCapacity(game.Map.BuildingAt(a.X, a.Y)!) > 0).ToArray();
         var owners = homes.Select(a => new Pos(a.X, a.Y)).ToHashSet();
         DefenderList.RemoveAll(d => d.Health <= 0 || !owners.Contains(d.Home));
@@ -400,17 +743,30 @@ public sealed partial class SettlementState
                 DefenderList.All(d => Math.Pow(d.X - p.X - 0.5, 2) + Math.Pow(d.Y - p.Y - 0.5, 2) > 0.12))
                 .OrderBy(p => p.Y).ThenBy(p => p.X).Select(p => (Pos?)p).FirstOrDefault();
             if (spawn is not { } cell) continue;
-            DefenderList.Add(new SettlementDefender { Id = NextDefenderId++, Home = home,
+            DefenderList.Add(new SettlementDefender
+            {
+                Id = NextDefenderId++,
+                Home = home,
                 Kind = type.Name == "Archer Barracks" ? DefenderKind.Archer : DefenderKind.Soldier,
-                X = cell.X + 0.5, Y = cell.Y + 0.5, PreviousX = cell.X + 0.5, PreviousY = cell.Y + 0.5 });
+                X = cell.X + 0.5,
+                Y = cell.Y + 0.5,
+                PreviousX = cell.X + 0.5,
+                PreviousY = cell.Y + 0.5
+            });
             RosterTimers[home] = 2;
         }
+        var stagingSide = DefenderStagingSide;
+        long patrolStarted = game.ProfileUpdates ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        AssignPatrols(game, seconds, stagingSide);
+        if (game.ProfileUpdates)
+            game.LastPatrolAssignmentMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(patrolStarted).TotalMilliseconds;
         foreach (var unit in DefenderList.OrderBy(d => d.Id))
         {
             var nearestGate = Walls.Where(w => w.IsGate).MinBy(w =>
                 Math.Pow(w.Center.X - unit.X, 2) + Math.Pow(w.Center.Y - unit.Y, 2));
             var gate = nearestGate?.Cell ?? unit.Home;
             unit.PreviousX = unit.X; unit.PreviousY = unit.Y; unit.PreviousElevation = unit.Elevation;
+            unit.PathRetrySeconds = Math.Max(0, unit.PathRetrySeconds - seconds);
             var supportCell = new Pos((int)unit.X, (int)unit.Y);
             var ladderSupport = unit.Kind == DefenderKind.Archer && unit.Elevation > .01f
                 ? LadderSupport(new((float)unit.X, (float)unit.Y)) : null;
@@ -441,15 +797,15 @@ public sealed partial class SettlementState
             if (unit.Order == DefenderOrder.Automatic)
             {
                 var assignment = unit.Kind == DefenderKind.Archer ? AssignArcherTarget(game, unit, currentSupport) : null;
-                enemy = unit.Kind == DefenderKind.Archer ? assignment?.Enemy : EnemyList.Where(g => g.Health > 0)
-                    .OrderBy(g => Math.Pow(g.X - unit.X, 2) + Math.Pow(g.Y - unit.Y, 2)).ThenBy(g => g.Id).FirstOrDefault();
+                enemy = unit.Kind == DefenderKind.Archer ? assignment?.Enemy : AssignGuardTarget(game, unit);
                 unit.TargetEnemyId = enemy?.Id;
-                if (unit.Kind == DefenderKind.Archer && unit.PathEnemyId != enemy?.Id)
+                if (unit.PathEnemyId != enemy?.Id)
                 {
                     unit.PathEnemyId = enemy?.Id;
                     unit.Path.Clear();
                     unit.PathIndex = 0;
                     unit.PathTarget = null;
+                    unit.PathRetrySeconds = 0;
                 }
                 if (assignment is { Path: { } path, Goal: { } assignmentGoal })
                 {
@@ -474,9 +830,18 @@ public sealed partial class SettlementState
                             new((float)unit.X, Ground(game, new((float)unit.X, (float)unit.Y)) + unit.Elevation + WorldScale.Feet(4.5f), (float)unit.Y),
                             profile.Damage, currentSupport?.Id ?? 0, unit.Id)) continue;
                     }
-                    else AddAttack(new SiegeProjectile { Melee = true, SourceDefenderId = unit.Id,
-                        TargetId = enemy.Id, Damage = profile.Damage, Windup = profile.Windup,
-                        StartX = unit.X, StartY = unit.Y, EndX = enemy.X, EndY = enemy.Y });
+                    else AddAttack(new SiegeProjectile
+                    {
+                        Melee = true,
+                        SourceDefenderId = unit.Id,
+                        TargetId = enemy.Id,
+                        Damage = profile.Damage,
+                        Windup = profile.Windup,
+                        StartX = unit.X,
+                        StartY = unit.Y,
+                        EndX = enemy.X,
+                        EndY = enemy.Y
+                    });
                     unit.AttackCooldown = profile.Interval;
                 }
                 continue;
@@ -485,34 +850,39 @@ public sealed partial class SettlementState
             if (unit.Order == DefenderOrder.Move && unit.Destination is { } destination) goal = destination;
             else if (unit.Kind == DefenderKind.Archer)
             {
-                goal = enemy is not null && unit.PathIndex < unit.Path.Count && unit.PathTarget is { } response
+                goal = enemy is null ? unit.PatrolCell ?? new Pos((int)unit.X, (int)unit.Y) :
+                    unit.PathIndex < unit.Path.Count && unit.PathTarget is { } response
                     ? response : ArcherPosts(unit, enemy)
                     .Where(w => DefenderList.All(other => other.Id == unit.Id ||
                         Math.Pow(other.X - w.Cell.X - 0.5, 2) + Math.Pow(other.Y - w.Cell.Y - 0.5, 2) > 0.12))
                     .Select(w => (Pos?)w.Cell).FirstOrDefault() ?? gate;
                 if (enemy is null && unit.PatrolWallId is { } assigned &&
                     Walls.FirstOrDefault(w => w.Id == assigned && SupportsWallWalk(w)) is { } patrol)
-                    goal = patrol.Cell;
+                    goal = unit.PatrolCell ?? patrol.Cell;
                 else if (enemy is null)
                     unit.PatrolWallId = Walls.FirstOrDefault(w => w.Cell == goal)?.Id;
             }
             else if (enemy is null || !EstablishedAt(new((int)enemy.X, (int)enemy.Y)))
             {
-                var posts = Walls.Where(w => w.IsGate || w.IsTower && (w.JunctionTower ||
-                    (w.Cell.X == Bounds.X || w.Cell.X == Bounds.Right) && (w.Cell.Y == Bounds.Y || w.Cell.Y == Bounds.Bottom)))
-                    .OrderBy(w => DefenderList.Where(other => other.Id != unit.Id && other.Kind == DefenderKind.Soldier)
+                var posts = Walls.Where(w => w.Health > 0 && (w.IsGate || w.IsTower && (w.JunctionTower ||
+                    (w.Cell.X == Bounds.X || w.Cell.X == Bounds.Right) && (w.Cell.Y == Bounds.Y || w.Cell.Y == Bounds.Bottom)) ||
+                    stagingSide is { } approach && OnApproachSide(w, approach)))
+                    .OrderBy(w => stagingSide is { } side && !OnApproachSide(w, side) ? 1 : 0)
+                    .ThenBy(w => DefenderList.Where(other => other.Id != unit.Id && other.Kind == DefenderKind.Soldier)
                         .Sum(other => 1000 / (1 + Math.Pow(other.X - w.Center.X, 2) + Math.Pow(other.Y - w.Center.Y, 2))) +
                         Math.Sqrt(Math.Pow(unit.Home.X - w.Center.X, 2) + Math.Pow(unit.Home.Y - w.Center.Y, 2)) -
                         (w.IsGate ? 12 : 0) + DefenderList.Count(other => other.Id != unit.Id &&
                             other.Kind == DefenderKind.Soldier && other.PatrolWallId == w.Id) * 200).ToArray();
                 var post = posts.FirstOrDefault();
                 if (enemy is null && unit.PatrolWallId is { } assigned &&
-                    Walls.FirstOrDefault(w => w.Id == assigned && w.Health > 0) is { } patrol) post = patrol;
+                    Walls.FirstOrDefault(w => w.Id == assigned && w.Health > 0 &&
+                        (stagingSide is not { } side || OnApproachSide(w, side))) is { } patrol) post = patrol;
                 else if (enemy is null) unit.PatrolWallId = post?.Id;
                 var center = post?.Center ?? new System.Numerics.Vector2(gate.X + .5f, gate.Y + .5f);
                 goal = new((int)unit.X, (int)unit.Y);
+                var reachable = GateGroundReachable(game);
                 var spots = new CellRect((int)center.X - 4, (int)center.Y - 4, 9, 9).Cells()
-                    .Where(p => EstablishedAt(p) && GroundPassable(game, p) && DefenderList.All(other =>
+                    .Where(p => reachable.Contains(p) && DefenderList.All(other =>
                         other.Id == unit.Id || Math.Pow(other.X - p.X - .5, 2) + Math.Pow(other.Y - p.Y - .5, 2) > 1) &&
                         Walls.Where(w => w.IsGate).All(w => Math.Abs(
                             (p.X + .5 - w.Center.X) * w.Tangent.X + (p.Y + .5 - w.Center.Y) * w.Tangent.Y) > 2 ||
@@ -522,12 +892,15 @@ public sealed partial class SettlementState
                 if (spots is { } spot) goal = spot;
             }
             else goal = new((int)enemy.X, (int)enemy.Y);
-            if (unit.Order == DefenderOrder.Automatic && (unit.Kind != DefenderKind.Archer || enemy is null) &&
+            if (unit.Order == DefenderOrder.Automatic && enemy is null &&
                 unit.PathIndex < unit.Path.Count && unit.PathTarget is { } underway)
                 goal = underway;
             if (unit.PathTarget != goal || unit.PathIndex >= unit.Path.Count)
             {
-                var path = DefenderPath(game, unit, goal);
+                if (unit.Order == DefenderOrder.Automatic && unit.PathTarget == goal && unit.PathRetrySeconds > 0)
+                    continue;
+                var path = DefenderPath(game, unit, goal, stayInside: unit.Order == DefenderOrder.Automatic &&
+                    (unit.Elevation > .01f || EstablishedAt(new((int)unit.X, (int)unit.Y))));
                 if (path is null && unit.Order != DefenderOrder.Automatic)
                 {
                     unit.Order = DefenderOrder.Automatic; unit.TargetEnemyId = null; unit.Destination = null;
@@ -536,6 +909,7 @@ public sealed partial class SettlementState
                 }
                 unit.Path = path ?? [];
                 unit.PathTarget = goal; unit.PathIndex = 0;
+                unit.PathRetrySeconds = path is null ? .5 : 0;
             }
             if (unit.PathIndex < unit.Path.Count)
             {
@@ -611,7 +985,13 @@ public sealed partial class SettlementState
                 {
                     double x = unit.X + dx / distance * step, y = unit.Y + dy / distance * step;
                     if (DefenderBodyBlocked(unit, x, y, unit.Elevation))
-                    { unit.PathTarget = null; unit.Path.Clear(); unit.PathIndex = 0; continue; }
+                    {
+                        unit.PathTarget = goal;
+                        unit.Path.Clear();
+                        unit.PathIndex = 0;
+                        unit.PathRetrySeconds = .5;
+                        continue;
+                    }
                     if (unit.Elevation < 0.3f && EnemyList.Any(other => other.Health > 0 &&
                         Math.Pow(x - other.X, 2) + Math.Pow(y - other.Y, 2) <
                         Math.Pow(WorldScale.HumanRadius + other.CollisionRadius, 2))) continue;

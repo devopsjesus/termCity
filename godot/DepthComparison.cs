@@ -186,7 +186,7 @@ public partial class DepthComparison : Control
         if (TerrainStudy && _session.Game.Map.PreviewElevationProfile !=
             TerrainStudyFixture.Profile((TerrainStudyTreatment)_terrainTreatment))
         {
-            int zoom = _session.ZoomLevel;
+            double zoom = _session.ZoomLevel;
             BuildFixture();
             _session.SetZoom(zoom);
             _session.CenterOn(new(29, _subject == 1 ? 30 : 27));
@@ -297,7 +297,7 @@ public partial class DepthComparison : Control
 
     private void Zoom(int direction)
     {
-        _session.SetZoom(Math.Clamp(_session.ZoomLevel + direction, -2, 1));
+        _session.ZoomBy(direction);
         _renderer.SetCameraOffset(_session, _panOffset);
         Sync();
     }

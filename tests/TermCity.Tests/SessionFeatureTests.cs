@@ -571,7 +571,7 @@ public class SessionFeatureTests
     }
 
     [Fact]
-    public void AutosaveRunsAfterSixtySecondsAndSkipsUnchangedPausedCity()
+    public async Task AutosaveRunsAfterSixtySecondsAndSkipsUnchangedPausedCity()
     {
         using var files = new SaveFiles();
         var session = files.Session();
@@ -579,13 +579,85 @@ public class SessionFeatureTests
         session.Update(59);
         Assert.False(File.Exists(session.AutosavePath(1)));
         session.Update(1);
+        Assert.True(session.BackgroundAutosavePending);
+        await session.WaitForAutosaveAsync();
         Assert.True(File.Exists(session.AutosavePath(1)));
         session.Update(60);
+        await session.WaitForAutosaveAsync();
         Assert.False(File.Exists(session.AutosavePath(2)));
         session.Game.Money--;
         session.Game.Touch();
         session.Update(60);
+        await session.WaitForAutosaveAsync();
         Assert.True(File.Exists(session.AutosavePath(2)));
+    }
+
+    [Fact]
+    public async Task QuickSaveIncludesOrderedSimulationInputsThatHaveNotYetPublished()
+    {
+        using var files = new SaveFiles();
+        await using var session = files.Session();
+        session.Game.Paused = false;
+        var serial = session.Game.CreateSimulationSnapshot();
+        for (int step = 0; step < 4; step++)
+        {
+            session.UpdateResponsive(.05);
+            serial.Update(.05);
+        }
+        Assert.True(session.HasUnsavedChanges);
+        Assert.True(session.QuickSave());
+        Assert.False(session.BackgroundSimulationPending);
+        Assert.Equal(0, session.PendingSimulationSeconds);
+        Assert.False(session.HasUnsavedChanges);
+        Assert.Equal(SaveGameStore.Serialize(serial), SaveGameStore.Serialize(SaveGameStore.Load(session.SavePath)));
+    }
+
+    [Fact]
+    public async Task BackgroundAutosaveCapturesOneConsistentStateAndRotatesLaterChanges()
+    {
+        using var files = new SaveFiles();
+        await using var session = files.Session();
+        session.Game.Paused = true;
+        session.Game.Money = 100;
+        session.Game.Touch();
+        session.Update(60);
+        session.Game.Money = 200;
+        session.Game.Touch();
+        await session.WaitForAutosaveAsync();
+        Assert.Equal(100, SaveGameStore.Load(session.AutosavePath(1)).Money);
+        Assert.Equal(200, session.Game.Money);
+        session.Update(60);
+        Assert.True(session.BackgroundAutosavePending);
+        await session.WaitForAutosaveAsync();
+        Assert.Equal(200, SaveGameStore.Load(session.AutosavePath(1)).Money);
+        Assert.Equal(100, SaveGameStore.Load(session.AutosavePath(2)).Money);
+        Assert.Empty(Directory.GetFiles(files.DirectoryPath, "*.pending*"));
+    }
+
+    [Fact]
+    public async Task BackgroundAutosaveFailureIsVisibleAndPreservesTheNewestBackup()
+    {
+        using var files = new SaveFiles();
+        await using var session = files.Session();
+        session.Game.Paused = true;
+        Assert.True(session.Autosave());
+        session.Game.Money = 42;
+        Assert.True(session.Autosave());
+        string newest = File.ReadAllText(session.AutosavePath(1));
+        string blocker = session.AutosavePath(3);
+        Directory.CreateDirectory(blocker);
+        try
+        {
+            session.Game.Money = 43;
+            session.Game.Touch();
+            session.Update(60);
+            await session.WaitForAutosaveAsync();
+            Assert.Equal(MessageKind.Error, session.MessageKind);
+            Assert.Contains("Autosave failed", session.Message);
+            Assert.Equal(newest, File.ReadAllText(session.AutosavePath(1)));
+            Assert.Empty(Directory.GetFiles(files.DirectoryPath, "*.pending*"));
+        }
+        finally { Directory.Delete(blocker); }
     }
 
     [Fact]

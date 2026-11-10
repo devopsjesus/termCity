@@ -143,7 +143,15 @@ public sealed class WallNetwork
                 double area = 0;
                 for (int i = 0; i < polygon.Count; i++) area += Cross(polygon[i], polygon[(i + 1) % polygon.Count]);
                 if (area > Tolerance)
-                    regions.Add(new(polygon.AsReadOnly(), sources, rootComponents.Contains(components[initial.A])));
+                {
+                    var outline = polygon.Where((point, i) =>
+                    {
+                        var before = point - polygon[(i + polygon.Count - 1) % polygon.Count];
+                        var after = polygon[(i + 1) % polygon.Count] - point;
+                        return Math.Abs(Cross(before, after)) > 1e-10 || Vector2.Dot(before, after) <= 0;
+                    }).ToArray();
+                    regions.Add(new(outline, sources, rootComponents.Contains(components[initial.A])));
+                }
             }
         Regions = regions.AsReadOnly();
     }

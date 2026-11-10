@@ -202,6 +202,11 @@ public static class CellInspector
             if (diagnostic.Paused) lines.Add("Paused - press P to resume");
         }
 
+        if (map.BuildingAt(pos.X, pos.Y) is { } inspected &&
+            BuildingEntranceLayout.ForBuilding(map, map.BuildingFootprintAt(pos.X, pos.Y), inspected)
+                .Any(entrance => entrance.Kind != BuildingAccessKind.PublicSpace) &&
+            BuildingEntranceLayout.Accesses(map, map.BuildingFootprintAt(pos.X, pos.Y)).Count == 0)
+            lines.Add("Entrance approach obstructed: clear the doorway side or rotate the building.");
         return lines;
     }
 

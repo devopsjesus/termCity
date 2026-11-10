@@ -16,22 +16,80 @@ public partial class PerspectiveCity
     private readonly Dictionary<int, int> _siegePickWallIds = [];
     public int? PickedWallId { get; private set; }
     private readonly Dictionary<int, MultiMeshInstance3D> _wallInstances = [];
+    private readonly Dictionary<int, List<Transform3D>> _wallBatches = [];
     private readonly Dictionary<int, MultiMeshInstance3D> _actorInstances = [];
     private readonly Dictionary<int, List<Transform3D>> _actorBatches = [];
+    private readonly Dictionary<MultiMesh, float[]> _siegeBuffers = [];
+    private readonly Dictionary<MultiMesh, Transform3D[]> _siegeTransforms = [];
+    private readonly Dictionary<SiegeEnemyKind, IReadOnlyList<TrollPart>> _trollModels = [];
+    private readonly Dictionary<(bool Friendly, int Id), (Basis Facing, ulong Frame)> _actorFacings = [];
+    private double _actorFrameDelta;
+    internal int ActorBufferUploads { get; private set; }
+    internal int WallSnapshotsCapturedLastSync { get; private set; }
     private readonly Dictionary<int, (int Color, int Index)> _projectileInstances = [];
     internal Vector3? RenderedProjectilePosition(int id) =>
         _projectileInstances.TryGetValue(id, out var slot)
             ? _actorBatches[slot.Color][slot.Index].Origin : null;
     private readonly List<WallComponent> _burningWalls = [];
     private readonly Dictionary<int, IReadOnlyList<WallFlameSurface>> _flameSurfaces = [];
+    private readonly Dictionary<WallComponent, (WallPartState State, IReadOnlyList<PalisadeWallPart> Parts)> _wallPartCache = [];
+    private readonly record struct WallPartState(WallMaterial Material, int Band, bool Healthy, bool Intact, bool Burning,
+        float Exterior, float Width, float Depth, Pos Cell, System.Numerics.Vector2 Center, System.Numerics.Vector2 Tangent);
+    private int _wallPartsTerrainVersion = -1;
     private SettlementState? _renderedSettlement;
-    private int _siegeRevision = -1, _wallSignature;
+    private int _siegeRevision = -1, _wallGeometryTerrainVersion = -1;
+    private readonly Dictionary<int, WallGeometrySnapshot> _wallGeometrySnapshots = [];
+    private readonly record struct WallGeometryState(Pos Cell, Vector3 Top, System.Numerics.Vector2 Center,
+        System.Numerics.Vector2 Tangent, WallMaterial Material, int Upgrade, int Damage, bool Healthy,
+        bool Intact, bool Burning, bool Original, bool Tower, bool Gate, bool GateWing, bool Junction,
+        WallDefenseKind Defense, int Facing, float Exterior, float Width, float Depth);
+    private readonly record struct LadderGeometry(System.Numerics.Vector2 Position, System.Numerics.Vector2 Direction,
+        int WallId, float Height);
+    private sealed record WallGeometrySnapshot(WallComponent Wall, WallGeometryState State,
+        (System.Numerics.Vector2 Position, System.Numerics.Vector2 Inward)? GroundLadder, LadderGeometry[] Ladders);
     private double _siegeFraction = -1;
+    private double _siegeVisualSeconds = -1;
 
     public int WallsDrawn { get; private set; }
     internal int TimberWallPartsDrawn { get; private set; }
     public int EnemiesDrawn { get; private set; }
     public int SiegeGeometryBuilds { get; private set; }
+    internal int SiegeAppendBuilds { get; private set; }
+    internal int WallsRegeneratedLastSync { get; private set; }
+    internal IReadOnlyList<(int Wall, int Color, Transform3D Transform)> FortificationGeometry =>
+        _siegePickBoxes.Select((box, index) => (_siegePickWallIds[index], box.Color, _siegePickTransforms[index])).ToArray();
+    internal bool FortificationBuffersMatch =>
+        MatchSpatialSiege(_wallBatches, _wallInstances, false) && MatchSpatialSiege(_extensionWallBatches, _extensionWallInstances, false);
+    internal bool EncodedFortificationBuffersMatch =>
+        MatchSpatialSiege(_wallBatches, _wallInstances, true) && MatchSpatialSiege(_extensionWallBatches, _extensionWallInstances, true);
+    internal string FortificationMismatch
+    {
+        get
+        {
+            foreach (var (batches, owner) in new[] { (_wallBatches, _wallInstances), (_extensionWallBatches, _extensionWallInstances) })
+                foreach (var (color, batch) in batches)
+                {
+                    if (!_siegePages.TryGetValue(owner, out var group)) return $"missing spatial group color={color}";
+                    for (int i = 0; i < batch.Count; i++)
+                    {
+                        if (!group.Slots.TryGetValue((color, i), out var slot)) return $"missing spatial slot color={color} index={i}";
+                        if (!batch[i].IsEqualApprox(slot.Page.Mesh.GetInstanceTransform(slot.Index)))
+                            return $"color={color} slot={i} expected={batch[i]} actual={slot.Page.Mesh.GetInstanceTransform(slot.Index)}";
+                    }
+                }
+            return "";
+        }
+    }
+    internal bool ActorBuffersMatch => MatchSpatialSiege(_actorBatches, _actorInstances, false, bounded: false);
+
+    internal void InvalidateFortificationCache()
+    {
+        _wallPartCache.Clear();
+        _wallArtifacts.Clear();
+        _wallGeometryTerrainVersion = -1;
+    }
+    internal double SiegeGeometryBuildMilliseconds { get; private set; }
+    internal double WallAssemblyMilliseconds, WallPageMilliseconds, WallTopMilliseconds;
     public int SiegeActorBuilds { get; private set; }
     public double SiegeActorBuildMilliseconds { get; private set; }
     private bool _siegeAnimationEnabled = true;
@@ -108,15 +166,28 @@ public partial class PerspectiveCity
 
     private void SyncSiege(GameSession session)
     {
-        var settlement = session.Game.Settlement;
+        var settlement = session.PresentedSiege;
         bool replaced = !ReferenceEquals(_renderedSettlement, settlement);
-        if (replaced) _aimAngles.Clear();
-        bool revisionChanged = replaced || _siegeRevision != (settlement?.Revision ?? -1);
+        if (replaced || _wallPartsTerrainVersion != session.Game.Map.TerrainVersion)
+        {
+            _wallPartCache.Clear();
+            _wallPartsTerrainVersion = session.Game.Map.TerrainVersion;
+        }
+        if (replaced)
+        {
+            _aimAngles.Clear();
+            _aimStarts.Clear();
+            _actorFacings.Clear();
+            _actorRigs.Clear();
+        }
+        bool revisionChanged = replaced || _siegeRevision != (settlement?.Revision ?? -1) ||
+            _wallGeometryTerrainVersion != session.Game.Map.TerrainVersion;
         double fraction = settlement?.InterpolationFraction ?? 0;
         int selectedHash = session.SelectedDefenderIds.Aggregate(17, (hash, id) => unchecked(hash * 31 + id));
         bool selectionChanged = selectedHash != _defenderSelectionHash;
         _defenderSelectionHash = selectedHash;
-        if (!selectionChanged && !revisionChanged && (settlement is null || fraction == _siegeFraction ||
+        if (!selectionChanged && !revisionChanged && (settlement is null ||
+            fraction == _siegeFraction && settlement.VisualSeconds == _siegeVisualSeconds ||
             settlement.Enemies.Count == 0 && settlement.Projectiles.Count == 0 && settlement.VisibleRepairingWall is null &&
             settlement.Defenders.Count == 0 && settlement.Deaths.Count == 0 &&
             settlement.UpgradingWall is null &&
@@ -124,57 +195,108 @@ public partial class PerspectiveCity
         _renderedSettlement = settlement;
         _siegeRevision = settlement?.Revision ?? -1;
         _siegeFraction = fraction;
+        _siegeVisualSeconds = settlement?.VisualSeconds ?? -1;
         if (revisionChanged)
         {
-            var signature = new HashCode();
+            var snapshots = new Dictionary<int, WallGeometrySnapshot>();
             _burningWalls.Clear();
+            WallSnapshotsCapturedLastSync = 0;
             if (settlement is not null)
             {
-                signature.Add(settlement.Material);
-                foreach (var wall in settlement.Walls)
+                var states = settlement.Walls.Select(wall => (Wall: wall, State: CaptureWallState(settlement, wall))).ToArray();
+                bool supportChanged = _wallGeometryTerrainVersion != session.Game.Map.TerrainVersion ||
+                    states.Length != _wallGeometrySnapshots.Count ||
+                    states.Any(value => !_wallGeometrySnapshots.TryGetValue(value.Wall.Id, out var previous) ||
+                        !ReferenceEquals(value.Wall, previous.Wall) || previous.State != value.State);
+                foreach (var (wall, state) in states)
                 {
-                    signature.Add(wall.Cell);
-                    signature.Add(settlement.MaterialFor(wall));
-                    signature.Add(WallUpgradeArtwork.VisualStep(settlement, wall));
-                    signature.Add(WallDamageLayout.DamageBand(wall));
-                    signature.Add(wall.Health == 0);
                     bool burning = WallDamageLayout.IsBurning(wall);
-                    signature.Add(burning);
                     if (burning) _burningWalls.Add(wall);
-                    signature.Add(wall.Defense);
-                    signature.Add(wall.DefenseFacing);
+                    if (_wallGeometrySnapshots.TryGetValue(wall.Id, out var previous) &&
+                        ReferenceEquals(wall, previous.Wall) && state == previous.State &&
+                        !replaced && _wallGeometryTerrainVersion == session.Game.Map.TerrainVersion &&
+                        (!wall.IsTower || !supportChanged))
+                        snapshots.Add(wall.Id, previous);
+                    else
+                    {
+                        snapshots.Add(wall.Id, CaptureWallGeometry(settlement, wall, state));
+                        WallSnapshotsCapturedLastSync++;
+                    }
                 }
             }
-            int wallSignature = signature.ToHashCode();
-            if (replaced || wallSignature != _wallSignature)
+            var live = settlement is null ? [] : settlement.Enemies.Select(enemy => (false, enemy.Id))
+                .Concat(settlement.Defenders.Select(unit => (true, unit.Id))).ToHashSet();
+            foreach (var stale in _actorFacings.Keys.Where(key => !live.Contains(key)).ToArray())
+                _actorFacings.Remove(stale);
+            foreach (var stale in _actorRigs.Keys.Where(key => !live.Contains(key)).ToArray())
+                _actorRigs.Remove(stale);
+            foreach (var stale in _aimStarts.Keys.Where(id => !snapshots.ContainsKey(id)).ToArray())
+                _aimStarts.Remove(stale);
+            bool terrainChanged = _wallGeometryTerrainVersion != session.Game.Map.TerrainVersion;
+            bool existingChanged = _wallGeometrySnapshots.Any(pair =>
+                !snapshots.TryGetValue(pair.Key, out var current) || !SameWallGeometry(pair.Value, current));
+            if (replaced || terrainChanged || existingChanged || snapshots.Count != _wallGeometrySnapshots.Count)
             {
-                _wallSignature = wallSignature;
-                _flameSurfaces.Clear();
+                long geometryStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                bool append = !replaced && !terrainChanged && !existingChanged &&
+                    snapshots.Count > _wallGeometrySnapshots.Count &&
+                    snapshots.Values.Where(snapshot => !_wallGeometrySnapshots.ContainsKey(snapshot.Wall.Id))
+                        .All(snapshot => !snapshot.Wall.IsOriginal);
+                var previousWalls = append ? _wallBatches.ToDictionary(pair => pair.Key, pair => pair.Value.Count) : null;
+                var previousExtensions = append ? _extensionWallBatches.ToDictionary(pair => pair.Key, pair => pair.Value.Count) : null;
+                int firstTop = append ? _wallTopFaces.Count : 0;
+                if (!append)
+                {
+                    var survivingWalls = snapshots.Values.Select(snapshot => snapshot.Wall).ToHashSet();
+                    foreach (var wall in _wallPartCache.Keys.Where(wall => !survivingWalls.Contains(wall)).ToArray())
+                        _wallPartCache.Remove(wall);
+                    foreach (var id in _wallArtifacts.Keys.Where(id => !snapshots.ContainsKey(id)).ToArray())
+                        _wallArtifacts.Remove(id);
+                    foreach (var id in _flameSurfaces.Keys.Where(id => !snapshots.TryGetValue(id, out var current) ||
+                        !_wallGeometrySnapshots.TryGetValue(id, out var previous) || previous.State != current.State).ToArray())
+                        _flameSurfaces.Remove(id);
+                    _siegePickBoxes.Clear();
+                    _siegePickTransforms.Clear();
+                    _siegePickWallIds.Clear();
+                    _wallHighlightBoxes.Clear();
+                    _wallTopFaces.Clear();
+                    TimberWallPartsDrawn = 0;
+                    foreach (var values in _wallBatches.Values) values.Clear();
+                    foreach (var values in _extensionWallBatches.Values) values.Clear();
+                    _movingDefenseParts.Clear();
+                    _accessLadderWallIds.Clear();
+                    _aimedParts.Clear();
+                    _defenseAngles.Clear();
+                    WallsDrawn = 0;
+                }
                 foreach (var wall in _burningWalls)
-                    _flameSurfaces.Add(wall.Id, WallDamageLayout.FlameSurfaces(wall,
-                        WallModelParts(wall, _map).Select(part => part.Fragment).ToArray()));
-                _siegePickBoxes.Clear();
-                _siegePickTransforms.Clear();
-                _siegePickWallIds.Clear();
-                _wallHighlightBoxes.Clear();
-                _wallTopFaces.Clear();
-                TimberWallPartsDrawn = 0;
-                foreach (var values in _extensionWallBatches.Values) values.Clear();
-                _movingDefenseParts.Clear();
-                _accessLadderWallIds.Clear();
-                _aimedParts.Clear();
-                _defenseAngles.Clear();
-                var batches = new Dictionary<int, List<Transform3D>>();
-                WallsDrawn = 0;
+                    if (!_flameSurfaces.ContainsKey(wall.Id))
+                        _flameSurfaces.Add(wall.Id, WallDamageLayout.FlameSurfaces(wall,
+                            WallModelParts(wall, _map).Select(part => part.Fragment).ToArray()));
+                WallsRegeneratedLastSync = 0;
+                WallArtifactsReusedLastSync = 0;
                 if (settlement is not null)
                     foreach (var wall in settlement.Walls)
                     {
-                        DrawWall(batches, settlement, wall);
+                        if (append && _wallGeometrySnapshots.ContainsKey(wall.Id)) continue;
+                        DrawOrReuseWall(settlement, snapshots[wall.Id], replaced || terrainChanged);
                         WallsDrawn++;
                     }
-                SyncSiegeBatches(_fortifications, _wallInstances, batches);
-                SyncWallTops();
+                WallAssemblyMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(geometryStarted).TotalMilliseconds;
+                long uploadStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                SyncSiegeBatches(_fortifications, _wallInstances, _wallBatches,
+                    appendFrom: previousWalls, buffered: true);
+                WallPageMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(uploadStarted).TotalMilliseconds;
+                long topsStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                SyncWallTops(firstTop, previousExtensions);
+                WallTopMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(topsStarted).TotalMilliseconds;
+                _wallGeometrySnapshots.Clear();
+                foreach (var pair in snapshots) _wallGeometrySnapshots.Add(pair.Key, pair.Value);
+                _wallGeometryTerrainVersion = session.Game.Map.TerrainVersion;
+                if (append) SiegeAppendBuilds++;
                 SiegeGeometryBuilds++;
+                SiegeGeometryBuildMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(geometryStarted).TotalMilliseconds;
+                _wallTimingFrame = Engine.GetProcessFrames();
             }
         }
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -182,6 +304,8 @@ public partial class PerspectiveCity
         _projectileInstances.Clear();
         foreach (var batch in _splashBatches.Values) batch.Clear();
         var actors = _actorBatches;
+        ActorRigsReusedLastFrame = 0;
+        OrcPartsDrawn = OrcsDrawn = 0;
         _siegeActorPickBoxes.Clear();
         EnemiesDrawn = 0;
         RepairCrewDrawn = false;
@@ -198,11 +322,23 @@ public partial class PerspectiveCity
             AnimateAimedWeapons();
             foreach (var goblin in settlement.Enemies)
             {
+                int signature = HashCode.Combine(goblin.Kind, goblin.Tier, goblin.AppearanceSeed, SiegeAnimationEnabled);
+                var endpoint = new Vector3((float)goblin.X, 0, (float)goblin.Y);
+                endpoint.Y = GroundLevel(endpoint);
+                if (ReuseInvisibleRig(actors, false, goblin.Id, signature, endpoint))
+                {
+                    EnemiesDrawn++;
+                    continue;
+                }
                 var pose = SiegeMotion.Enemy(settlement, goblin);
+                var facing = SmoothActorFacing(false, goblin.Id, new(pose.Forward.X, 0, pose.Forward.Y));
+                pose = pose with { Forward = new(-facing.Z.X, -facing.Z.Z) };
                 if (!SiegeAnimationEnabled) pose = pose with { Stride = 0, Bob = 0, Sway = 0, Attack = 0 };
                 var at = new Vector3(pose.Position.X, 0, pose.Position.Y);
                 at.Y = GroundLevel(at);
+                BeginActorRig(false, goblin.Id, signature, new(facing, at));
                 DrawEnemy(actors, at, pose, goblin);
+                EndActorRig();
                 EnemiesDrawn++;
             }
             DrawGarrisonActors(actors, session, settlement);
@@ -282,15 +418,41 @@ public partial class PerspectiveCity
             }
         }
         SyncOilSheet();
-        SyncSiegeBatches(_siegeActors, _actorInstances, actors);
-        SyncSiegeBatches(_siegeActors, _splashInstances, _splashBatches, _splashDisk);
+        SyncSiegeBatches(_siegeActors, _actorInstances, actors, buffered: true);
+        SyncSiegeBatches(_siegeActors, _splashInstances, _splashBatches, _splashDisk, buffered: true);
         SiegeActorBuilds++;
         SiegeActorBuildMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        _actorTimingFrame = Engine.GetProcessFrames();
         RequestRender();
     }
 
+    private WallGeometryState CaptureWallState(SettlementState settlement, WallComponent wall) =>
+        new(wall.Cell, WallTop(wall), wall.Center, wall.Tangent, wall.Material,
+            WallUpgradeArtwork.VisualStep(settlement, wall), WallDamageLayout.DamageBand(wall),
+            wall.Health == wall.MaxHealth, wall.Health > 0, WallDamageLayout.IsBurning(wall), wall.IsOriginal,
+            wall.IsTower, wall.IsGate, wall.IsGateWing, wall.JunctionTower, wall.Defense, wall.DefenseFacing,
+            WallDamageLayout.ExteriorSide(wall), WallDamageLayout.Width(wall), WallDamageLayout.Depth(wall));
+
+    private WallGeometrySnapshot CaptureWallGeometry(SettlementState settlement, WallComponent wall, WallGeometryState state)
+    {
+        var ground = wall.IsTower && wall.Health > 0 ? settlement.GroundLadder(wall) : null;
+        var ladders = wall.IsTower ? WallDamageLayout.WalkwayLadders(wall).Select(ladder =>
+            new LadderGeometry(ladder.Position, ladder.Direction, ladder.Walkway.Id,
+                WallDamageLayout.GroundHeight(ladder.Walkway, _map!) + WallDamageLayout.WalkHeight(ladder.Walkway))).ToArray() : [];
+        return new(wall, state, ground, ladders);
+    }
+
+    private static bool SameWallGeometry(WallGeometrySnapshot before, WallGeometrySnapshot after) =>
+        ReferenceEquals(before.Wall, after.Wall) && before.State == after.State &&
+        before.GroundLadder == after.GroundLadder && before.Ladders.SequenceEqual(after.Ladders);
+
     private void DrawEnemy(Dictionary<int, List<Transform3D>> batches, Vector3 ground, SiegeEnemyPose pose, SiegeEnemy goblin)
     {
+        if (goblin.Kind == SiegeEnemyKind.Orc)
+        {
+            DrawOrc(batches, ground, pose, goblin);
+            return;
+        }
         float size = (float)goblin.BodyScale;
         float strike = Math.Max(0, pose.Attack), windup = Math.Max(0, -pose.Attack);
         var facing = Basis.LookingAt(new Vector3(pose.Forward.X, 0, pose.Forward.Y), Vector3.Up);
@@ -304,13 +466,17 @@ public partial class PerspectiveCity
                 at = collapse * at;
                 basis = collapse.Basis * basis;
             }
-            SiegeBox(batches, at, scale * size, _deathCharred ? 0x493b29 : color, orientation: basis);
+            int tint = _deathCharred ? 0x493b29 : color;
+            var transform = SiegeBox(batches, at, scale * size, tint, orientation: basis);
+            CaptureActorPart(tint, transform);
             if (_deathActorTransform is null)
                 _siegeActorPickBoxes.Add((new(basis.Scaled(scale * size), at), goblin.Id, false));
         }
         if (goblin.Definition.IsTroll)
         {
-            foreach (var part in TrollArtwork.Parts(goblin))
+            if (!_trollModels.TryGetValue(goblin.Kind, out var model))
+                _trollModels[goblin.Kind] = model = TrollArtwork.Parts(goblin);
+            foreach (var part in model)
             {
                 var offset = new Vector3(part.Center.X, part.Center.Y, part.Center.Z);
                 float swing = offset.Y < 0.4f ? pose.Stride * Math.Sign(offset.X) * 0.35f : 0;
@@ -345,13 +511,6 @@ public partial class PerspectiveCity
                 new(0.15f, 0.48f, 0.18f), 0x66834c, arm);
         }
         if (goblin.Tier > 1) Part(new(0, 1.39f, 0), new(0.56f, 0.15f, 0.52f), 0x586b71);
-        if (goblin.Kind == SiegeEnemyKind.Orc)
-        {
-            Part(new(-0.4f, 0.88f, 0), new(0.28f, 0.22f, 0.48f), 0x586b71);
-            Part(new(0.4f, 0.88f, 0), new(0.28f, 0.22f, 0.48f), 0x586b71);
-            foreach (int side in new[] { -1, 1 })
-                Part(new(side * 0.14f, 1.01f, -0.37f), new(0.065f, 0.18f, 0.06f), 0xd9d49b);
-        }
         float weaponAngle = -pose.Stride * 0.5f + windup * 0.7f - strike * 1.2f;
         var weapon = new Basis(Vector3.Right, weaponAngle);
         var grip = new Vector3(0.46f, 0.6f + windup * 0.08f, -0.08f - pose.Stride * 0.12f);
@@ -482,26 +641,39 @@ public partial class PerspectiveCity
     }
 
     private void SyncSiegeBatches(Node3D root, Dictionary<int, MultiMeshInstance3D> instances,
-        Dictionary<int, List<Transform3D>> batches, Mesh? mesh = null)
+        Dictionary<int, List<Transform3D>> batches, Mesh? mesh = null,
+        IReadOnlyDictionary<int, int>? appendFrom = null, bool buffered = false)
     {
-        foreach (var (color, instance) in instances)
-            if (!batches.ContainsKey(color)) instance.Visible = false;
-        foreach (var (color, batch) in batches)
+        SyncSpatialSiege(root, instances, batches, mesh, buffered);
+    }
+
+    private void UpdateWallTransform(int color, int index, Transform3D transform)
+    {
+        var slot = SiegeSlot(_wallInstances, color, index);
+        var mesh = slot.Mesh;
+        mesh.SetInstanceTransform(slot.Index, transform);
+        mesh.CustomAabb = mesh.CustomAabb.Merge(transform * mesh.Mesh.GetAabb());
+        _wallBatches[color][index] = transform;
+        if (_siegeTransforms.TryGetValue(mesh, out var transforms) && slot.Index < transforms.Length)
         {
-            if (!instances.TryGetValue(color, out var instance))
-            {
-                instance = new MultiMeshInstance3D
-                {
-                    Multimesh = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, Mesh = mesh ?? _cube },
-                    MaterialOverride = Material(color, solid: true),
-                };
-                root.AddChild(instance);
-                instances.Add(color, instance);
-            }
-            instance.Visible = batch.Count > 0;
-            if (instance.Multimesh.InstanceCount != batch.Count) instance.Multimesh.InstanceCount = batch.Count;
-            for (int i = 0; i < batch.Count; i++) instance.Multimesh.SetInstanceTransform(i, batch[i]);
+            transforms[slot.Index] = transform;
+            WriteInstance(_siegeBuffers[mesh], slot.Index * 12, transform);
         }
+    }
+
+    private Basis SmoothActorFacing(bool friendly, int id, Vector3 forward)
+    {
+        var desired = Basis.LookingAt(forward.Normalized(), Vector3.Up);
+        var key = (friendly, id);
+        ulong frame = Engine.GetProcessFrames();
+        if (_actorFacings.TryGetValue(key, out var previous))
+        {
+            if (previous.Frame == frame) return previous.Facing;
+            float blend = (float)(1 - Math.Exp(-12 * _actorFrameDelta));
+            desired = new Basis(previous.Facing.GetRotationQuaternion().Slerp(desired.GetRotationQuaternion(), blend));
+        }
+        _actorFacings[key] = (desired, frame);
+        return desired;
     }
 
     private void DrawWall(Dictionary<int, List<Transform3D>> batches, SettlementState settlement, WallComponent wall)
@@ -514,7 +686,7 @@ public partial class PerspectiveCity
         float baseY = top.Y - height;
         var basis = WallBasis(wall);
         var origin = new Vector3(top.X, baseY, top.Z);
-        foreach (var model in WallModelParts(wall, _map, foundations: true))
+        foreach (var model in CachedWallModelParts(wall))
         {
             var fragment = model.Fragment;
             int color = model.Color;
@@ -561,11 +733,23 @@ public partial class PerspectiveCity
         }
     }
 
+    private IEnumerable<PalisadeWallPart> CachedWallModelParts(WallComponent wall)
+    {
+        if (wall.IsTower || wall.IsGate)
+            return WallModelParts(wall, _map, foundations: true);
+        var state = new WallPartState(wall.Material, WallDamageLayout.DamageBand(wall),
+            wall.Health == wall.MaxHealth, wall.Health > 0, WallDamageLayout.IsBurning(wall), WallDamageLayout.ExteriorSide(wall),
+            WallDamageLayout.Width(wall), WallDamageLayout.Depth(wall), wall.Cell, wall.Center, wall.Tangent);
+        if (!_wallPartCache.TryGetValue(wall, out var cached) || cached.State != state)
+            _wallPartCache[wall] = cached = (state, WallModelParts(wall, _map, foundations: true).ToArray());
+        return cached.Parts;
+    }
+
     private void DrawWallFlames(Dictionary<int, List<Transform3D>> batches, SettlementState siege, WallComponent wall)
     {
         var at = new Vector3(wall.Cell.X + 0.5f,
             TerrainSprite.Elevation(_map!, wall.Cell.X, wall.Cell.Y), wall.Cell.Y + 0.5f);
-        double phase = SiegeAnimationEnabled ? (siege.Revision + siege.InterpolationFraction) * 0.1 : 0;
+        double phase = SiegeAnimationEnabled ? siege.VisualSeconds : 0;
         var basis = WallBasis(wall);
         var surfaces = _flameSurfaces[wall.Id];
         for (int i = 0; i < surfaces.Count; i++)

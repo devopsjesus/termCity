@@ -135,4 +135,50 @@ public class SettlementFootbridgeTests
         TravelRoutes.WearPaths(game.Map);
         Assert.Equal(bridge.Progress + 1, game.Map.Footbridges[0].Progress);
     }
+
+    [Theory]
+    [InlineData(1, false)]
+    [InlineData(4, false)]
+    [InlineData(8, false)]
+    [InlineData(9, false)]
+    [InlineData(4, true)]
+    public void ShorelinePrefilterPreservesExhaustiveCandidateOrder(int width, bool breach)
+    {
+        var game = RiverTown(width);
+        if (breach)
+            game.Settlement!.Walls.First(wall => !wall.IsGate && !wall.IsTower).Health = 0;
+        var expected = ExhaustiveCandidate(game.Map);
+        ulong random = game.Rng.State;
+        bool changed = SettlementFootbridges.Advance(game.Map);
+        Assert.Equal(expected is not null, changed);
+        Assert.Equal(expected, game.Map.Footbridges.SingleOrDefault());
+        Assert.Equal(random, game.Rng.State);
+    }
+
+    // Frozen prefilter-free planning traversal preserves both cell and neighbor tie order.
+    private static SettlementFootbridge? ExhaustiveCandidate(GameMap map)
+    {
+        var settlement = map.Fortifications!;
+        var reached = settlement.ReachableLand(map);
+        foreach (var start in reached.OrderBy(p => p.Y).ThenBy(p => p.X))
+        {
+            if (!map.TerrainAt(start.X, start.Y).Buildable ||
+                !settlement.WallNetwork.Contains(new(start.X + .5f, start.Y + .5f))) continue;
+            foreach (var (dx, dy) in RoadNetwork.Neighbors)
+                for (int step = 1; step <= SettlementFootbridge.MaximumWaterCells + 1; step++)
+                {
+                    var end = start.Offset(dx * step, dy * step);
+                    if (!map.InBounds(end)) break;
+                    if (map.TerrainAt(end.X, end.Y).Name == "Water") continue;
+                    if (step < 2 || !map.TerrainAt(end.X, end.Y).Buildable || reached.Contains(end) ||
+                        map.BuildingAt(end.X, end.Y) is not null) break;
+                    var bridge = new SettlementFootbridge(start, end, 0);
+                    if (SettlementFootbridges.Valid(map, bridge, requireEnclosure: true) &&
+                        !map.Footbridges.Any(existing => existing.Cells().Intersect(bridge.Cells()).Any()))
+                        return bridge;
+                    break;
+                }
+        }
+        return null;
+    }
 }

@@ -61,6 +61,7 @@ public class WorldScaleTests
     {
         var game = Founded(1_000);
         var siege = game.Settlement!;
+        siege.OrcsIntroduced = false;
         int lane = siege.Bounds.Y + siege.Bounds.Height / 2;
         var water = game.Map.Content.Terrains.Get("Water");
         for (int y = 0; y < game.Map.Height; y++)
@@ -85,6 +86,8 @@ public class WorldScaleTests
     {
         var game = Founded(1_000);
         var siege = game.Settlement!;
+        siege.EnemyList.Clear();
+        siege.OrcsIntroduced = false;
         siege.Advance(game, 0.1);
         Assert.True(siege.SpawnWave(game, 24));
         Assert.All(siege.Enemies, enemy => Assert.Equal(SiegeEnemyKind.Goblin, enemy.Kind));
@@ -209,6 +212,7 @@ public class WorldScaleTests
         Assert.Equal(SaveGameStore.Serialize(game), SaveGameStore.Serialize(
             SaveGameStore.Deserialize(SaveGameStore.Serialize(game))));
         siege.EnemyList.Clear();
+        siege.ProjectileList.Clear();
         siege.NextWaveSeconds = 0;
         siege.Advance(game, 0.1);
         Assert.True(siege.TrollsIntroduced);

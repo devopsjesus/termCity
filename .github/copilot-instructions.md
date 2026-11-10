@@ -32,6 +32,12 @@ commands.
 
 ## Map and artwork direction
 
+- Terminal styling and terminal-derived layout constraints apply only to the
+  intentional UI. World rendering must not inherit glyph aspect ratios, ASCII
+  artwork, terminal pixel dimensions or terminal-era resource layouts. Choose
+  world-space representations for current and future terrain/building work.
+  Existing geometry, gameplay and original artwork goals below remain valid;
+  they are not terminal-style restrictions.
 - Do not use stippling, scattered dots, squiggles or fine-line textures for map
   artwork or area overlays. Vacant areas use a small, regular checkerboard of
   broad translucent color blocks, with clear zone colors and visible terrain
@@ -91,6 +97,17 @@ commands.
 - Slow perspective drags must move continuously in screen space, not zigzag from
   cell snapping or terrain-height changes. Use planar drag anchors and retain
   fractional camera movement; keep terrain-aware picking separate.
+
+## Enemy artwork and animation
+
+- Before changing any enemy or defender artwork, rig, weapon animation, combat
+  timing or attack approach, follow the
+  [enemy-animation instructions](instructions/enemy-animation.instructions.md)
+  and read the [verbal animation brief and lessons](../docs/ENEMY_ANIMATION.md).
+  They preserve the approved orc choreography and the reusable anatomy, grip,
+  timing, spacing, corner-retreat and native-validation patterns for other enemies.
+- Keep each species distinct. Reuse these constraints and workflow, not an
+  identical orc body or combo for goblins, trolls or other combatants.
 
 ## Simulation decisions to preserve
 

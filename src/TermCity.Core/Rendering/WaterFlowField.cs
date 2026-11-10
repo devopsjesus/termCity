@@ -10,6 +10,14 @@ public sealed class WaterFlowField
     private readonly Cell[] _cells;
     private readonly GameMap _map;
 
+    private WaterFlowField(GameMap map, WaterFlowField source)
+    {
+        _map = map;
+        _cells = source._cells;
+    }
+
+    internal WaterFlowField ForkForMap(GameMap map) => new(map, this);
+
     public WaterFlowField(GameMap map)
     {
         _map = map;

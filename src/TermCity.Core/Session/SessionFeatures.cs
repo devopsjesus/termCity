@@ -147,7 +147,7 @@ public sealed partial class GameSession
         : null;
     public SessionPrompt? Prompt { get; private set; }
     public bool GuideVisible { get; private set; }
-    public bool HasUnsavedChanges => _revision != _savedRevision || Game.ElapsedDays != _savedAt;
+    public bool HasUnsavedChanges => _revision != _savedRevision || Game.ElapsedDays != _savedAt || PendingSimulationSeconds > 0;
     public int UndoCount => _undoHistory.Count;
     public bool CanUndo => Game.Paused && UndoCount > 0;
     public event Action? QuitRequested;
@@ -180,44 +180,43 @@ public sealed partial class GameSession
 
     public void Update(double elapsedSeconds)
     {
-        if (elapsedSeconds < 0 || !double.IsFinite(elapsedSeconds))
-        {
-            throw new ArgumentOutOfRangeException(nameof(elapsedSeconds));
-        }
-
+        ValidateUpdateSeconds(elapsedSeconds);
         if (!ClockSuspended)
         {
             Game.Update(elapsedSeconds);
         }
+        FinishUpdate(elapsedSeconds);
+    }
+
+    private static void ValidateUpdateSeconds(double elapsedSeconds)
+    {
+        if (elapsedSeconds < 0 || !double.IsFinite(elapsedSeconds))
+            throw new ArgumentOutOfRangeException(nameof(elapsedSeconds));
+    }
+
+    private void FinishUpdate(double elapsedSeconds)
+    {
+        PollAutosave();
         if (Prompt is null && Preview is null) _resumeWhileInteracting = false;
 
         _autosaveElapsed += elapsedSeconds;
         if (_autosaveElapsed >= AutosaveIntervalSeconds)
         {
-            _autosaveElapsed = 0;
             if (_autosaveRevision != _revision || _autosaveAt != Game.ElapsedDays)
             {
-                Autosave();
+                QueueAutosave();
             }
+            else _autosaveElapsed = 0;
         }
     }
 
     public bool Autosave()
     {
-        string pending = AutosavePath(1) + ".pending";
+        if (!PollAutosave(wait: true)) return false;
         try
         {
-            SaveGameStore.Save(Game, pending, new SavedView(CameraX, CameraY, ZoomLevel)
-            { CameraEdgePadding = CameraEdgePadding });
-            for (int slot = AutosaveSlots; slot > 1; slot--)
-            {
-                if (File.Exists(AutosavePath(slot - 1)))
-                {
-                    File.Copy(AutosavePath(slot - 1), AutosavePath(slot), overwrite: true);
-                }
-            }
-
-            File.Move(pending, AutosavePath(1), overwrite: true);
+            WriteAutosave(Game, Enumerable.Range(1, AutosaveSlots).Select(AutosavePath).ToArray(),
+                new SavedView(CameraX, CameraY, ZoomLevel) { CameraEdgePadding = CameraEdgePadding });
             _autosaveRevision = _revision;
             _autosaveAt = Game.ElapsedDays;
             return true;
@@ -264,11 +263,7 @@ public sealed partial class GameSession
         else if (WallDefenseToolActive)
             MoveWallDefensePlacement(position);
         else if (WallToolActive)
-        {
-            Cursor = Clamp(position);
-            RefreshWallPlacement();
-            FollowCursor();
-        }
+            MoveWallPlacement(position);
         else if (Preview?.Template is { } template)
         {
             Cursor = Clamp(position);
@@ -422,7 +417,8 @@ public sealed partial class GameSession
         }
         if (preview.Kind == PlacementKind.WallRun && _wallAnchor is null)
         {
-            _wallAnchor = Game.SnapWallPoint(new(Cursor.X + .5f, Cursor.Y + .5f));
+            _wallAnchor = SelectedWallComponent is { IsTower: true } tower ? tower.Center :
+                Game.SnapWallPoint(new(Cursor.X + .5f, Cursor.Y + .5f));
             RefreshWallPlacement();
             return ActionResult.Ok("Wall anchor set. Choose an endpoint; click or Enter builds the entire run.");
         }

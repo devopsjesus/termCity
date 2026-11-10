@@ -25,7 +25,26 @@ public sealed class RoadMeshLayout
     private readonly Dictionary<RoadPath, List<Segment>> _pathSegments = [];
     private readonly GameMap _map;
     private readonly Dictionary<Vector2, float> _heights = [];
+    private readonly Dictionary<(int Cell, bool Shoulders), bool> _cellOverlaps = [];
     public IReadOnlyList<Segment> Segments { get; }
+
+    private RoadMeshLayout(GameMap map, RoadMeshLayout source)
+    {
+        _map = map;
+        _cells = source._cells;
+        _pathSegments = source._pathSegments;
+        Segments = source.Segments;
+        foreach (var pair in source._heights) _heights.Add(pair.Key, pair.Value);
+        foreach (var pair in source._cellOverlaps) _cellOverlaps.Add(pair.Key, pair.Value);
+    }
+
+    public RoadMeshLayout ForkForMap(GameMap map)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+        if (map.Width != _map.Width || map.Height != _map.Height)
+            throw new ArgumentException("A road layout snapshot must retain its map dimensions.", nameof(map));
+        return new(map, this);
+    }
 
     public RoadMeshLayout(GameMap map, IReadOnlyList<RoadPath> paths)
     {
@@ -209,6 +228,18 @@ public sealed class RoadMeshLayout
 
     public IReadOnlyList<Segment> AtCell(int x, int y) =>
         _map.InBounds(x, y) && _cells.TryGetValue(_map.Index(x, y), out var segments) ? segments : Array.Empty<Segment>();
+
+    public bool RoadOverlapsCell(int x, int y, bool includeShoulders = false)
+    {
+        if (!_map.InBounds(x, y)) return false;
+        var key = (_map.Index(x, y), includeShoulders);
+        if (_cellOverlaps.TryGetValue(key, out bool cached)) return cached;
+        var segments = AtCell(x, y);
+        for (int i = 0; i < segments.Count; i++)
+            if (OverlapsCell(includeShoulders ? segments[i].Corridor : segments[i].Road, x, y))
+                return _cellOverlaps[key] = true;
+        return _cellOverlaps[key] = false;
+    }
 
     private IReadOnlyList<Segment> Near(Vector2 point) =>
         AtCell(Math.Clamp((int)MathF.Floor(point.X), 0, _map.Width - 1),

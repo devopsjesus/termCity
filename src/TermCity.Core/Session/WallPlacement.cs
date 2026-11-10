@@ -12,6 +12,13 @@ public sealed partial class GameSession
     private PlacementKind _wallKind;
     private int? _pickedWallId;
     private CityGame? _pickedWallGame;
+    private CityGame? _wallPreviewGame;
+    private int _wallPreviewRevision, _wallPreviewMapVersion, _wallPreviewMoney;
+    public double LastWallPreviewMilliseconds { get; private set; }
+    public WallComponent? WallPlacementStartTower => Preview?.Kind == PlacementKind.WallRun && _wallAnchor is { } anchor
+        ? Game.Settlement?.Walls.FirstOrDefault(wall => wall.IsTower &&
+            Vector2.DistanceSquared(wall.Center, anchor) <= World.WallNetwork.Tolerance * World.WallNetwork.Tolerance)
+        : null;
     public WallComponent? SelectedWallComponent => ReferenceEquals(_pickedWallGame, Game) && _pickedWallId is { } id &&
         Game.Settlement?.Walls.FirstOrDefault(w => w.Id == id && w.Cell == Cursor) is { } picked ? picked :
         Game.Settlement?.Walls.FirstOrDefault(w => w.Cell == Cursor && (w.IsOriginal ||
@@ -59,8 +66,20 @@ public sealed partial class GameSession
         RefreshWallPlacement();
     }
 
+    private void MoveWallPlacement(Pos position)
+    {
+        var cursor = Clamp(position);
+        bool changed = Cursor != cursor || !ReferenceEquals(_wallPreviewGame, Game) ||
+            _wallPreviewRevision != Game.Settlement!.Revision || _wallPreviewMapVersion != Game.MapVersion ||
+            _wallPreviewMoney != Game.Money;
+        Cursor = cursor;
+        if (changed) RefreshWallPlacement();
+        FollowCursor();
+    }
+
     private void RefreshWallPlacement()
     {
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
         var point = Game.SnapWallPoint(new(Cursor.X + .5f, Cursor.Y + .5f));
         if (_wallKind == PlacementKind.WallRun && _wallAnchor is { } anchor)
             point = Game.SnapWallEndpoint(anchor, new(Cursor.X + .5f, Cursor.Y + .5f));
@@ -79,6 +98,11 @@ public sealed partial class GameSession
             _wallKind == PlacementKind.Gate ? "Gate" : _wallKind == PlacementKind.RemoveWall ? "Remove wall" : "Wall run",
             Cells: cells, ValidCells: valid ? cells : [], WallPlan: plan,
             WallEnclosures: plan is { Valid: true } ? Game.PreviewWallEnclosures(plan) : []);
+        _wallPreviewGame = Game;
+        _wallPreviewRevision = Game.Settlement!.Revision;
+        _wallPreviewMapVersion = Game.MapVersion;
+        _wallPreviewMoney = Game.Money;
         Changed?.Invoke();
+        LastWallPreviewMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
     }
 }

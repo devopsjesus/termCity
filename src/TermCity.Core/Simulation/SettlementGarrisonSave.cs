@@ -31,7 +31,7 @@ internal sealed class SavedGarrison
         {
             if (!valid) throw new InvalidDataException("Invalid garrison units, orders or recruitment state.");
         }
-        bool Home(Pos p) => game.Map.InBounds(p) && state.ContainsInterior(p) &&
+        bool Home(Pos p) => game.Map.InBounds(p) && state.EstablishedAt(p) &&
             game.Map.BuildingAt(p.X, p.Y) is { } building && SettlementState.RosterCapacity(building) > 0 &&
             game.Map.BuildingAnchor(game.Map.Index(p.X, p.Y)) == game.Map.Index(p.X, p.Y);
         Require(NextId > 0 && Units is not null && Units.Count <= SettlementState.MaximumDefenders &&

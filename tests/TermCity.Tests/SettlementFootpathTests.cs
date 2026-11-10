@@ -64,7 +64,9 @@ public class SettlementFootpathTests
         Assert.Contains(map.PathLayer, wear => wear >= 3);
         Assert.All(Enumerable.Range(0, map.PathLayer.Length).Where(i => map.PathLayer[i] > 0),
             cell => Assert.True(Interior(map.PosOf(cell))));
-        var connected = new HashSet<int> { map.BuildingFootprints.Keys.Min() };
+        var eligible = map.BuildingFootprints.Where(pair => BuildingEntranceLayout.Accesses(map, pair.Value).Count > 0)
+            .Select(pair => pair.Key).ToHashSet();
+        var connected = new HashSet<int> { eligible.Min() };
         bool expanded;
         do
         {
@@ -76,7 +78,8 @@ public class SettlementFootpathTests
                 if (connected.Contains(last)) expanded |= connected.Add(first);
             }
         } while (expanded);
-        Assert.Equal(map.BuildingFootprints.Count, connected.Count);
+        Assert.True(eligible.SetEquals(connected),
+            $"Door-reachable buildings must form one network: eligible={string.Join(",", eligible)}, connected={string.Join(",", connected)}.");
         var strokes = FootpathLayout.Strokes(map);
         Assert.NotEmpty(strokes);
         Assert.All(strokes, stroke =>

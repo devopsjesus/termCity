@@ -7,6 +7,9 @@ public readonly record struct WoodlotPart(Vector3 Center, Vector3 Size, int Colo
 /// <summary>Original block-built firewood cords in a low fenced working yard.</summary>
 public static class WoodlotArtwork
 {
+    public static ModelEntrance Entrance(int width, int depth) =>
+        new(new(0, .05f, (depth - .18f) / 2 - .025f + .0175f),
+            Vector2.UnitY, .31f, BuildingAccessKind.Gate);
     public const int EarthColor = 0x77654a;
     public const int PathColor = 0x998460;
     public const int BarkColor = 0x7b5136;

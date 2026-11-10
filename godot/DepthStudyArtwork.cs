@@ -58,7 +58,7 @@ internal static class DepthStudyArtwork
                         Panel(x, panel.Bottom + panel.Height / 2, width, panel.Height);
                         continue;
                     }
-                    float openingWidth = door ? .18f : .14f;
+                    float openingWidth = door ? BuildingDetailLayout.DoorWidth : .14f;
                     float openingHeight = door ? Math.Min(.30f, panel.Height) : Math.Min(.14f, panel.Height);
                     float bottom = door ? panel.Bottom : panel.Bottom + (panel.Height - openingHeight) / 2;
                     float top = bottom + openingHeight, middle = (bottom + top) / 2;

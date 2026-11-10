@@ -18,6 +18,30 @@ public partial class PerspectiveCity
     internal int NockedArrowsDrawn { get; private set; }
     private readonly HashSet<int> _accessLadderWallIds = [];
     internal IReadOnlySet<int> AccessLadderWallIds => _accessLadderWallIds;
+    internal Vector3? RenderedDefenderPosition(int id) =>
+        _siegeActorPickBoxes.FirstOrDefault(box => box.Friendly && box.Id == id) is var box && box.Friendly
+            ? box.Transform.Origin : null;
+    internal Vector3? RenderedEnemyPosition(int id)
+    {
+        foreach (var box in _siegeActorPickBoxes)
+            if (!box.Friendly && box.Id == id) return box.Transform.Origin;
+        return null;
+    }
+    internal IReadOnlyDictionary<(bool Friendly, int Id), int> RenderedActorPoseHashes()
+    {
+        var hashes = new Dictionary<(bool Friendly, int Id), HashCode>();
+        foreach (var box in _siegeActorPickBoxes)
+        {
+            var key = (box.Friendly, box.Id);
+            hashes.TryGetValue(key, out var hash);
+            hash.Add(box.Transform);
+            hashes[key] = hash;
+        }
+        return hashes.ToDictionary(pair => pair.Key, pair => pair.Value.ToHashCode());
+    }
+    internal Vector3? RenderedDefenderForward(int id) =>
+        _siegeActorPickBoxes.Where(box => box.Friendly && box.Id == id).Skip(1).FirstOrDefault() is var head && head.Friendly
+            ? -head.Transform.Basis.Z.Normalized() : null;
 
     public Vector3 DefenderPosition(SettlementDefender unit, double fraction) =>
         new((float)(unit.PreviousX + (unit.X - unit.PreviousX) * fraction),
@@ -41,10 +65,17 @@ public partial class PerspectiveCity
         foreach (var unit in siege.Defenders)
         {
             var at = DefenderPosition(unit, siege.InterpolationFraction);
+            int signature = HashCode.Combine(unit.Kind, SiegeAnimationEnabled);
+            if (!session.SelectedDefenderIds.Contains(unit.Id) &&
+                ReuseInvisibleRig(batches, true, unit.Id, signature, at))
+            {
+                DefendersDrawn++;
+                continue;
+            }
             var forward = new Vector3((float)(unit.X - unit.PreviousX), 0, (float)(unit.Y - unit.PreviousY));
             bool walking = forward.LengthSquared() > 0.00001f;
             bool climbing = Math.Abs(unit.Elevation - unit.PreviousElevation) > .001f && !walking;
-            if (!walking && siege.Enemies.FirstOrDefault(e => e.Id == unit.TargetEnemyId) is { } enemy)
+            if (!walking && siege.Enemies.FirstOrDefault(e => e.Id == unit.TargetEnemyId && e.Health > 0) is { } enemy)
                 forward = new((float)enemy.X - at.X, 0, (float)enemy.Y - at.Z);
             if (climbing)
             {
@@ -59,10 +90,15 @@ public partial class PerspectiveCity
                 if (closest.Direction.LengthSquared() > .001f)
                     forward = new(-closest.Direction.X, 0, -closest.Direction.Y);
             }
-            if (forward.LengthSquared() < 0.00001f) forward = Vector3.Forward;
-            var facing = Basis.LookingAt(forward.Normalized(), Vector3.Up);
+            if (forward.LengthSquared() < 0.00001f)
+            {
+                var idle = SiegeMotion.IdleDefenderForward(siege, unit);
+                forward = new(idle.X, 0, idle.Y);
+            }
+            var facing = SmoothActorFacing(true, unit.Id, forward);
+            BeginActorRig(true, unit.Id, signature, new(facing, at));
             float gait = walking && SiegeAnimationEnabled
-                ? MathF.Sin((float)(siege.Revision + siege.InterpolationFraction) * 0.9f + unit.Id) : 0;
+                ? (float)Math.Sin(siege.VisualSeconds * 9 + unit.Id) : 0;
             float climbGait = climbing && SiegeAnimationEnabled
                 ? MathF.Sin(at.Y / WallDamageLayout.LadderRungSpacing * Mathf.Pi) : 0;
             double interval = CombatProfiles.Fighter(unit.Kind).Interval;
@@ -76,7 +112,8 @@ public partial class PerspectiveCity
                 const float scale = ArcherArtwork.ModelScale;
                 var center = at + facing * (offset * scale);
                 var basis = facing * (local ?? new Basis(Vector3.Right, angle));
-                SiegeBox(batches, center, size * scale, color, orientation: basis);
+                var transform = SiegeBox(batches, center, size * scale, color, orientation: basis);
+                CaptureActorPart(color, transform);
                 _siegeActorPickBoxes.Add((new(basis * Basis.Identity.Scaled(size * scale), center), unit.Id, true));
             }
             static Vector3 Point(NVector3 p) => new(p.X, p.Y, p.Z);
@@ -146,6 +183,7 @@ public partial class PerspectiveCity
                     new(0.035f, 0.48f, 0.045f), 0xc8c8d0, swing);
                 Part(new(-0.21f, 0.40f, -0.07f), new(0.18f, 0.28f, 0.05f), 0x59777d);
             }
+            EndActorRig();
             if (session.SelectedDefenderIds.Contains(unit.Id))
             {
                 foreach (int side in new[] { -1, 1 })
@@ -219,7 +257,7 @@ public partial class PerspectiveCity
             nearest = distance; friendly = actor.Friendly; id = actor.Id;
         }
         if (id == 0) return false;
-        foreach (var box in _pickBoxes.Concat(_yardBoxes))
+        foreach (var box in ScenePickingBoxes)
             if (RayBoxDistance(origin, direction,
                 new Transform3D(Basis.Identity.Scaled(box.Bounds.Size), box.Bounds.GetCenter())) < nearest - 0.001f)
                 return false;
@@ -230,7 +268,7 @@ public partial class PerspectiveCity
                 new Transform3D(Basis.Identity.Scaled(box.Bounds.Size), box.Bounds.GetCenter()));
             if (RayBoxDistance(origin, direction, transform) < nearest - .001f) return false;
         }
-        foreach (var face in _roofFaces)
+        foreach (var face in SceneRoofFaces)
         {
             var e1 = face.B - face.A; var e2 = face.C - face.A;
             var cross = direction.Cross(e2);

@@ -24,7 +24,7 @@ public readonly record struct TreeAppearance(TreeShape Shape, float WidthScale, 
         0x3d654c or 0x587e54 or 0x80915b or
         0x294b3e or 0x3b6450 or 0x597957;
 
-    public IReadOnlyList<TreePart> Parts()
+    public IReadOnlyList<TreePart> Parts(bool overview = false)
     {
         var parts = new List<TreePart>();
         // Independent girth variation also separates nearly coincident canopy tops.
@@ -75,6 +75,7 @@ public readonly record struct TreeAppearance(TreeShape Shape, float WidthScale, 
                 Piece(0.05f, 1.06f, 0.04f, 0.26f, 0.13f, 0.27f, colors.Light);
                 break;
         }
+        if (overview) return parts;
         var detailed = new List<TreePart> { parts[0] };
         foreach (var part in parts.Skip(1))
         {

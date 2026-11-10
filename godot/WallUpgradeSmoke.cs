@@ -18,6 +18,7 @@ internal static class WallUpgradeSmoke
         host.Map.SetPerspective(true);
         var view = host.Map.Perspective!;
         typeof(CityGame).GetProperty(nameof(CityGame.HighestPopulation))!.SetValue(game, 1_000);
+        typeof(CityGame).GetProperty(nameof(CityGame.Money))!.SetValue(game, 1_000_000);
         Require(session.UpgradeWalls().Success, session.Message);
         Require(siege.Material == WallMaterial.Wood && siege.UpgradeTargetMaterial == WallMaterial.Stone,
             "Buying stone must start construction, not instantly replace the wooden walls.");

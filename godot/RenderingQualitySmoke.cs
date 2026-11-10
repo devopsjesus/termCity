@@ -29,7 +29,7 @@ internal static class RenderingQualitySmoke
         await Frames(host);
         var session = host.Session;
         var game = session.Game;
-        int zoom = session.ZoomLevel;
+        double zoom = session.ZoomLevel;
         bool areas = session.AreaOverlaysVisible;
         var center = new Pos(session.CameraX + session.ViewWidth * session.Stride / 2,
             session.CameraY + session.ViewHeight * session.Stride / 2);

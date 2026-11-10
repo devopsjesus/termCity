@@ -135,6 +135,248 @@ public class SettlementGarrisonTests
     }
 
     [Fact]
+    public void PopulatedSiegeRosterReturnsFromTheWarnedWallToEveryCorner()
+    {
+        var game = TestCity.Flat(config: new GameConfig { MapWidth = 320, MapHeight = 192 }, rules: CityRules.Full);
+        foreach (int i in game.Map.RoadCells.ToArray())
+            game.Map.SetRoad(i % game.Map.Width, i / game.Map.Width, false);
+        game.Touch();
+        SettlementDebugSetup.Apply(game, siege: true);
+        Assert.True(game.DebugRemoveGoblins().Success);
+        game.HighestPopulation = game.HighestMilestone = 250;
+        game.Paused = false;
+        for (int tick = 0; tick < 300; tick++) game.Update(.1);
+        var state = game.Settlement!;
+        Assert.NotNull(state.FirstOrcApproach);
+        for (int tick = 0; tick < 1800; tick++) state.AdvanceDefenders(game, .1);
+        state.PlannedOrcSide = null;
+        state.PlannedOrcWave = 0;
+        Assert.Null(state.DefenderStagingSide);
+        Assert.All(state.Walls.Where(state.CornerPost), corner =>
+        {
+            Assert.True(corner.Health > 0);
+            Assert.True(state.WallNetwork.Connected(corner.Id * 4), $"Disconnected corner {corner.Cell}");
+        });
+        for (int tick = 0; tick < 1800; tick++) state.AdvanceDefenders(game, .1);
+        Assert.Null(state.DefenderStagingSide);
+        Assert.All(state.Walls.Where(state.CornerPost), corner =>
+            Assert.True(state.Defenders.Any(u => u.Kind == DefenderKind.Archer && u.Elevation > .5f &&
+                WallDamageLayout.ContainsFootprint(corner, u.X, u.Y, -.1)),
+                $"Missing corner={corner.Cell}; " + string.Join("; ", state.Defenders.Select(u =>
+                    $"{u.Id}:{u.Kind}@{u.X:F2},{u.Y:F2} z={u.Elevation:F2} patrol={u.PatrolWallId} " +
+                    $"order={u.Order} goal={u.PathTarget} path={string.Join(",", u.Path.Skip(u.PathIndex).Take(4))}"))));
+    }
+
+    [Fact]
+    public void PeacefulArchersReachAllFourCornersAndKeepTheirPosts()
+    {
+        var game = Founded();
+        PlaceGarrison(game, "Archer Barracks");
+        var state = game.Settlement!;
+        for (int n = 0; n < 1800; n++) state.AdvanceDefenders(game, .1);
+        var corners = state.Walls.Where(w => w.IsTower &&
+            (w.Cell.X == state.Bounds.X || w.Cell.X == state.Bounds.Right) &&
+            (w.Cell.Y == state.Bounds.Y || w.Cell.Y == state.Bounds.Bottom)).ToArray();
+        Assert.Equal(4, state.Defenders.Count);
+        Assert.All(corners, corner => Assert.Contains(state.Defenders, unit =>
+            unit.Elevation > .5f && WallDamageLayout.ContainsFootprint(corner, unit.X, unit.Y, -.1)));
+        var positions = state.Defenders.Select(u => (u.Id, u.X, u.Y, u.Elevation)).ToArray();
+        for (int n = 0; n < 100; n++) state.AdvanceDefenders(game, .1);
+        Assert.Equal(positions, state.Defenders.Select(u => (u.Id, u.X, u.Y, u.Elevation)).ToArray());
+    }
+
+    [Fact]
+    public void ConnectedExtensionCornersReceiveArchersButDisconnectedTowersDoNot()
+    {
+        var game = Founded();
+        PlaceGarrison(game, "Archer Barracks");
+        PlaceGarrison(game, "Archer Barracks", nearGate: false);
+        var state = game.Settlement!;
+        float x = state.Bounds.X + .5f, y = state.Bounds.Y + 20.5f;
+        System.Numerics.Vector2 a = new(x, y), b = new(x - 10, y),
+            c = new(x - 10, y + 16), d = new(x, y + 16);
+        foreach (var (start, end) in new[] { (a, b), (b, c), (c, d) })
+        {
+            var result = game.BuildWallRun(start, end);
+            Assert.True(result.Success, result.Message);
+        }
+        var detached = game.BuildWallRun(new(4.5f, state.Bounds.Bottom - 20),
+            new(4.5f, state.Bounds.Bottom - 4));
+        Assert.True(detached.Success, detached.Message);
+        for (int tick = 0; tick < 2400; tick++) state.AdvanceDefenders(game, .1);
+        Assert.Equal(8, state.Defenders.Count);
+        var extension = state.Walls.Where(w => state.CornerPost(w) && w.Center.X < state.Bounds.X &&
+            w.Center.Y >= y - .1f && w.Center.Y <= y + 16.1f).ToArray();
+        Assert.Equal(2, extension.Length);
+        Assert.All(extension, corner => Assert.Contains(state.Defenders, unit =>
+            unit.PatrolWallId == corner.Id && unit.Elevation > .5f &&
+            WallDamageLayout.ContainsFootprint(corner, unit.X, unit.Y, -.1)));
+        Assert.DoesNotContain(state.Defenders, unit => state.Walls.Any(w => w.Id == unit.PatrolWallId &&
+            w.Center.X < x - 11));
+    }
+
+    [Fact]
+    public void SurplusArchersShareTowerDecksEvenlyWithoutOverlapping()
+    {
+        var game = Founded();
+        PlaceGarrison(game, "Archer Barracks");
+        PlaceGarrison(game, "Archer Barracks", nearGate: false);
+        var state = game.Settlement!;
+        var towers = state.Walls.Where(state.CornerPost).Where(w => w.Cell.X == state.Bounds.Right).ToArray();
+        Assert.Equal(2, towers.Length);
+        foreach (var wall in state.Walls.Where(w => w.IsTower && !towers.Contains(w))) wall.IsTower = false;
+        state.InvalidateWallTopology();
+        for (int tick = 0; tick < 2400; tick++) state.AdvanceDefenders(game, .1);
+        Assert.Equal(8, state.Defenders.Count);
+        Assert.All(towers, tower =>
+        {
+            var units = state.Defenders.Where(u => u.PatrolWallId == tower.Id).ToArray();
+            Assert.Equal(4, units.Length);
+            Assert.All(units, u => Assert.True(u.Elevation > .5f &&
+                WallDamageLayout.ContainsFootprint(tower, u.X, u.Y, -.1),
+                $"{u.Id}@{u.X:F2},{u.Y:F2} z={u.Elevation:F2}, goal={u.PathTarget}, " +
+                $"path={string.Join(",", u.Path.Skip(u.PathIndex).Take(5))}; " +
+                string.Join("; ", units.Select(other => $"{other.Id}@{other.X:F2},{other.Y:F2} z={other.Elevation:F2}"))));
+            foreach (var unit in units)
+                Assert.All(units.Where(other => other.Id != unit.Id), other =>
+                    Assert.True(Math.Pow(unit.X - other.X, 2) + Math.Pow(unit.Y - other.Y, 2) >=
+                        Math.Pow(WorldScale.HumanRadius * 2, 2) - .0001));
+        });
+    }
+
+    [Fact]
+    public void BreachedCornerAssignmentsMoveToRemainingSupportedTowers()
+    {
+        var game = Founded();
+        PlaceGarrison(game, "Archer Barracks");
+        var state = game.Settlement!;
+        for (int tick = 0; tick < 100; tick++) state.AdvanceDefenders(game, .1);
+        var assigned = state.Walls.Single(w => w.Id == state.Defenders[0].PatrolWallId);
+        assigned.Health = 0;
+        for (int tick = 0; tick < 2400; tick++) state.AdvanceDefenders(game, .1);
+        Assert.DoesNotContain(state.Defenders, unit => unit.PatrolWallId == assigned.Id);
+        Assert.All(state.Defenders, unit => Assert.True(unit.Elevation > .5f));
+        Assert.Equal(4, state.Defenders.Select(u => u.PatrolWallId).Distinct().Count());
+        Assert.Equal(4, SaveGameStore.Deserialize(SaveGameStore.Serialize(game)).Settlement!.Defenders.Count);
+    }
+
+    [Fact]
+    public void StaleClusteredPatrolsRebalanceAfterLoading()
+    {
+        var game = Founded();
+        PlaceGarrison(game, "Archer Barracks");
+        var state = game.Settlement!;
+        for (int n = 0; n < 100; n++) state.AdvanceDefenders(game, .1);
+        var tower = state.Walls.First(w => w.IsTower);
+        foreach (var unit in state.Defenders) unit.PatrolWallId = tower.Id;
+        var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
+        for (int n = 0; n < 1800; n++) loaded.Settlement!.AdvanceDefenders(loaded, .1);
+        Assert.Equal(4, loaded.Settlement!.Defenders.Select(u => u.PatrolWallId).Distinct().Count());
+        Assert.All(loaded.Settlement.Defenders, u => Assert.True(u.Elevation > .5f));
+    }
+
+    [Fact]
+    public void GuardsShareWeightedTargetingAndIgnoreUnreachableHighThreats()
+    {
+        var game = Founded();
+        var home = PlaceGarrison(game, "Guard Post");
+        game.SetFunding(ServiceKind.Defence, 0);
+        var state = game.Settlement!;
+        var cells = state.Bounds.Cells().Where(p => p.X % 3 == 0 && p.Y % 3 == 0 && game.CanBuildOn(p.X, p.Y) &&
+            state.ContainsInterior(p)).OrderBy(p => Math.Abs(p.X - home.X) + Math.Abs(p.Y - home.Y))
+            .Take(18).ToArray();
+        for (int i = 0; i < 14; i++)
+            state.DefenderList.Add(new SettlementDefender
+            {
+                Id = state.NextDefenderId++, Home = home, Kind = DefenderKind.Soldier,
+                X = cells[i].X + .5, Y = cells[i].Y + .5,
+            });
+        foreach (var (kind, cell) in new[] { (SiegeEnemyKind.TreeTroll, cells[14]),
+            (SiegeEnemyKind.Orc, cells[15]), (SiegeEnemyKind.Goblin, cells[16]) })
+            state.EnemyList.Add(new SiegeEnemy
+            {
+                Id = state.NextEnemyId++, Kind = kind, Tier = 4,
+                X = cell.X + .5, Y = cell.Y + .5, Health = 1000, MaxHealth = 1000, Route = [cell],
+            });
+        state.EnemyList.Add(new SiegeEnemy
+        {
+            Id = state.NextEnemyId++, Kind = SiegeEnemyKind.StoneTroll, Tier = 4,
+            X = 3.5, Y = 3.5, Health = 1100, MaxHealth = 1100, Route = [new(4, 3)],
+        });
+        state.AdvanceDefenders(game, .1);
+        var loads = state.Enemies.Select(e => state.Defenders.Count(u => u.TargetEnemyId == e.Id)).ToArray();
+        Assert.Equal(new[] { 8, 4, 2, 0 }, loads);
+        Assert.All(state.Defenders, u => Assert.Equal(0, u.Elevation));
+    }
+
+    [Theory]
+    [InlineData(BaileyGateSide.Top)]
+    [InlineData(BaileyGateSide.Bottom)]
+    [InlineData(BaileyGateSide.Left)]
+    [InlineData(BaileyGateSide.Right)]
+    public void FirstOrcWarningStagesBothKindsOnTheAnnouncedWall(BaileyGateSide side)
+    {
+        var game = Founded();
+        PlaceGarrison(game, "Archer Barracks");
+        PlaceGarrison(game, "Guard Post");
+        var state = game.Settlement!;
+        game.HighestPopulation = game.HighestMilestone = 250;
+        state.PlannedOrcSide = side;
+        state.PlannedOrcWave = state.WaveNumber + 1;
+        for (int tick = 0; tick < 1800; tick++) state.AdvanceDefenders(game, .1);
+        Assert.Equal(8, state.Defenders.Count);
+        Assert.All(state.Defenders, u =>
+        {
+            var post = Assert.Single(state.Walls, w => w.Id == u.PatrolWallId);
+            Assert.True(state.OnApproachSide(post, side));
+            if (u.Kind == DefenderKind.Archer)
+            {
+                Assert.True(u.Elevation > .5f);
+                Assert.True(WallDamageLayout.ContainsFootprint(post, u.X, u.Y, -.1));
+            }
+            else
+            {
+                Assert.Equal(0, u.Elevation);
+                Assert.InRange(Math.Sqrt(Math.Pow(u.X - post.Center.X, 2) +
+                    Math.Pow(u.Y - post.Center.Y, 2)), 0, 6);
+            }
+        });
+        Assert.All(state.Walls.Where(w => state.CornerPost(w) && state.OnApproachSide(w, side)),
+            corner => Assert.Contains(state.Defenders, u => u.Kind == DefenderKind.Archer && u.PatrolWallId == corner.Id));
+    }
+
+    [Fact]
+    public void FirstAssaultStagingSurvivesLoadingAndEndsWithItsOrcs()
+    {
+        var game = Founded();
+        game.HighestPopulation = game.HighestMilestone = 250;
+        var state = game.Settlement!;
+        state.NextWaveSeconds = 30;
+        game.Update(.1);
+        var side = state.FirstOrcApproach;
+        Assert.NotNull(side);
+        state.NextWaveSeconds = 0;
+        game.Update(.1);
+        Assert.Equal(side, state.ActiveFirstAssaultSide);
+        var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
+        var copy = loaded.Settlement!;
+        Assert.Equal(side, copy.ActiveFirstAssaultSide);
+        foreach (var orc in copy.Enemies.Where(e => e.Kind == SiegeEnemyKind.Orc)) orc.Health = 0;
+        Assert.Null(copy.DefenderStagingSide);
+        Assert.Contains(copy.Enemies, e => e.Kind == SiegeEnemyKind.Goblin && e.Health > 0);
+        copy.EnemyList.RemoveAll(e => e.Health <= 0);
+        var after = SaveGameStore.Deserialize(SaveGameStore.Serialize(loaded));
+        Assert.Null(after.Settlement!.DefenderStagingSide);
+        var legacy = JsonNode.Parse(SaveGameStore.Serialize(game))!;
+        legacy["Settlement"]!.AsObject().Remove("FirstAssaultSide");
+        legacy["Settlement"]!.AsObject().Remove("FirstAssaultLastOrcId");
+        Assert.Null(SaveGameStore.Deserialize(legacy.ToJsonString()).Settlement!.ActiveFirstAssaultSide);
+        legacy["Settlement"]!["FirstAssaultSide"] = (int)BaileyGateSide.Top;
+        legacy["Settlement"]!["FirstAssaultLastOrcId"] = int.MaxValue;
+        Assert.Throws<InvalidDataException>(() => SaveGameStore.Deserialize(legacy.ToJsonString()));
+    }
+
+    [Fact]
     public void ArchersWalkAndClimbThroughTowersInsteadOfTeleporting()
     {
         var game = Founded();
@@ -151,7 +393,9 @@ public class SettlementGarrisonTests
             Assert.True(Math.Sqrt(Math.Pow(x - unit.X, 2) + Math.Pow(y - unit.Y, 2)) <= SettlementDefender.MovementSpeed * .1 + .00001);
         }
         Assert.True(unit.Elevation > .5);
-        Assert.Contains(siege.Walls, w => w.Cell == new Pos((int)unit.X, (int)unit.Y));
+        Assert.Contains(siege.Walls, w => WallDamageLayout.ContainsWalkway(w, unit.X, unit.Y) ||
+            WallDamageLayout.HasAccessLadder(w) && System.Numerics.Vector2.Distance(
+                new((float)unit.X, (float)unit.Y), WallDamageLayout.LadderClimbPosition(w)) < .1f);
         Assert.NotEqual(initial, new Pos((int)unit.X, (int)unit.Y));
     }
 
@@ -396,6 +640,63 @@ public class SettlementGarrisonTests
     }
 
     [Fact]
+    public void EnemyOrdersUseTheSelectedMixedGroupOrEveryLivingDefenderWhenSelectionIsEmpty()
+    {
+        var game = Founded();
+        PlaceGarrison(game, "Guard Post");
+        PlaceGarrison(game, "Archer Barracks");
+        game.Paused = false;
+        var siege = game.Settlement!;
+        for (int i = 0; i < 70; i++) siege.AdvanceDefenders(game, .1);
+        game.Paused = true;
+        var guard = siege.Defenders.First(unit => unit.Kind == DefenderKind.Soldier);
+        var archer = siege.Defenders.First(unit => unit.Kind == DefenderKind.Archer);
+        var gate = siege.Walls.Single(wall => wall.IsGate);
+        var outward = new System.Numerics.Vector2(-gate.Tangent.Y, gate.Tangent.X) * WallDamageLayout.ExteriorSide(gate);
+        var enemy = new SiegeEnemy { Id = siege.NextEnemyId++, X = gate.Center.X + outward.X * 6,
+            Y = gate.Center.Y + outward.Y * 6, Health = 96, MaxHealth = 96, Route = [gate.Cell] };
+        siege.EnemyList.Add(enemy);
+        var session = new GameSession(game, showGuide: false);
+        session.SelectDefenders([guard.Id, archer.Id]);
+        Assert.True(session.CommandSelectedDefenders(enemyId: enemy.Id).Success, session.Message);
+        Assert.All(siege.Defenders, unit =>
+        {
+            bool selected = unit.Id == guard.Id || unit.Id == archer.Id;
+            Assert.Equal(selected ? DefenderOrder.Attack : DefenderOrder.Automatic, unit.Order);
+            Assert.Equal(selected ? enemy.Id : (int?)null, unit.TargetEnemyId);
+        });
+        session.ClearDefenderSelection();
+        Assert.True(session.CommandSelectedDefenders(enemyId: enemy.Id).Success, session.Message);
+        Assert.Empty(session.SelectedDefenderIds);
+        Assert.All(siege.Defenders, unit =>
+        {
+            Assert.Equal(DefenderOrder.Attack, unit.Order);
+            Assert.Equal(enemy.Id, unit.TargetEnemyId);
+        });
+        Assert.False(session.CommandSelectedDefenders(new(50, 50)).Success);
+        Assert.False(session.CommandSelectedDefenders(enemyId: int.MaxValue).Success);
+    }
+
+    [Fact]
+    public void GroupSelectionAddsLivingTroopsAtomicallyAndPrunesDeadSelections()
+    {
+        var game = Founded();
+        PlaceGarrison(game, "Guard Post");
+        for (int i = 0; i < 30; i++) game.Settlement!.AdvanceDefenders(game, .1);
+        var ids = game.Settlement!.Defenders.Select(unit => unit.Id).Take(2).ToArray();
+        Assert.Equal(2, ids.Length);
+        var session = new GameSession(game, showGuide: false);
+        session.SelectDefender(ids[0]);
+        session.SelectDefenders([ids[1]], additive: true);
+        Assert.Equal(ids.Order(), session.SelectedDefenderIds.Order());
+        session.SelectDefenders([ids[0], int.MaxValue]);
+        Assert.Equal(MessageKind.Error, session.MessageKind);
+        Assert.Equal(ids.Order(), session.SelectedDefenderIds.Order());
+        game.Settlement.DefenderList.First(unit => unit.Id == ids[0]).Health = 0;
+        Assert.Equal([ids[1]], session.SelectedDefenderIds);
+    }
+
+    [Fact]
     public void GarrisonsAndOrdersRoundTripWithoutChangingSimulationContinuation()
     {
         var game = Founded();
@@ -453,6 +754,159 @@ public class SettlementGarrisonTests
                     siege.Enemies[a].CollisionRadius + siege.Enemies[b].CollisionRadius);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(.05)]
+    [InlineData(5)]
+    [InlineData(19.9)]
+    [InlineData(20)]
+    [InlineData(30)]
+    public void FirstNaturalWaveAfterTwoHundredFiftyIncludesOrcsEvenWithShortNotice(double countdown)
+    {
+        var game = Founded();
+        var siege = game.Settlement!;
+        int wave = siege.WaveNumber;
+        game.HighestPopulation = game.HighestMilestone = 250;
+        siege.NextWaveSeconds = countdown;
+        game.Update(.01);
+        Assert.Equal(wave + 1, siege.PlannedOrcWave);
+        Assert.NotNull(siege.FirstOrcApproach);
+        siege.NextWaveSeconds = 0;
+        game.Update(.2);
+        Assert.Equal(wave + 1, siege.WaveNumber);
+        Assert.True(siege.OrcsIntroduced);
+        Assert.Contains(siege.Enemies, enemy => enemy.Kind == SiegeEnemyKind.Orc);
+    }
+
+    [Fact]
+    public void OldDeferredOrcPlansMoveToTheNextWaveAfterLoading()
+    {
+        var game = Founded();
+        var siege = game.Settlement!;
+        game.HighestPopulation = game.HighestMilestone = 250;
+        siege.NextWaveSeconds = 30;
+        game.Update(.01);
+        var side = siege.PlannedOrcSide;
+        siege.PlannedOrcWave = siege.WaveNumber + 2;
+        var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
+        loaded.Update(.01);
+        Assert.Equal(loaded.Settlement!.WaveNumber + 1, loaded.Settlement.PlannedOrcWave);
+        Assert.Equal(side, loaded.Settlement.FirstOrcApproach);
+        int wave = loaded.Settlement.WaveNumber;
+        loaded.Settlement.NextWaveSeconds = 0;
+        loaded.Update(.2);
+        Assert.Equal(wave + 1, loaded.Settlement.WaveNumber);
+        Assert.Contains(loaded.Settlement.Enemies, enemy => enemy.Kind == SiegeEnemyKind.Orc);
+    }
+
+    [Fact]
+    public void NaturalWaveSpeciesDoNotDependOnADeferredOrMissingScoutSchedule()
+    {
+        var game = Founded();
+        var siege = game.Settlement!;
+        game.HighestPopulation = game.HighestMilestone = 250;
+        Assert.Equal(0, siege.PlannedOrcWave);
+        Assert.True(siege.SpawnWave(game));
+        Assert.Contains(siege.Enemies, enemy => enemy.Kind == SiegeEnemyKind.Orc);
+    }
+
+    [Fact]
+    public void FirstOrcsAreNotAdvertisedWhenTheOnlyExteriorStripCannotFitTheirBodies()
+    {
+        var game = TestCity.Flat(config: new GameConfig { MapWidth = 128, MapHeight = 128, StartingMoney = 2_000_000 });
+        foreach (int road in game.Map.RoadCells.ToArray()) game.Map.SetRoad(road % game.Map.Width, road / game.Map.Width, false);
+        game.Touch();
+        var founded = game.FoundSettlement(new(20, 2, 64, 64));
+        Assert.True(founded.Success, founded.Message);
+        var siege = game.Settlement!;
+        foreach (var cell in new TermCity.Core.Util.CellRect(0, 2, 128, 126).Cells())
+            if (!siege.Bounds.Contains(cell))
+                game.Map.SetTerrain(cell.X, cell.Y, game.Map.Content.Terrains.Get("Water"));
+        game.HighestPopulation = game.HighestMilestone = 250;
+        siege.WaveNumber = 1;
+        siege.NextWaveSeconds = 30;
+        game.Touch();
+        game.Update(.01);
+        Assert.Null(siege.FirstOrcApproach);
+        Assert.DoesNotContain(game.Events, item => item.Message.Contains("first Orc assault", StringComparison.Ordinal));
+        for (int y = 2; y < game.Map.Height; y++)
+            for (int x = 0; x < game.Map.Width; x++)
+                if (!siege.Bounds.Contains(x, y)) game.Map.SetTerrain(x, y, game.Map.Content.Terrains.Base);
+        game.Touch();
+        game.Update(.01);
+        Assert.NotNull(siege.FirstOrcApproach);
+        int reports = game.Events.Count(item => item.Message.Contains("first Orc assault", StringComparison.Ordinal));
+        game.Update(.01);
+        game.Update(.01);
+        Assert.Equal(1, reports);
+        Assert.Equal(reports, game.Events.Count(item => item.Message.Contains("first Orc assault", StringComparison.Ordinal)));
+    }
+
+    [Theory]
+    [InlineData(BaileyGateSide.Top)]
+    [InlineData(BaileyGateSide.Bottom)]
+    [InlineData(BaileyGateSide.Left)]
+    [InlineData(BaileyGateSide.Right)]
+    public void AMapEdgeOrcWarningIsRecheckedAfterLoadingAndUsesAnAvailableSide(BaileyGateSide blocked)
+    {
+        var game = TestCity.Flat(config: new GameConfig { MapWidth = 128, MapHeight = 128, StartingMoney = 2_000_000 });
+        foreach (int road in game.Map.RoadCells.ToArray()) game.Map.SetRoad(road % game.Map.Width, road / game.Map.Width, false);
+        game.Touch();
+        var bounds = blocked switch
+        {
+            BaileyGateSide.Top => new CellRect(20, 2, 64, 64),
+            BaileyGateSide.Bottom => new CellRect(20, 62, 64, 64),
+            BaileyGateSide.Left => new CellRect(2, 20, 64, 64),
+            _ => new CellRect(62, 20, 64, 64),
+        };
+        var founded = game.FoundSettlement(bounds);
+        Assert.True(founded.Success, founded.Message);
+        var siege = game.Settlement!;
+        game.HighestPopulation = game.HighestMilestone = 250;
+        siege.WaveNumber = 1;
+        siege.NextWaveSeconds = 30;
+        siege.PlannedOrcWave = 2;
+        siege.PlannedOrcSide = blocked;
+        game.Touch();
+        var loaded = SaveGameStore.Deserialize(SaveGameStore.Serialize(game));
+        loaded.Update(.01);
+        Assert.NotNull(loaded.Settlement!.FirstOrcApproach);
+        Assert.NotEqual(blocked, loaded.Settlement.FirstOrcApproach);
+        loaded.Settlement.NextWaveSeconds = 0;
+        loaded.Update(.2);
+        Assert.Contains(loaded.Settlement.Enemies, enemy => enemy.Kind == SiegeEnemyKind.Orc);
+        Assert.All(loaded.Settlement.Enemies.Where(enemy => enemy.Kind == SiegeEnemyKind.Orc), enemy =>
+        {
+            var end = enemy.Route[^1];
+            var side = end.X == bounds.Right ? BaileyGateSide.Right :
+                end.X == bounds.X ? BaileyGateSide.Left : end.Y == bounds.Bottom ? BaileyGateSide.Bottom : BaileyGateSide.Top;
+            Assert.NotEqual(blocked, side);
+        });
+    }
+
+    [Fact]
+    public void OrcApproachesStillPermitPhysicallyClearBreaches()
+    {
+        var game = TestCity.Flat(config: new GameConfig { MapWidth = 128, MapHeight = 128, StartingMoney = 2_000_000 });
+        Assert.True(game.FoundSettlement(new(30, 30, 64, 64)).Success);
+        var siege = game.Settlement!;
+        for (int y = 0; y < game.Map.Height; y++)
+            for (int x = 0; x < game.Map.Width; x++)
+                if (!siege.Bounds.Contains(x, y) &&
+                    !(y < siege.Bounds.Y && x >= siege.Bounds.X && x <= siege.Bounds.Right))
+                    game.Map.SetTerrain(x, y, game.Map.Content.Terrains.Get("Water"));
+        foreach (var wall in siege.Walls.Where(wall => wall.Cell.Y == siege.Bounds.Y)) wall.Health = 0;
+        game.HighestPopulation = game.HighestMilestone = 250;
+        siege.WaveNumber = 1;
+        siege.NextWaveSeconds = 30;
+        game.Touch();
+        game.Update(.01);
+        Assert.Equal(BaileyGateSide.Top, siege.FirstOrcApproach);
+        siege.NextWaveSeconds = 0;
+        game.Update(.2);
+        Assert.Contains(siege.Enemies, enemy => enemy.Kind == SiegeEnemyKind.Orc);
+    }
+
     [Fact]
     public void PaidRepairsWorkDuringCombatAndMissingGarrisonsDoNotLeaveUnLoadableUnits()
     {
@@ -488,7 +942,7 @@ public class SettlementGarrisonTests
             {
                 PlaceGarrison(game, "Archer Barracks", location);
                 PlaceGarrison(game, "Guard Post", location);
-                for (int n = 0; n < 200; n++) state.AdvanceDefenders(game, .1);
+                for (int n = 0; n < 70; n++) state.AdvanceDefenders(game, .1);
             }
             string deployed = string.Join("; ", state.Defenders.Select(d =>
                 $"{d.Id}:{d.Kind}@{d.X:F1},{d.Y:F1} height={d.Elevation:F1} path={d.PathIndex}/{d.Path.Count}"));
@@ -499,6 +953,7 @@ public class SettlementGarrisonTests
                 state.EnemyList.Add(new SiegeEnemy { Id = state.NextEnemyId++, Kind = SiegeEnemyKind.Orc, Tier = 2,
                     X = cell.X + 4, Y = cell.Y + .5, Health = 420, MaxHealth = 420, Route = [cell] });
             }
+            for (int n = 0; n < 130; n++) state.AdvanceDefenders(game, .1);
             double damage = 0;
             for (int n = 0; n < 160 && state.Enemies.Count > 0; n++)
             {

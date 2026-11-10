@@ -11,6 +11,179 @@ namespace TermCity.Tests;
 public class GodotPresentationTests
 {
     [Fact]
+    public void SavedCombatProfileDurationIsBoundedAndIsolated()
+    {
+        Assert.Equal(45, GodotOptions.Parse(["--camera-performance-test", "--load", "checkpoint.json"]).CameraProfileSeconds);
+        Assert.Equal(90, GodotOptions.Parse(["--camera-performance-test", "--load", "checkpoint.json",
+            "--camera-profile-seconds", "90"]).CameraProfileSeconds);
+        Assert.Equal(GameSpeed.Fast, GodotOptions.Parse(["--camera-performance-test", "--load", "checkpoint.json",
+            "--benchmark-speed", "Fast"]).BenchmarkSpeed);
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--camera-performance-test", "--benchmark-speed", "Fast"]));
+        Assert.True(GodotOptions.Parse(["--camera-quit-test", "--load", "checkpoint.json",
+            "--benchmark-speed", "Fast"]).CameraQuitTest);
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--camera-quit-test"]));
+        foreach (string duration in new[] { "4", "301", "NaN" })
+            Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--camera-performance-test", "--load",
+                "checkpoint.json", "--camera-profile-seconds", duration]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--camera-profile-seconds"]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--camera-profile-seconds", "90"]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--camera-performance-test", "--camera-profile-seconds", "90"]));
+    }
+
+    [Fact]
+    public void InteractiveOverviewLodIsOptInAndSeparateFromDiagnostics()
+    {
+        Assert.False(GodotOptions.Parse([]).OverviewLod);
+        if (CityGame.DebugToolsAvailable)
+            Assert.True(GodotOptions.Parse(["--overview-lod", "--size", "SF"]).OverviewLod);
+        else Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--overview-lod"]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--overview-lod", "--halo-scroll-test"]));
+    }
+
+    [Fact]
+    public void HaloScrollingExperimentsAreIsolated()
+    {
+        foreach (string experiment in new[] { "Tuned", "LargerHalo", "TerrainDrawPages", "OverviewLod" })
+        {
+            var options = GodotOptions.Parse(["--halo-scroll-test", "--cache-experiment", experiment]);
+            Assert.True(options.HaloScrollTest);
+            Assert.True(options.SmokeTest);
+        }
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--halo-scroll-test", "--minimap-traversal-test"]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--halo-scroll-test", "--cache-experiment", "RoadsOff"]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--cache-experiment", "LargerHalo"]));
+    }
+
+    [Fact]
+    public void RoadOffTraversalSupportsDebugSiegeWithoutAllowingOtherStarterModes()
+    {
+        string[] command = ["--size", "medium", "--cache-experiment", "RoadsOff",
+            "--minimap-traversal-test", "--debug-siege"];
+        if (!CityGame.DebugToolsAvailable)
+        {
+            Assert.Throws<ArgumentException>(() => GodotOptions.Parse(command));
+            return;
+        }
+        var options = GodotOptions.Parse(command);
+        Assert.True(options.DebugSiege);
+        Assert.True(options.MinimapTraversalTest);
+        Assert.Equal(CacheExperiment.RoadsOff, options.CacheExperiment);
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--minimap-traversal-test", "--debug-settlement"]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--minimap-traversal-test", "--debug-starter"]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--minimap-traversal-test", "--debug-siege", "--size", "SF"]));
+    }
+
+    [Fact]
+    public void SustainedTraversalExperimentsAreExplicitAndIsolated()
+    {
+        foreach (string experiment in Enum.GetNames<CacheExperiment>())
+        {
+            var options = GodotOptions.Parse(["--minimap-traversal-test", "--cache-experiment", experiment, "--size", "large"]);
+            Assert.True(options.MinimapTraversalTest);
+            Assert.True(options.SmokeTest);
+            Assert.Equal(experiment, options.CacheExperiment.ToString());
+        }
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--cache-experiment", "NoWarming"]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--cache-experiment", "Current"]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--minimap-traversal-test", "--cache-experiment", "bad"]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--minimap-traversal-test", "--minimap-jump-test"]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--cache-experiment", "RoadsOff"]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--camera-performance-test", "--cache-experiment", "RoadsOff"]));
+        Assert.Equal(CacheExperiment.Current, GodotOptions.Parse([]).CacheExperiment);
+    }
+
+    [Fact]
+    public void MinimapJumpSmokeSupportsLargeMapsAndRejectsCompetingModes()
+    {
+        Assert.False(GodotOptions.Parse([]).MinimapJumpTest);
+        foreach (string size in new[] { "80x48", "large", "SF", "STL" })
+        {
+            var options = GodotOptions.Parse(["--minimap-jump-test", "--size", size]);
+            Assert.True(options.MinimapJumpTest);
+            Assert.True(options.SmokeTest);
+        }
+        foreach (string flag in new[] { "--load", "--dump-map", "--whole-map-cache-test",
+            "--camera-performance-test", "--perspective-performance-test", "--interface-smoke-test" })
+            Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--minimap-jump-test", flag]));
+    }
+
+    [Fact]
+    public void WholeMapCacheSmokeSupportsAllSizesAndRejectsCompetingModes()
+    {
+        Assert.False(GodotOptions.Parse([]).WholeMapCacheTest);
+        foreach (string size in new[] { "80x48", "small", "medium", "large", "SF", "LA", "SD", "CHI", "STL" })
+        {
+            var options = GodotOptions.Parse(["--whole-map-cache-test", "--size", size]);
+            Assert.True(options.WholeMapCacheTest);
+            Assert.True(options.SmokeTest);
+        }
+        foreach (string flag in new[] { "--load", "--dump-map", "--camera-performance-test",
+            "--perspective-performance-test", "--interface-smoke-test", "--footpath-art-smoke-test" })
+            Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--whole-map-cache-test", flag]));
+    }
+
+    [Fact]
+    public void CameraBenchmarkAcceptsScenariosAndDebugSiegeButRejectsCompetingModes()
+    {
+        var options = GodotOptions.Parse(["--camera-performance-test", "--size", "SF"]);
+        Assert.True(options.CameraPerformanceTest);
+        Assert.True(options.SmokeTest);
+        if (CityGame.DebugToolsAvailable)
+            Assert.True(GodotOptions.Parse(["--camera-performance-test", "--debug-siege"]).DebugSiege);
+        foreach (string flag in new[] { "--garrison-smoke-test", "--perspective-performance-test",
+            "--interface-smoke-test", "--footpath-art-smoke-test", "--dump-map" })
+            Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--camera-performance-test", flag]));
+    }
+
+    [Fact]
+    public void GarrisonSmokeUsesAnIndependentDebugRandomCity()
+    {
+        Assert.False(GodotOptions.Parse([]).GarrisonSmokeTest);
+        if (!CityGame.DebugToolsAvailable)
+        {
+            Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--garrison-smoke-test"]));
+            return;
+        }
+        var options = GodotOptions.Parse(["--garrison-smoke-test", "--capture", "/tmp/garrison.png"]);
+        Assert.True(options.SmokeTest);
+        Assert.True(options.GarrisonSmokeTest);
+        foreach (string flag in new[] { "--load", "--interface-smoke-test", "--settlement-smoke-test",
+            "--wall-network-smoke-test", "--perspective-performance-test", "--footpath-art-smoke-test" })
+            Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--garrison-smoke-test", flag]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--garrison-smoke-test", "--size", "SF"]));
+    }
+
+    [Fact]
+    public void FootpathArtworkSmokeIsExplicitAndIsolated()
+    {
+        var options = GodotOptions.Parse(["--footpath-art-smoke-test", "--capture", "/tmp/paths.png"]);
+        Assert.True(options.SmokeTest);
+        Assert.True(options.FootpathArtworkSmokeTest);
+        Assert.Equal("/tmp/paths.png", options.CapturePath);
+        Assert.False(GodotOptions.Parse([]).FootpathArtworkSmokeTest);
+        foreach (string flag in new[] { "--load", "--interface-smoke-test", "--wall-network-smoke-test", "--perspective-performance-test" })
+            Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--footpath-art-smoke-test", flag]));
+        Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--footpath-art-smoke-test", "--size", "SF"]));
+    }
+
+    [Fact]
+    public void InterfaceSmokeIsExplicitAndIsolatedFromOtherModes()
+    {
+        Assert.False(GodotOptions.Parse([]).InterfaceSmokeTest);
+        if (!CityGame.DebugToolsAvailable)
+        {
+            Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--interface-smoke-test"]));
+            return;
+        }
+        var options = GodotOptions.Parse(["--interface-smoke-test", "--capture", "/tmp/interface.png"]);
+        Assert.True(options.SmokeTest);
+        Assert.True(options.InterfaceSmokeTest);
+        Assert.Equal("/tmp/interface.png", options.CapturePath);
+        foreach (string mode in new[] { "--load", "--wall-network-smoke-test", "--settlement-smoke-test" })
+            Assert.Throws<ArgumentException>(() => GodotOptions.Parse(["--interface-smoke-test", mode]));
+    }
+
+    [Fact]
     public void MilestoneSmokeIsExplicitAndSupportsDialogCaptures()
     {
         var options = GodotOptions.Parse(["--milestone-smoke-test", "--capture", "/tmp/milestone.png"]);

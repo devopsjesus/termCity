@@ -11,8 +11,14 @@ namespace TermCity.Core.Simulation;
 /// </summary>
 public sealed class CityServices
 {
-    private readonly byte[][] _coverage = new byte[ServiceKinds.Count][];
+    private readonly record struct Dispatch(double Age, double Workload, double Target, double Strength, double Capacity);
+    private readonly Dictionary<ServiceKind, Dictionary<int, Dispatch>> _dispatch = [];
+    private readonly byte[]?[] _coverageCache = new byte[ServiceKinds.Count][];
     private readonly byte[] _pollution;
+    private readonly GameMap _pollutionMap;
+    private readonly (int Cell, BuildingType Type)[] _pollutionSources;
+    private sealed record PollutionPatch(int X, int Y, int Width, int Height, int[] Values, bool Cleaning);
+    private readonly Dictionary<(int Cell, BuildingType Type), PollutionPatch> _pollutionPatches;
     private readonly bool _utilitiesRequired;
     private readonly int _powerThreshold;
     private readonly int _waterThreshold;
@@ -37,15 +43,15 @@ public sealed class CityServices
             ? _workloads.GetValueOrDefault(routes.Source[index]) : 0;
 
     private CityServices(
-        byte[][] coverage, byte[] pollution, bool utilitiesRequired, ServiceSupply power, ServiceSupply water,
+        GameMap map, (int Cell, BuildingType Type)[] pollutionSources, byte[] pollution,
+        Dictionary<(int Cell, BuildingType Type), PollutionPatch> pollutionPatches,
+        bool utilitiesRequired, ServiceSupply power, ServiceSupply water,
         int[] buildingCounts, int[] activeCounts, int upkeep, int seatRank, int granaryCapacity)
     {
-        for (int i = 0; i < coverage.Length; i++)
-        {
-            _coverage[i] = coverage[i];
-        }
-
         _pollution = pollution;
+        _pollutionMap = map;
+        _pollutionSources = pollutionSources;
+        _pollutionPatches = pollutionPatches;
         _utilitiesRequired = utilitiesRequired;
         Power = power;
         Water = water;
@@ -80,7 +86,28 @@ public sealed class CityServices
     public int GranaryCapacity { get; }
 
     /// <summary>How well an area service covers a cell, 0-100. Utilities return 0 here; use <see cref="IsPowered"/>.</summary>
-    public int Coverage(ServiceKind kind, int index) => _coverage[(int)kind]?[index] ?? 0;
+    public int Coverage(ServiceKind kind, int index)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, _pollution.Length);
+        if ((uint)kind >= ServiceKinds.Count) throw new ArgumentOutOfRangeException(nameof(kind));
+        var cache = Volatile.Read(ref _coverageCache[(int)kind]);
+        if (cache is not null && cache[index] != byte.MaxValue) return cache[index];
+        if (!_dispatch.TryGetValue(kind, out var dispatch) || !_routes.TryGetValue(kind, out var routes)) return 0;
+        if (cache is null)
+        {
+            var created = new byte[_pollution.Length];
+            Array.Fill(created, byte.MaxValue);
+            cache = Interlocked.CompareExchange(ref _coverageCache[(int)kind], created, null) ?? created;
+        }
+        int source = routes.Source[index];
+        if (source < 0) return cache[index] = 0;
+        var provider = dispatch[source];
+        double travel = routes.Cost[index] / TravelRoutes.UnitsPerDay;
+        if (!(provider.Age >= travel * provider.Workload)) return cache[index] = 0;
+        double timely = Math.Min(1, provider.Target / Math.Max(1 / TravelRoutes.UnitsPerDay, travel));
+        return cache[index] = (byte)Math.Clamp((int)Math.Round(provider.Strength * timely * provider.Capacity), 1, 100);
+    }
 
     public int Pollution(int index) => _pollution[index];
 
@@ -105,16 +132,10 @@ public sealed class CityServices
 
     public static CityServices Compute(
         GameMap map, RoadNetwork network, GameConfig config, Func<ServiceKind, double> funding, double waterFactor = 1,
-        double powerDemandFactor = 1, double elapsedDays = double.PositiveInfinity)
+        double powerDemandFactor = 1, double elapsedDays = double.PositiveInfinity, CityServices? previous = null)
     {
         int count = map.Width * map.Height;
-        var coverage = new byte[ServiceKinds.Count][];
-        foreach (var kind in ServiceKinds.Area)
-        {
-            coverage[(int)kind] = new byte[count];
-        }
-
-        var pollution = new byte[count];
+        var pollutionSources = new List<(int Cell, BuildingType Type)>();
         var cleaners = new List<(int X, int Y, BuildingType Type)>();
         var buildings = new int[ServiceKinds.Count];
         var active = new int[ServiceKinds.Count];
@@ -151,7 +172,7 @@ public sealed class CityServices
             if (type.Pollution != 0)
             {
                 if (type.Pollution < 0) cleaners.Add((x, y, type));
-                else EmitPollution(pollution, map, x, y, type);
+                else pollutionSources.Add((index, type));
             }
         }
 
@@ -165,10 +186,35 @@ public sealed class CityServices
             }
 
             var type = map.Content.Buildings[map.BuildingLayer[index]];
-            EmitPollution(pollution, map, index % map.Width, index / map.Width, type);
+            if (type.Pollution != 0) pollutionSources.Add((index, type));
         }
         foreach (var cleaner in cleaners)
-            EmitPollution(pollution, map, cleaner.X, cleaner.Y, cleaner.Type);
+            pollutionSources.Add((map.Index(cleaner.X, cleaner.Y), cleaner.Type));
+        var emissions = pollutionSources.ToArray();
+        bool matchingGrid = previous is not null && previous._pollutionMap.Width == map.Width &&
+            previous._pollutionMap.Height == map.Height;
+        bool reusePollution = previous is not null && matchingGrid &&
+            previous._pollutionSources.AsSpan().SequenceEqual(emissions);
+        var pollution = reusePollution ? previous!._pollution : new byte[count];
+        var patches = reusePollution ? previous!._pollutionPatches :
+            new Dictionary<(int Cell, BuildingType Type), PollutionPatch>();
+        if (!reusePollution)
+            foreach (var emission in emissions)
+            {
+                PollutionPatch? patch = null;
+                if (previous is not null && matchingGrid)
+                    previous._pollutionPatches.TryGetValue(emission, out patch);
+                patch ??= BuildPollutionPatch(map, emission.Cell % map.Width, emission.Cell / map.Width, emission.Type);
+                patches[emission] = patch;
+                for (int row = 0; row < patch.Height; row++)
+                    for (int column = 0; column < patch.Width; column++)
+                    {
+                        int cell = (patch.Y + row) * map.Width + patch.X + column;
+                        int add = patch.Values[row * patch.Width + column];
+                        pollution[cell] = (byte)(patch.Cleaning ? Math.Max(0, pollution[cell] - add) :
+                            Math.Min(100, pollution[cell] + add));
+                    }
+            }
 
         foreach (var zone in Zones.Placeable)
         {
@@ -187,7 +233,8 @@ public sealed class CityServices
 
         var power = new ServiceSupply(powerSupply, (int)Math.Round(powerDemand * powerDemandFactor));
         var water = new ServiceSupply((int)Math.Round(waterSupply * waterFactor), waterDemand);
-        var result = new CityServices(coverage, pollution, config.FullRules, power, water, buildings, active, upkeep, seatRank, granary);
+        var result = new CityServices(map, emissions, pollution, patches, config.FullRules, power, water,
+            buildings, active, upkeep, seatRank, granary);
         result._peakWorkload[(int)ServiceKind.Power] = power.Demand / (double)Math.Max(1, power.Supply);
         result._peakWorkload[(int)ServiceKind.Water] = water.Demand / (double)Math.Max(1, water.Supply);
         foreach (var kind in ServiceKinds.All)
@@ -219,70 +266,40 @@ public sealed class CityServices
             }
             if (kind.IsUtility()) continue;
             double funded = funding(kind);
-            var dispatch = sources.ToDictionary(source => source, source =>
+            result._dispatch[kind] = sources.ToDictionary(source => source, source =>
             {
                 var type = map.Content.Buildings[map.BuildingLayer[source]];
                 double workload = Math.Max(1, result._workloads[source]);
-                return (Age: result._ages[source], Workload: workload, Target: type.ResponseTargetDays,
-                    Strength: type.Strength * funded, Capacity: 1 / workload);
+                return new Dispatch(result._ages[source], workload, type.ResponseTargetDays,
+                    type.Strength * funded, 1 / workload);
             });
-            for (int i = 0; i < count; i++)
-            {
-                int source = routes.Source[i];
-                if (source < 0) continue;
-                var provider = dispatch[source];
-                double travel = routes.Cost[i] / TravelRoutes.UnitsPerDay;
-                if (!(provider.Age >= travel * provider.Workload)) continue;
-                double timely = Math.Min(1, provider.Target / Math.Max(1 / TravelRoutes.UnitsPerDay, travel));
-                coverage[(int)kind][i] = (byte)Math.Clamp(
-                    (int)Math.Round(provider.Strength * timely * provider.Capacity), 1, 100);
-            }
         }
         return result;
     }
 
-    private static void EmitPollution(byte[] field, GameMap map, int cx, int cy, BuildingType type)
+    private static PollutionPatch BuildPollutionPatch(GameMap map, int cx, int cy, BuildingType type)
     {
         int amount = type.Pollution;
-        if (amount == 0)
-        {
-            return;
-        }
-
         int radius = PollutionRadius(type);
         int extent = (int)Math.Ceiling(radius * AreaFalloff.Extent);
         int verticalExtent = (int)Math.Ceiling(extent / AreaFalloff.CellAspect);
         int strength = Math.Abs(amount) * 9 + 14;
         bool clean = amount < 0;
-        for (int dy = -verticalExtent; dy <= verticalExtent; dy++)
+        int left = Math.Max(0, cx - extent), top = Math.Max(0, cy - verticalExtent);
+        int width = Math.Min(map.Width - 1, cx + extent) - left + 1;
+        int height = Math.Min(map.Height - 1, cy + verticalExtent) - top + 1;
+        var values = new int[width * height];
+        for (int row = 0; row < height; row++)
         {
-            int y = cy + dy;
-            if (y < 0 || y >= map.Height)
+            int dy = top + row - cy;
+            for (int column = 0; column < width; column++)
             {
-                continue;
-            }
-
-            for (int dx = -extent; dx <= extent; dx++)
-            {
-                int x = cx + dx;
-                if (x < 0 || x >= map.Width)
-                {
-                    continue;
-                }
-
+                int dx = left + column - cx;
                 int add = (int)Math.Round(strength * AreaFalloff.Strength(AreaFalloff.Distance(dx, dy) / radius));
-                int i = y * map.Width + x;
-                if (clean)
-                {
-                    field[i] = (byte)Math.Max(0, field[i] - add / 2);
-                }
-                else
-                {
-                    field[i] = (byte)Math.Min(100, field[i] + add);
-                }
-
+                values[row * width + column] = clean ? add / 2 : add;
             }
         }
+        return new(left, top, width, height, values, clean);
     }
 
     public static int PollutionRadius(int amount) => amount == 0 ? 0 : 3 + 2 * Math.Abs(amount);

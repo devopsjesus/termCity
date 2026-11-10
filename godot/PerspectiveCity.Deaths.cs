@@ -26,6 +26,13 @@ public partial class PerspectiveCity
             if (death.Cause == SiegeDeathCause.Fall) at.Y -= death.Elevation * collapse;
             if (!death.Friendly)
             {
+                if (death.Enemy == SiegeEnemyKind.Orc)
+                {
+                    DrawOrc(batches, basePoint, new(death.Position, death.Direction, 0, 0, 0, 0),
+                        death.EnemyAppearance, death, death.Seconds + siege.InterpolationFraction * .1);
+                    DeathsDrawn++;
+                    continue;
+                }
                 var facing = Basis.LookingAt(forward, Vector3.Up);
                 var fallBasis = facing * new Basis(Vector3.Right, collapse * Mathf.Pi / 2) * facing.Inverse();
                 if (death.Cause == SiegeDeathCause.Crushing)

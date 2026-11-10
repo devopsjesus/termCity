@@ -21,12 +21,14 @@ public enum MessageKind
 /// Everything about the player's view of the game that is not simulation state: the cursor, the selected area,
 /// the scrolled camera and the status message. Pure logic with no UI dependency so it is fully testable.
 /// </summary>
-public sealed partial class GameSession
+public sealed partial class GameSession : IAsyncDisposable
 {
     private const int ScrollMargin = 1;
 
     public const int MinZoom = -2;
     public const int MaxZoom = 1;
+    public const double ThreeQuarterZoom = -.5;
+    private static readonly double[] ZoomLevels = [MinZoom, -1, ThreeQuarterZoom, 0, MaxZoom];
 
     private bool _anchorFromShift;
     private Pos? _selectionOrigin;
@@ -62,7 +64,11 @@ public sealed partial class GameSession
     public bool DebugSiegeMode { get; }
     public event Action? SiegeWaveStarted;
 
-    private void ForwardSiegeWaveStarted() => SiegeWaveStarted?.Invoke();
+    private void ForwardSiegeWaveStarted()
+    {
+        SiegeWaveStarted?.Invoke();
+        SynchronizePendingWaveSpeed();
+    }
 
     public string SavePath { get; }
 
@@ -111,20 +117,22 @@ public sealed partial class GameSession
     public CellRect ViewRect => new(CameraX, CameraY, VisibleCellsX, VisibleCellsY);
 
     // ---- Zoom -------------------------------------------------------------------------------------------------
-    // Negative levels sample square blocks; at +1 the renderer enlarges each cell in both axes.
+    // Whole negative levels sample square blocks; the fractional step retains individual cells.
 
-    public int ZoomLevel { get; private set; }
+    public double ZoomLevel { get; private set; }
+    public static bool IsValidZoom(double level) => Array.IndexOf(ZoomLevels, level) >= 0;
 
     /// <summary>Map cells (per side) summarised by one character when zoomed out; 1 otherwise.</summary>
-    public int Stride => ZoomLevel < 0 ? 1 << -ZoomLevel : 1;
+    public int Stride => ZoomLevel <= -1 ? 1 << -(int)ZoomLevel : 1;
 
     public int VisibleCellsX => ViewWidth * Stride;
 
     public int VisibleCellsY => ZoomLevel < 0 ? ViewHeight * Stride : ViewHeight;
 
-    /// <summary>The zoom as a magnification: 1x is normal, 2x is zoomed in, 0.5x and below are zoomed out.</summary>
+    /// <summary>The map magnification label; 0.75x retains individual-cell selection.</summary>
     public string ZoomLabel => ZoomLevel switch
     {
+        ThreeQuarterZoom => "0.75x",
         < 0 => (1.0 / Stride).ToString("0.###", CultureInfo.InvariantCulture) + "x",
         > 0 => "2x",
         _ => "1x",
@@ -135,7 +143,8 @@ public sealed partial class GameSession
     /// </summary>
     public void ZoomBy(int delta, int? viewX = null, int? viewY = null)
     {
-        int level = Math.Clamp(ZoomLevel + delta, MinZoom, MaxZoom);
+        int index = Array.IndexOf(ZoomLevels, ZoomLevel);
+        double level = ZoomLevels[(int)Math.Clamp((long)index + delta, 0, ZoomLevels.Length - 1)];
         if (level == ZoomLevel)
         {
             SetMessage(delta > 0 ? "Already zoomed in as far as it goes." : "Already zoomed out as far as it goes.");
@@ -145,10 +154,12 @@ public sealed partial class GameSession
         SetZoom(level, viewX, viewY);
     }
 
-    public void SetZoom(int level, int? viewX = null, int? viewY = null)
+    public void SetZoom(double level, int? viewX = null, int? viewY = null)
     {
+        if (!double.IsFinite(level)) throw new ArgumentOutOfRangeException(nameof(level));
         bool singleBlock = Selection is { } selected && selected == BlockAt(Cursor);
         level = Math.Clamp(level, MinZoom, MaxZoom);
+        if (!IsValidZoom(level)) throw new ArgumentOutOfRangeException(nameof(level), "Unsupported map zoom level.");
         int fx = viewX ?? ViewWidth / 2, fy = viewY ?? ViewHeight / 2;
         var focus = ScreenToMap(fx, fy);
         ZoomLevel = level;
@@ -217,7 +228,8 @@ public sealed partial class GameSession
     {
         _revision++;
         UpdateFeedback();
-        Changed?.Invoke();
+        if (_executingAction) _actionGameChanged = true;
+        else Changed?.Invoke();
     }
 
     /// <summary>How long a message stays in the status line before it gives way to details of the cell under the cursor.</summary>
@@ -587,10 +599,26 @@ public sealed partial class GameSession
         Game.PlanBuildings(type, ActiveArea).Select(area => Game.BuildingPlacementWarning(type, area))
             .FirstOrDefault(warning => warning is not null));
 
+    public double LastActionSnapshotMilliseconds { get; private set; }
+    private bool _executingAction, _actionGameChanged;
+
     private ActionResult Execute(Func<ActionResult> action, string? warning = null)
     {
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
         string snapshot = SaveGameStore.Serialize(Game);
-        var result = action();
+        LastActionSnapshotMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        ActionResult result;
+        _executingAction = WallToolActive;
+        try { result = action(); }
+        finally
+        {
+            _executingAction = false;
+            if (_actionGameChanged)
+            {
+                _actionGameChanged = false;
+                Changed?.Invoke();
+            }
+        }
         if (result.Success)
         {
             if (_undoHistory.Count == UndoLimit) _undoHistory.RemoveAt(0);
@@ -642,6 +670,7 @@ public sealed partial class GameSession
     {
         try
         {
+            SynchronizeSimulation();
             SaveGameStore.Save(Game, SavePath, new SavedView(CameraX, CameraY, ZoomLevel)
                 { CameraEdgePadding = CameraEdgePadding });
             _savedRevision = _revision;
@@ -650,6 +679,11 @@ public sealed partial class GameSession
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            SetMessage("Save failed: " + ex.Message, MessageKind.Error);
+            return false;
+        }
+        catch (BackgroundSimulationException ex)
         {
             SetMessage("Save failed: " + ex.Message, MessageKind.Error);
             return false;

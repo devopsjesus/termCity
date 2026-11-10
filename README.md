@@ -51,13 +51,14 @@ Game options follow Godot's `--` separator:
 | Option | Behavior |
 |---|---|
 | `--seed <n>` | Reproducible signed 32-bit seed; random by default |
-| `--size <size>` | `small`, `medium`, `large`, `SF`, `LA`, `SD`, `CHI`, `STL`, or `WIDTHxHEIGHT`; default `small` |
+| `--size <size>` | `small`, `medium`, `large`, `TOP`, `SF`, `LA`, `SD`, `CHI`, `STL`, or `WIDTHxHEIGHT`; default `small` |
 | `--load [file]` | Load a city; without a path, use the quick-save |
 | `--fps <n>` | Render frame cap, 5-60; default 60 |
 | `--reduced-motion` | Disable all terminal effects (sprites, shakes, ambient life) |
 | `--dump-map` | Print the generated/loaded map as text and exit; works headlessly |
 | `--debug-settlement` | Debug build only: 64x64 pre-drawn bailey, focused camera and natural immigration |
 | `--debug-siege` | Debug build only: 64x64 bailey with 100 residents, a Guard Post, Archer Barracks and the first goblin attack |
+| `--persistent-residency` | Debug-only opt-in native terrain/building residency; unchanged cache targets and artwork, not a certified performance default |
 | `-h`, `--help` | Print game options and exit; works headlessly |
 
 ```bash
@@ -68,6 +69,19 @@ godot --headless --path godot -- --size CHI --seed 42 --dump-map
 
 A command-line load failure exits with an error. In-game load failures keep the current city and
 leave a visible error in the dialog. When loading, the saved map/configuration overrides seed and size.
+
+Persistent residency keeps native resources allocated across camera moves when
+they fit, drawing only visible spatial pages. Larger views may still exceed the
+working-set targets and use pressure-driven regional retirement. See the
+[residency diagnostics](docs/DEVELOPMENT.md#persistent-native-render-residency)
+for commands, correctness coverage and measured performance limitations.
+
+Perspective terrain uses a shared world-space palette and compact per-cell
+category/variation data rather than terminal-cell artwork dimensions. The medium
+color-data tier is about 1.76 MiB, down from the intermediate 75 MiB square
+textures and original 309 MiB raster tier. Flow/shore data and geometry are
+additional. Indexed meshes preserve the same terrain triangles and rendering
+resolution. Terminal styling is intentional for the surrounding UI only.
 
 ## How to play
 
@@ -89,16 +103,27 @@ wall. Homes, shops and workshops then grow naturally **inside the walls** as fam
 arrive and business demand grows. **No roads or manual zoning are required.**
 Repeated journeys wear connected paths between buildings within the bailey, including
 neighboring homes. These paths stay inside the walls rather than leading to exterior roads.
+In perspective, human-scale dirt trails reach actual doors, courtyard entrances,
+work bays and compound gates, with steps where the threshold is raised.
+Trails and approaches share muted earthy pixel textures and very shallow,
+light-catching shoulders. Low-contrast, irregular patches blend at distant zooms
+instead of repeating as short bands. Front gardens retain their beds and a clear walkway.
+New traffic gradually wears entrance-aware routes; existing saved wear remains.
+An obstructed entrance is reported in building inspection rather than replaced
+with a fictitious rear door. Paths remain ground-hugging pedestrian trails, not
+raised roads; walking speeds, service-distance formulas and wear rates are unchanged.
 Press **P** to resume.
 
 ### Extending the walls
 
-After founding, open **Garrison** and choose **Extend walls**. Click a start,
-move to preview a straight run snapped to **0, 30, 45, 60 or 90 degrees**
+After founding, open **Garrison** and choose **Extend walls**. Click a starting point,
+or click the visible body/roof of a tower to anchor at its exact center. The wall
+preview pivots around that center as the pointer moves, including within the tower footprint.
+Move to preview a straight run snapped to **0, 30, 45, 60 or 90 degrees**
 (repeated in every quadrant), then click or press **Enter** to buy
 the whole run. The next run starts at its endpoint. **Esc** finishes; paused undo
 restores an entire purchase. Existing wall spans are reused rather than charged twice.
-Nearby tower centers retain snap priority so connected runs meet them exactly.
+Other nearby tower centers retain snap priority so connected runs meet them exactly.
 Green/red previews show the actual wall footprint; a gold outline marks newly
 enclosed territory, which still needs gate access before it can attract settlers.
 
@@ -159,14 +184,20 @@ Garrison offers wall-top **oil cauldrons**, **rocks**, **ballistae** and **trebu
 At **100 souls**, **Archer Barracks (900 gold, 12 weekly upkeep)** and
 **Guard Posts (650 gold, 10 weekly upkeep)** unlock. Each recruits up to four defenders.
 Archers use tower ladders to reach roomy wall walkways and elevated firing
-positions. Guards spread between inside gate and corner posts, keeping access clear
-and waiting for a breach rather than patrolling outside. Archers and guards reorient
+positions. When peaceful, automatic archers cover reachable corner towers first,
+then the other towers on the connected wall network, before sharing towers evenly.
+Existing posts remain stable unless coverage, access or orders change; selecting
+troops alone does not stop their patrols. Guards spread between inside gate and corner posts, keeping access clear
+and waiting for a breach rather than patrolling outside. Idle archers face outward
+from their wall or tower, rather than into the town. Archers and guards reorient
 toward their targets; movement is faster without teleporting.
 Automatic archers keep pursuing a threat when it is out of bow range or screened
 from their current post. They interrupt stale patrol routes and move to gain a
 clear shot instead of treating a blocked shot as an idle patrol.
-Automatic archers divide among live threats, favoring enemies with fewer archers
-already assigned. Balanced assignments stay stable; as enemies die, spare archers
+Automatic archers and guards weigh enemy threat against assigned coverage:
+all troll variants have equal highest priority, followed by Orcs, then Goblins.
+Stronger enemies attract more troops without excluding reachable weaker threats.
+Balanced assignments stay stable; as enemies die, spare troops
 redistribute and eventually converge on the final survivors. Explicit attack orders
 can still concentrate fire on a chosen enemy.
 Soldiers guard the gate and engage approaching enemies. Recruitment takes two siege seconds
@@ -190,17 +221,43 @@ their species/equipment appearance. Death effects are noninteractive visual trac
 damage resolves at projectile or weapon contact, pause freezes them, and reduced motion uses a
 static fallen pose.
 
-Click a defender to select it; **Shift-click** adds defenders. With troops selected,
-right-click reachable ground to move, or a visible enemy to attack. Units return to
+Click a defender to select it; **Shift-click** adds defenders.
+**Shift-drag a freehand circle** adds the troops inside it; Esc cancels an unfinished
+circle. Ctrl/Command-drag retains map-area selection.
+Right-click reachable ground to move selected troops. Right-click a visible enemy
+to attack with the selected archers/guardsmen, or **all living troops if none are selected**.
+Units return to
 automatic fighting on arrival or as soon as their assigned enemy dies. **Esc** clears
 troop selection and restores ordinary map context clicks. The settlement supports
 up to 64 defenders; rosters and orders survive saving and paused undo.
 
-From **250 souls**, larger **Orcs** join goblin assaults. The **first** Orc attack
+Perspective orcs use the original articulated hammer-warrior model: a forehand,
+backhand and two-handed overhead smash, with the torso leading the final blow.
+Damage lands at those three contacts over a roughly 2.99-second combo (25% faster
+than the approved reference study). Each blow
+is reweighted to preserve the previous average damage rate; unfinished attacks
+are cancelled when the orc leaves combat.
+Orcs leave swing room in front of walls and melee targets. An attacker already
+too close steps back before restarting its combo instead of swinging through
+the wall.
+Scheduled orc waves stagger their starting distances along body-clear approach
+routes, so their arrivals and first swings are naturally spread out.
+
+The **first scheduled wave after reaching 250 souls** includes larger **Orcs**,
+even if the milestone is reached just before the wave arrives. The **first** Orc attack
 highlights its threatened wall side in gold on the map/minimap; later Orc attacks
-do not repeat that forecast. Position garrisons and move defenders before the assault:
+do not repeat that forecast. Automatic archers stage along the warned wall and
+its corners; guards stage on nearby interior ground. They retain that preference
+until the first assault's Orcs are destroyed. Later live Orc approaches can also
+redirect idle staging, without overriding weighted combat targets or player orders.
+After fighting ends, troops return to their ordinary patrol policy.
+Position garrisons and move defenders before the assault:
 troops must physically reach the threatened sector, and distant garrisons cannot
 protect it instantly. Existing goblin health and attack damage are unchanged.
+Orc scouts require a body-clear exterior approach with room to arrive, not a
+near-wall spawn pocket or a route through a corner tower. A map-edge side without
+that space is not advertised; blocked saved forecasts are revised when play resumes.
+If no approach fits, the introduction waits rather than spawning Orcs off-map.
 
 At permanent **1,000 souls**, scouts warn of **tree, stone and mud trolls** before
 their first assault. Individuals stand **8-11 feet** tall: tree trolls are leaner and
@@ -353,7 +410,7 @@ edge and zone 20-30 nearby homes with **R**, leaving open service plots. **Befor
 build a nearby **Woodlot (8,000g)** and **Town Well (4,000g)** through Enter > Services.
 Together they cost 12,000g and 60g/week, leaving 38,000g of the starting 50,000g before road costs.
 Sims can walk over land without roads. Tracks speed travel sixfold; higher road tiers are faster.
-Buildings gradually wear the shortest reachable path from their perimeter to the actual road surface.
+Buildings gradually wear a reachable path from their entrance to the actual road surface.
 Homes do not create house-to-house paths. Road-accessible buildings use their road connection
 instead of wearing parallel trails between one another; roadless service/workplace links can still form.
 Water crossings require bridges.
@@ -478,7 +535,8 @@ cell per week**, versus **6** for dirt and **60** for King's Roads.
 per cell each week at full funding for dirt tracks, cobbled roads, and King's Roads respectively.
 Road/building menus include registered player-placeable types. Service menus show each building's
 footprint: a Sheriff's Hall occupies 2x1 cells, a Parish Church 2x2, and a Castle 4x3.
-The left icon sidebar opens Roads or an individual service category. Choose a road or building
+The left icon sidebar opens Roads or an individual service category, with Garrison first and Roads last.
+Debug Monuments uses an original helmet-clasping bewildered duck icon. Choose a road or building
 to see a rendered preview of the actual model and its name, its full description, and a full-width statistics/effects
 details table below it. Cost and Upkeep appear first; Does and Placement rows are
 omitted. Cost shows only the gold amount and Footprint only the dimensions.
@@ -687,22 +745,23 @@ Top-header text is uniformly larger than body text and fits to narrower windows:
 
 PAUSED is yellow with a gentle four-second brightness/glow pulse, frozen while unfocused.
 The sidebar retains its enclosing double-white border and an aspect-correct minimap sized to the
-full available width where desktop space permits, plus `[-] 1x [+]` zoom controls, Demand and City.
+full available width where desktop space permits, plus `[-] 1x [+]` zoom controls and City.
+City and camera-control text is 22 logical pixels, with 24-pixel section headings and zoom controls.
 Section titles use black backgrounds and the same double-white borders as the map.
 The City table has no redundant column-heading row and shows only age groups/hearths, season,
 grain, mood, supplies, service strength and the top complaint. Healthy readings are green and
 warnings use gold or red. Population and treasury remain in the top header.
 Mood shows its descriptive label without a numeric score. Services reads gray **None** until
 at least one service building is placed; existing services show full or half strength.
-Hover over any R/C/I Demand letter, bar or row for its demand, built/zoned/road-served cells,
-expected arrival rate, growth blockers and pending removals. Demand reflects settlers
+Demand is no longer shown in the right sidebar. Growth reports retain demand,
+expected arrival rates, growth blockers and pending removals. Demand reflects settlers
 and supported businesses, not empty zoned land: zoning alone does not erase it.
 Business demand needs enough residents and a viable trade climate; cramped plots or
 missing deliveries can prevent growth. Fractional arrivals can leave some weeks empty.
 Those same details are always available in
 **F7 Report**, **F8 Growth**, and the full-rules City health report for keyboard users.
-There is no separate Zones section and the sidebar never scrolls. Its minimap and table layout
-adapt to smaller windows so all remaining details stay visible.
+There is no separate Zones section. The minimap shrinks before the body text does;
+exceptionally short windows can scroll rather than making the text unreadable.
 The sidebar has no Guide section; next-step advice remains in the **F6 > Start** dialog.
 New games start in the **2x close view** to make compact building details readable.
 The 1x view is eased back slightly; the close view is about 1.68 times its visual
@@ -756,7 +815,7 @@ Names are stored in city saves.
   The minimum logical window height is 780 (800 in Debug, to fit the Monuments entry) so the larger minimap and remaining details have room;
   actual minimum bounds remain capped to the usable desktop.
 - Drag the map/sidebar divider to resize it, or use **Esc > Resize sidebar**.
-  Sidebar widths are bounded to 280-480 logical pixels; the maximum reduces to preserve map space.
+  Sidebar widths are bounded to 320-480 logical pixels; the maximum reduces to preserve map space.
   Mouse dragging slides by pixels rather than snapping to character widths.
 - Font size and Resize sidebar are simple game-menu rows that open separate adjustment dialogs.
   The **GAME MENU** uses all-caps options without descriptions and bottom-right
@@ -842,7 +901,9 @@ pointer's map anchor. Close dialogs or finish name/path editing before using gam
 Esc returns to the previous menu, closes a root dialog, or cancels an edit/preview instead of
 opening another menu.
 
-Zoom levels are **0.25x, 0.5x, 1x, and 2x**. Coarse zoom samples 4x4 or 2x2 map-cell blocks;
+Zoom levels are **0.25x, 0.5x, 0.75x, 1x, and 2x**. The 0.75x perspective view
+sits between 0.5x and 1x and keeps individual-cell selection.
+Coarse zoom samples 4x4 or 2x2 map-cell blocks;
 2x doubles both tile and glyph dimensions, preserving the normal ratio and one-cell selection.
 
 ## Maps
@@ -852,6 +913,7 @@ Zoom levels are **0.25x, 0.5x, 1x, and 2x**. Coarse zoom samples 4x4 or 2x2 map-
 | `small` | 320x320 | Default square random map |
 | `medium` | 480x480 | Square random map |
 | `large` | 640x640 | Square random map |
+| `TOP` | 640x640 | Established 100,000-resident player-scale settlement with services, intact reinforced walls and garrisons |
 | `SF` | 640x384 | San Francisco: a walled peninsula on the strait |
 | `LA` | 640x384 | Los Angeles: a sprawling coastal bay town |
 | `SD` | 640x384 | San Diego: a harbour town on dry, burnable hills |
@@ -889,7 +951,15 @@ obsolete or incomplete saves show a load error rather than being migrated.
 
 Scenarios start paused without the automatic first-city guide; F6 still offers it explicitly.
 Geography and districts stay fixed across seeds; seeds vary households and future growth.
+`TOP` uses current full-scale buildings and roads, unlike the legacy regional-city
+layouts. Its authored settlement starts with exactly 100,000 residents, ordinary
+service provision producing a Content mood, intact reinforced walls, mounted
+defenses and 64 defenders. It is a reproducible performance baseline, not a claim
+that a fresh player can reach that state without costs or construction time.
 Save/load preserves the map. Restart/new-city actions retain the selected scenario.
+Launch it with `godot --path godot -- --size TOP --seed 42`. See the
+[minimum-spec diagnostics](docs/DEVELOPMENT.md#top-minimum-spec-baseline-and-recent-region-experiments)
+for fullscreen cache experiments and their remaining performance limitations.
 
 ## Saving and loading
 

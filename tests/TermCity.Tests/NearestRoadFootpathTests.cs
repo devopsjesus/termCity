@@ -52,6 +52,9 @@ public class NearestRoadFootpathTests
         for (int x = 0; x < map.Width; x++) map.SetRoad(x, 20, highway);
         Home(map, 10, 23);
         Home(map, 18, 24);
+        map.BuildingRotations[map.Index(10, 23)] = 2;
+        map.BuildingRotations[map.Index(18, 24)] = 2;
+        map.InvalidateTravel();
         for (int day = 0; day < 10; day++) TravelRoutes.WearPaths(map);
         Assert.Equal(0, map.PathWearAt(10, 22));
         Assert.Equal(0, map.PathWearAt(18, 22));

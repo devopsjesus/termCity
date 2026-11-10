@@ -23,7 +23,7 @@ internal static class SiegeAnimationSmoke
         var savedShots = projectiles.ToArray();
         object savedAccumulator = accumulator.GetValue(siege)!;
         bool paused = game.Paused;
-        int zoom = session.ZoomLevel;
+        double zoom = session.ZoomLevel;
         float azimuth = view.Azimuth;
         var center = new Pos(session.CameraX + session.VisibleCellsX / 2, session.CameraY + session.VisibleCellsY / 2);
         int revision = siege.Revision;
@@ -64,13 +64,14 @@ internal static class SiegeAnimationSmoke
                 int geometry = view.GeometryBuilds, walls = view.SiegeGeometryBuilds;
                 Require(perspective ? view.RenderedProjectilePosition(shot.Id) is null :
                     !host.Map.RenderedProjectilePoints.ContainsKey(shot.Id), "Windup must hide the projectile.");
-                accumulator.SetValue(siege, .075d);
+                double interval = .1 * game.Config.SecondsPerWeek(game.Speed) / game.Config.MediumSecondsPerWeek;
+                session.CombatPresentation.Advance(game, interval * .5, running: true);
                 await Frames(host);
                 var first3D = view.RenderedProjectilePosition(shot.Id);
                 var first2D = host.Map.RenderedProjectilePoints.GetValueOrDefault(shot.Id);
                 Require(perspective ? first3D is not null : host.Map.RenderedProjectilePoints.ContainsKey(shot.Id),
                     "Sub-tick release must use the same visual clock as flight.");
-                accumulator.SetValue(siege, .095d);
+                session.CombatPresentation.Advance(game, interval * .2, running: true);
                 await Frames(host);
                 Require(perspective ? view.RenderedProjectilePosition(shot.Id) != first3D :
                     host.Map.RenderedProjectilePoints[shot.Id] != first2D,
@@ -88,6 +89,7 @@ internal static class SiegeAnimationSmoke
                     Path.ChangeExtension(capturePath, $".flight-{kind}-{perspective}.png"));
                 Set(shot, nameof(shot.Elapsed), shot.ContactSeconds);
                 accumulator.SetValue(siege, 0d);
+                Set(siege, nameof(siege.Revision), ++revision);
                 await Frames(host);
                 if (perspective)
                     Require(view.RenderedProjectilePosition(shot.Id) is { } endpoint &&
@@ -125,26 +127,30 @@ internal static class SiegeAnimationSmoke
         var game = session.Game;
         var siege = game.Settlement!;
         var view = host.Map.Perspective!;
-        int zoom = session.ZoomLevel;
+        double zoom = session.ZoomLevel;
         float azimuth = view.Azimuth;
         var fixture = game.Map.BuildingFootprints.Values.First(area =>
             game.Map.BuildingAt(area.X, area.Y)?.Zone == ZoneType.Residential);
-        var terrain = game.Map.TerrainAt(fixture.X, fixture.Y);
-        game.Map.SetTerrain(fixture.X, fixture.Y, game.Map.Content.Terrains.Get("Hill"));
+        var terrain = fixture.Cells().ToDictionary(cell => cell, cell => game.Map.TerrainAt(cell.X, cell.Y));
+        foreach (var cell in fixture.Cells()) game.Map.SetTerrain(cell.X, cell.Y, game.Map.Content.Terrains.Base);
+        for (int y = fixture.Y; y < fixture.Y + Math.Min(2, fixture.Height - 1); y++)
+            for (int x = fixture.X; x < fixture.X + Math.Min(2, fixture.Width - 1); x++)
+                game.Map.SetTerrain(x, y, game.Map.Content.Terrains.Get("Hill"));
         game.Touch();
         session.SetZoom(0);
         session.CenterOn(new(fixture.X + fixture.Width / 2, fixture.Y + fixture.Height / 2));
         host.Map.RefreshCells();
         await Frames(host);
         float floor = fixture.Cells().Max(p => TerrainSprite.Elevation(game.Map, p.X, p.Y));
-        int supports = view.BuildingVolumes(new(fixture.X, fixture.Y), HouseAppearance.StoneColor)
+        int supports = view.BuildingFoundationVolumes(new(fixture.X, fixture.Y))
             .Count(box => box.Position.Y < floor - 0.05f && box.End.Y >= floor - 0.0001f);
-        Require(supports > 0, "Surface checks must exercise actual split-level stone foundations.");
+        Require(supports > 0, $"Surface checks must exercise actual split-level stone foundations: " +
+            $"plot={fixture} floor={floor} boxes={string.Join("; ", view.BuildingFoundationVolumes(new(fixture.X, fixture.Y)))}");
         int homes = 0;
         foreach (var area in game.Map.BuildingFootprints.Values.Where(area =>
             game.Map.BuildingAt(area.X, area.Y)?.Zone == ZoneType.Residential))
         {
-            var boxes = view.BuildingVolumes(new(area.X, area.Y), HouseAppearance.StoneColor);
+            var boxes = view.BuildingFoundationVolumes(new(area.X, area.Y));
             if (boxes.Count == 0) continue;
             homes++;
             var timber = view.BuildingVolumes(new(area.X, area.Y), HouseAppearance.FrameColor);
@@ -158,13 +164,14 @@ internal static class SiegeAnimationSmoke
                 {
                     var overlap = boxes[a].Intersection(boxes[b]).Size;
                     Require(overlap.X < 0.0001f || overlap.Y < 0.0001f || overlap.Z < 0.0001f,
-                        "House plinths, steps and hillside supports must not overlap textured stone faces.");
+                        $"House plinths, steps and hillside supports must not overlap textured stone faces: " +
+                        $"home={area} first={boxes[a]} second={boxes[b]} overlap={overlap}.");
                 }
         }
         Require(homes > 0, "Surface scrolling checks must include rendered house foundations.");
         Require(view.StablePixelMaterials, "Opaque textures must use linear mipmapped anisotropic filtering.");
         await Capture(host, capturePath is null ? null : Path.ChangeExtension(capturePath, ".foundation.png"));
-        game.Map.SetTerrain(fixture.X, fixture.Y, terrain);
+        foreach (var (cell, original) in terrain) game.Map.SetTerrain(cell.X, cell.Y, original);
         game.Touch();
         host.Map.RefreshCells();
         var gate = siege.Walls.Single(w => w.IsGate);
@@ -177,7 +184,8 @@ internal static class SiegeAnimationSmoke
         var corners = siege.Walls.Where(w => w.IsTower &&
             (w.Cell.X == siege.Bounds.X || w.Cell.X == siege.Bounds.Right) &&
             (w.Cell.Y == siege.Bounds.Y || w.Cell.Y == siege.Bounds.Bottom)).ToArray();
-        Require(corners.Length == 4, "Surface scrolling checks must exercise all four actual corner towers.");
+        Require(corners.Length == 4, $"Surface scrolling checks must exercise all four actual corner towers: " +
+            $"bounds={siege.Bounds} towers={string.Join("; ", siege.Walls.Where(wall => wall.IsTower).Select(wall => wall.Cell))}");
         foreach (var tower in corners)
         {
             session.SetZoom(0);
@@ -332,12 +340,18 @@ internal static class SiegeAnimationSmoke
         Require(host.Map.WallHealthBarsDrawn == siege.WallSections.Count(w => w.Health < w.MaxHealth ||
             session.HasCursor && w.SectionBounds.Contains(session.Cursor)),
             "Each multi-cell wall section must draw only one shared health bar.");
-        var fragment = WallDamageLayout.Fragments(sections[2]).Where(part => part.Kind == WallFragmentKind.Body)
-            .MaxBy(part => part.Size.Y);
-        var piece = new Vector3(sections[2].Cell.X + 0.5f + fragment.Center.X,
-            TerrainSprite.Elevation(game.Map, sections[2].Cell.X, sections[2].Cell.Y) + fragment.Center.Y,
-            sections[2].Cell.Y + 0.5f + fragment.Center.Z);
-        Require(host.Map.TryPickBuilding(view.ScreenPoint(piece), out var picked) && picked == sections[2].Cell,
+        var damaged = sections[2];
+        var along = new Vector3(damaged.Tangent.X, 0, damaged.Tangent.Y);
+        var across = new Vector3(-damaged.Tangent.Y, 0, damaged.Tangent.X);
+        var origin = new Vector3(damaged.Center.X, WallDamageLayout.GroundHeight(damaged, game.Map), damaged.Center.Y);
+        bool pickedDamage = WallDamageLayout.Fragments(damaged).Where(part => part.Kind == WallFragmentKind.Body).Any(part =>
+        {
+            var piece = origin + along * part.Center.X + across * part.Center.Z +
+                Vector3.Up * (part.Center.Y + part.Size.Y / 2 - .02f);
+            return host.Map.TryPickBuilding(view.ScreenPoint(piece), out _) &&
+                siege.Walls.FirstOrDefault(wall => wall.Id == view.PickedWallId)?.SectionId == damaged.SectionId;
+        });
+        Require(pickedDamage,
             "The remaining fragments of a damaged wall must remain directly pickable.");
         int damagedBuilds = view.SiegeGeometryBuilds;
         SetFixture(sections[6], nameof(WallComponent.Health), 0.01d);
@@ -366,9 +380,7 @@ internal static class SiegeAnimationSmoke
             await Frames(host);
             await Capture(host, capturePath is null ? null : Path.ChangeExtension(capturePath, $".damage-{material}.png"));
         }
-        game.Paused = false;
-        game.Update(0.04);
-        game.Paused = true;
+        session.CombatPresentation.Advance(game, .04, running: true);
         await Frames(host);
         Require(view.SiegeActorBuilds > actors && view.GeometryBuilds == geometry && view.BurningWallsDrawn == ExpectedBurning(),
             "Flames must animate without attackers and without rebuilding the city.");
@@ -393,9 +405,12 @@ internal static class SiegeAnimationSmoke
         Require(session.DebugStartWave(SettlementState.MaximumEnemySwarm).Success, session.Message);
         await Frames(host);
         Require(view.BurningWallsDrawn == siege.Walls.Count, "Every critically damaged section must retain its fire effect.");
-        await VerifyActiveSwarmBudget(host);
+        PerformanceBudgetExceededException? budgetFailure = null;
+        try { await VerifyActiveSwarmBudget(host); }
+        catch (PerformanceBudgetExceededException error) { budgetFailure = error; }
         view.Rotate(originalAzimuth - view.Azimuth);
         GD.Print("TERMCITY_WALL_DAMAGE_OK threshold=strict-33% materials=3 breaches=burning pause=frozen reduced-motion=static repair=restored city-rebuilds=0");
+        if (budgetFailure is not null) throw budgetFailure;
     }
 
     internal static async Task VerifyWalking(Main host, string? capturePath)
@@ -404,22 +419,19 @@ internal static class SiegeAnimationSmoke
         var game = session.Game;
         var siege = game.Settlement!;
         var view = host.Map.Perspective!;
-        float azimuth = Mathf.DegToRad(view.Azimuth);
-        var goblin = siege.Enemies.OrderByDescending(unit =>
-            (unit.X - siege.Bounds.X - siege.Bounds.Width / 2.0) * Mathf.Sin(azimuth) +
-            (unit.Y - siege.Bounds.Y - siege.Bounds.Height / 2.0) * Mathf.Cos(azimuth)).First();
-        var previous = SiegeMotion.Enemy(siege, goblin);
+        var goblin = siege.Enemies.OrderByDescending(unit => Math.Abs(SiegeMotion.Enemy(siege, unit).Stride)).First();
+        session.CombatPresentation.Reset();
+        session.CombatPresentation.Advance(game, 0, running: true);
+        var previous = SiegeMotion.Enemy(session.PresentedSiege!, session.PresentedSiege!.Enemies.Single(unit => unit.Id == goblin.Id));
         int revision = siege.Revision, actors = view.SiegeActorBuilds, geometry = view.GeometryBuilds;
-        game.Paused = false;
-        game.Update(0.04);
-        game.Paused = true;
+        session.CombatPresentation.Advance(game, .04, running: true);
         view.Sync(session, host.Map.Size);
-        var current = SiegeMotion.Enemy(siege, goblin);
+        var current = SiegeMotion.Enemy(session.PresentedSiege!, session.PresentedSiege!.Enemies.Single(unit => unit.Id == goblin.Id));
         Require(siege.Revision == revision && current.Position != previous.Position &&
             view.SiegeActorBuilds > actors && view.GeometryBuilds == geometry,
             "Actors must move smoothly between fixed combat ticks without rebuilding the city.");
         var center = new Pos(session.CameraX + session.VisibleCellsX / 2, session.CameraY + session.VisibleCellsY / 2);
-        int zoom = session.ZoomLevel;
+        double zoom = session.ZoomLevel;
         var oldCursor = session.Cursor;
         session.PlaceCursor(new((int)goblin.X, (int)goblin.Y));
         session.SetZoom(1);
@@ -427,11 +439,10 @@ internal static class SiegeAnimationSmoke
         session.CenterOn(new((int)goblin.X, (int)goblin.Y));
         await Frames(host);
         await Capture(host, capturePath is null ? null : Path.ChangeExtension(capturePath, ".walk-a.png"));
-        game.Paused = false;
-        game.Update(0.04);
-        game.Paused = true;
+        session.CombatPresentation.Advance(game, .04, running: true);
         await Frames(host);
-        Require(SiegeMotion.Enemy(siege, goblin).Stride != current.Stride, "Walking poses must alternate leg/arm steps.");
+        Require(SiegeMotion.Enemy(session.PresentedSiege!, session.PresentedSiege!.Enemies.Single(unit => unit.Id == goblin.Id)).Stride != current.Stride,
+            "Walking poses must alternate leg/arm steps.");
         await Capture(host, capturePath is null ? null : Path.ChangeExtension(capturePath, ".walk-b.png"));
         session.SetZoom(zoom);
         host.Map.RefreshCells();
@@ -495,7 +506,7 @@ internal static class SiegeAnimationSmoke
         GD.Print("TERMCITY_REPAIR_THRESHOLDS_OK damage=85% crew-start=80% crew-stop=100% mechanics=unchanged");
         GD.Print("TERMCITY_REPAIR_COMBAT_VISIBILITY_OK enemies=hidden post-battle=visible health-recovery=unchanged");
         var crew = siege.VisibleRepairingWall!.Value;
-        int zoom = host.Session.ZoomLevel;
+        double zoom = host.Session.ZoomLevel;
         var oldCursor = host.Session.Cursor;
         var center = new Pos(host.Session.CameraX + host.Session.VisibleCellsX / 2,
             host.Session.CameraY + host.Session.VisibleCellsY / 2);
@@ -506,9 +517,7 @@ internal static class SiegeAnimationSmoke
         await Frames(host);
         await Capture(host, capturePath is null ? null : Path.ChangeExtension(capturePath, ".repairs-a.png"));
         int geometry = view.GeometryBuilds, actorBuilds = view.SiegeActorBuilds;
-        game.Paused = false;
-        game.Update(0.06);
-        game.Paused = true;
+        host.Session.CombatPresentation.Advance(game, .06, running: true);
         await Frames(host);
         Require(view.SiegeActorBuilds > actorBuilds && view.GeometryBuilds == geometry,
             "Repair animation must update without rebuilding terrain or the city.");
@@ -567,6 +576,7 @@ internal static class SiegeAnimationSmoke
             game.Paused = true;
             worstSimulation = Math.Max(worstSimulation, watch.Elapsed.TotalMilliseconds);
             VerifyCrowdSpacing(game.Settlement!);
+            host.Session.CombatPresentation.Advance(game, .03, running: true);
             view.Sync(host.Session, host.Map.Size);
             worstActor = Math.Max(worstActor, view.SiegeActorBuildMilliseconds);
             host.Map.QueueRedraw();
@@ -619,7 +629,7 @@ internal static class SiegeAnimationSmoke
         var unit = attacker!;
         var view = host.Map.Perspective!;
         float azimuth = view.Azimuth;
-        int zoom = session.ZoomLevel;
+        double zoom = session.ZoomLevel;
         var cursor = session.Cursor;
         var center = new Pos(session.CameraX + session.VisibleCellsX / 2, session.CameraY + session.VisibleCellsY / 2);
         float outside = Mathf.RadToDeg(MathF.Atan2((float)(unit.X - state.Bounds.X - state.Bounds.Width / 2.0),

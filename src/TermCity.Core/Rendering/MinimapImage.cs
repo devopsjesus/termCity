@@ -24,6 +24,7 @@ public sealed class MinimapImage
     private int _width;
     private int _height;
     private int _overlayVersion = -1;
+    private int _terrainVersion = -1;
     private bool _showAreas;
     private Rgb[] _terrain = [];
     private Rgb[] _pixels = [];
@@ -42,19 +43,21 @@ public sealed class MinimapImage
             throw new ArgumentOutOfRangeException(nameof(width), "Minimap dimensions must be positive.");
         }
 
-        if (!ReferenceEquals(game, _game) || width != _width || height != _height)
+        if (!ReferenceEquals(game, _game) || width != _width || height != _height ||
+            _terrainVersion != game.Map.TerrainVersion)
         {
             _game = game;
             _width = width;
             _height = height;
             BuildTerrain(game.Map);
+            _terrainVersion = game.Map.TerrainVersion;
             _overlayVersion = -1;
         }
 
-        if (_overlayVersion != game.MapVersion || _showAreas != showAreas)
+        if (_overlayVersion != game.Map.NavigationVersion || _showAreas != showAreas)
         {
             BuildOverlay(game.Map, showAreas);
-            _overlayVersion = game.MapVersion;
+            _overlayVersion = game.Map.NavigationVersion;
             _showAreas = showAreas;
         }
     }

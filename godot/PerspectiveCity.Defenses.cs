@@ -79,7 +79,7 @@ public partial class PerspectiveCity
                 var part = TowerDefenseArtwork.Pose(moving.Part,
                     moving.Part.Station == pose.Station ? pose.Angle : 0);
                 var transform = DefenseTransform(part, moving.Origin);
-                _wallInstances[moving.Color].Multimesh.SetInstanceTransform(moving.Instance, transform);
+                UpdateWallTransform(moving.Color, moving.Instance, transform);
                 _siegePickBoxes[moving.Pick] = (DefenseBounds(transform), moving.Wall.Cell, moving.Color);
                 _siegePickTransforms[moving.Pick] = transform;
                 _wallHighlightBoxes[moving.Wall.Id][moving.Highlight] = transform;

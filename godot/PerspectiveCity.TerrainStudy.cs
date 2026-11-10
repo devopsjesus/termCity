@@ -26,17 +26,21 @@ public partial class PerspectiveCity
                 foreach (var mesh in new[] { chunk.Ground, chunk.Roads, chunk.Banks })
                 {
                     if (mesh is null || mesh.GetSurfaceCount() == 0) continue;
-                    var arrays = mesh.SurfaceGetArrays(0);
+                    using var arrays = mesh.SurfaceGetArrays(0);
                     if (arrays[(int)Mesh.ArrayType.Normal].VariantType != Variant.Type.PackedVector3Array) return false;
                     var vertices = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
                     var normals = arrays[(int)Mesh.ArrayType.Normal].AsVector3Array();
                     if (vertices.Length != normals.Length) return false;
-                    for (int i = 0; i < vertices.Length; i += 3)
+                    var indices = arrays[(int)Mesh.ArrayType.Index].VariantType == Variant.Type.Nil
+                        ? Enumerable.Range(0, vertices.Length).ToArray()
+                        : arrays[(int)Mesh.ArrayType.Index].AsInt32Array();
+                    for (int i = 0; i < indices.Length; i += 3)
                     {
-                        var cross = (vertices[i + 1] - vertices[i]).Cross(vertices[i + 2] - vertices[i]);
+                        int a = indices[i], b = indices[i + 1], c = indices[i + 2];
+                        var cross = (vertices[b] - vertices[a]).Cross(vertices[c] - vertices[a]);
                         if (cross.LengthSquared() < 1e-10f) continue;
-                        if (!normals[i].IsFinite() || normals[i].LengthSquared() < .99f ||
-                            cross.Dot(normals[i]) > .000001f) return false;
+                        if (!normals[a].IsFinite() || normals[a].LengthSquared() < .99f ||
+                            cross.Dot(normals[a]) > .000001f) return false;
                     }
                 }
             return true;

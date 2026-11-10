@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using TermCity.Core.Buildings;
 using TermCity.Core.Registry;
 using TermCity.Core.Rendering;
+using TermCity.Core.Session;
 using TermCity.Core.Simulation;
 using TermCity.Core.Terrain;
 using TermCity.Core.Util;
@@ -11,7 +12,7 @@ using TermCity.Core.World;
 
 namespace TermCity.Core.Persistence;
 
-public sealed record SavedView(int CameraX, int CameraY, int ZoomLevel)
+public sealed record SavedView(int CameraX, int CameraY, double ZoomLevel)
 {
     public bool CameraEdgePadding { get; init; }
 }
@@ -327,7 +328,7 @@ public static class SaveGameStore
         if (map.Footbridges.Count > 0 && game.Settlement is null)
             throw new InvalidDataException("Settlement footbridges require a settlement.");
         game.Touch();
-        if (data.View is { } savedView && (savedView.ZoomLevel is < -2 or > 1 ||
+        if (data.View is { } savedView && (!GameSession.IsValidZoom(savedView.ZoomLevel) ||
             (!savedView.CameraEdgePadding && (savedView.CameraX < 0 || savedView.CameraY < 0)) ||
             savedView.CameraX >= map.Width || savedView.CameraY >= map.Height))
             throw new InvalidDataException("Saved camera position or zoom is invalid.");

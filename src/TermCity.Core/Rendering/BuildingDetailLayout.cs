@@ -17,6 +17,7 @@ public readonly record struct FacadeBays(float Span, int Count)
 
 public static class BuildingDetailLayout
 {
+    public const float DoorWidth = .18f;
     public const float WindowWidth = 0.18f;
     public const float BeamWidth = 0.045f;
     public const float TowerWidth = 0.6f;

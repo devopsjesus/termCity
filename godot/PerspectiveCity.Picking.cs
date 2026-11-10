@@ -13,9 +13,12 @@ public partial class PerspectiveCity
     }
 
     private readonly Dictionary<Pos, PickGroup> _structurePickGroups = [];
-    private readonly Dictionary<Pos, PickGroup> _naturalPickGroups = [];
+    private readonly Dictionary<Pos, PickGroup> _sceneNaturalPicks = [];
+    private Dictionary<Pos, PickGroup> _naturalPickGroups => _objectCapture?.Natural ?? _sceneNaturalPicks;
     internal IReadOnlyList<Aabb> NaturalVolumes(Pos owner) =>
-        _naturalPickGroups.TryGetValue(owner, out var group) ? group.Boxes : [];
+        _naturalPickGroups.TryGetValue(owner, out var group) ? group.Boxes :
+        VisibleObjectData.SelectMany(chunk => chunk.Geometry.Natural.Values).Where(group => group.Owner == owner)
+            .SelectMany(group => group.Boxes).ToArray();
 
     public bool PickNaturalFeature(Vector2 pointer, out Pos owner)
     {
@@ -42,7 +45,7 @@ public partial class PerspectiveCity
 
     private IEnumerable<(Aabb Bounds, Pos Anchor)> StructureCandidates(Vector3 origin, Vector3 direction)
     {
-        foreach (var group in _structurePickGroups.Values)
+        foreach (var group in _structurePickGroups.Values.Concat(VisibleObjectData.SelectMany(chunk => chunk.Geometry.Structures.Values)))
         {
             if (!RayBox(group.Bounds, origin, direction, out _)) continue;
             foreach (var box in group.Boxes) yield return (box, group.Owner);
@@ -73,7 +76,7 @@ public partial class PerspectiveCity
     {
         distance = float.PositiveInfinity;
         owner = default;
-        foreach (var group in _naturalPickGroups.Values)
+        foreach (var group in _naturalPickGroups.Values.Concat(VisibleObjectData.SelectMany(chunk => chunk.Geometry.Natural.Values)))
         {
             if (!RayBox(group.Bounds, origin, direction, out float first) || first >= distance) continue;
             foreach (var box in group.Boxes)

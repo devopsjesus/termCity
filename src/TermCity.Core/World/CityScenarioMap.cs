@@ -29,6 +29,7 @@ public static class CityScenarioMap
         CityScenario.SanDiego => "San Diego",
         CityScenario.Chicago => "Chicago",
         CityScenario.StLouis => "St. Louis",
+        CityScenario.Top => "Top Settlement",
         _ => throw new ArgumentOutOfRangeException(nameof(scenario)),
     };
 

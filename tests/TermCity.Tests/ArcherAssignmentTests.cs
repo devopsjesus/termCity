@@ -159,6 +159,44 @@ public class ArcherAssignmentTests
     }
 
     [Fact]
+    public void MixedThreatsReceiveWeightedCoverageWithoutAbandoningGoblins()
+    {
+        var game = Battle(3);
+        var state = game.Settlement!;
+        state.EnemyList[0].Kind = SiegeEnemyKind.TreeTroll;
+        state.EnemyList[1].Kind = SiegeEnemyKind.Orc;
+        var first = state.Defenders[0];
+        for (int i = 4; i < 14; i++)
+            state.DefenderList.Add(new SettlementDefender
+            {
+                Id = state.NextDefenderId++, Home = first.Home, Kind = DefenderKind.Archer,
+                X = first.X, Y = first.Y, Elevation = first.Elevation,
+            });
+        for (int tick = 0; tick < 5; tick++) state.AdvanceDefenders(game, .1);
+        var loads = state.Enemies.Select(e => state.Defenders.Count(u => u.TargetEnemyId == e.Id)).ToArray();
+        Assert.Equal(new[] { 8, 4, 2 }, loads);
+        Assert.Equal(SiegeEnemies.TreeTroll.ThreatWeight, SiegeEnemies.MudTroll.ThreatWeight);
+        Assert.Equal(SiegeEnemies.TreeTroll.ThreatWeight, SiegeEnemies.StoneTroll.ThreatWeight);
+        var targets = state.Defenders.Select(u => u.TargetEnemyId).ToArray();
+        state.AdvanceDefenders(game, .1);
+        Assert.Equal(targets, state.Defenders.Select(u => u.TargetEnemyId).ToArray());
+    }
+
+    [Fact]
+    public void UnreachableTrollsDoNotStarveReachableLowerThreats()
+    {
+        var game = Battle(1);
+        var state = game.Settlement!;
+        state.EnemyList.Add(new SiegeEnemy
+        {
+            Id = state.NextEnemyId++, Kind = SiegeEnemyKind.StoneTroll, Tier = 4,
+            X = 3.5, Y = 3.5, Health = 1100, MaxHealth = 1100, Route = [new(4, 3)],
+        });
+        state.AdvanceDefenders(game, .1);
+        Assert.All(state.Defenders, u => Assert.Equal(state.EnemyList[0].Id, u.TargetEnemyId));
+    }
+
+    [Fact]
     public void SavedAssignmentsRemainDistributedAfterLoadingWithoutNewSaveFields()
     {
         var game = Battle(4);

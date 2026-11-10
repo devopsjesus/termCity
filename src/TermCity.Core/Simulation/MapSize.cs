@@ -24,6 +24,7 @@ public readonly record struct MapSize(int Width, int Height)
         ["SD"] = new(ScenarioWidth, ScenarioHeight) { Scenario = CityScenario.SanDiego },
         ["CHI"] = new(ScenarioWidth, ScenarioHeight) { Scenario = CityScenario.Chicago },
         ["STL"] = new(ScenarioWidth, ScenarioHeight) { Scenario = CityScenario.StLouis },
+        ["TOP"] = new(640, 640) { Scenario = CityScenario.Top },
     };
 
     public static string Describe() =>

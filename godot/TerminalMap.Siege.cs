@@ -10,6 +10,25 @@ public partial class TerminalMap
 {
     internal int WallHealthBarsDrawn { get; private set; }
     internal Dictionary<int, Vector2> RenderedProjectilePoints { get; } = [];
+    internal IReadOnlyList<Vector2> DefenderSelectionPath { get; set; } = [];
+
+    internal Vector2? DefenderSelectionPoint(SettlementDefender unit)
+    {
+        if (PerspectiveEnabled && Perspective is { } view)
+            return view.RenderedDefenderPosition(unit.Id) is { } body ? view.ScreenPoint(body) : null;
+        double fraction = Session.PresentedSiege?.InterpolationFraction ?? 0;
+        unit = Session.PresentedSiege?.Defenders.FirstOrDefault(visible => visible.Id == unit.Id) ?? unit;
+        return SiegeScreenPoint(unit.PreviousX + (unit.X - unit.PreviousX) * fraction,
+            unit.PreviousY + (unit.Y - unit.PreviousY) * fraction);
+    }
+
+    private void DrawDefenderSelection()
+    {
+        if (DefenderSelectionPath.Count < 2) return;
+        var color = new Color("#8fc7d4");
+        DrawPolyline(DefenderSelectionPath.ToArray(), color, 2, true);
+        DrawLine(DefenderSelectionPath[^1], DefenderSelectionPath[0], color, 1, true);
+    }
 
     private Vector2 SiegeScreenPoint(double x, double y, float height = 0)
     {
@@ -27,7 +46,7 @@ public partial class TerminalMap
     {
         WallHealthBarsDrawn = 0;
         RenderedProjectilePoints.Clear();
-        var settlement = Session.Game.Settlement;
+        var settlement = Session.PresentedSiege;
         float sx = Grid.PixelWidth / (float)Session.Stride, sy = Grid.PixelHeight / (float)Session.Stride;
         if (settlement is not null && Session.SelectedDefenderIds.Count == 1 &&
             settlement.Defenders.FirstOrDefault(d => Session.SelectedDefenderIds.Contains(d.Id)) is { } selectedFighter)
@@ -90,7 +109,7 @@ public partial class TerminalMap
                     if (WallDamageLayout.IsBurning(wall))
                     {
                         double phase = Effects?.Settings.ReducedMotion == true ? 0 :
-                            (settlement.Revision + settlement.InterpolationFraction) * 0.1;
+                            settlement.VisualSeconds;
                         var surfaces = WallDamageLayout.FlameSurfaces(wall);
                         for (int i = 0; i < surfaces.Count; i++)
                         {
@@ -357,14 +376,24 @@ public partial class TerminalMap
             color = color.Lerp(new Color(1, .94f, .68f), .19f);
         foreach (var part in WallDamageLayout.Fragments(wall, Session.Game.Map).OrderBy(p => p.Center.Y + p.Size.Y / 2))
         {
+            if (part.Size.X <= 0 || part.Size.Z <= 0) continue;
             var center = wall.Center + tangent * part.Center.X + normal * part.Center.Z;
             var points = new[] { new Vector2(-1, -1), new(1, -1), new(1, 1), new(-1, 1) }.Select(corner =>
             {
                 var p = center + tangent * (corner.X * part.Size.X / 2) + normal * (corner.Y * part.Size.Z / 2);
                 return SiegeScreenPoint(p.X, p.Y);
             }).ToArray();
-            DrawColoredPolygon(points, preview is null && part.Kind == WallFragmentKind.Grate ? new Color("#343b3e") :
-                preview is null && part.Kind == WallFragmentKind.Door ? new Color("#443d32") : color);
+            if (points.Distinct().Count() < 3 ||
+                Math.Abs((points[1] - points[0]).Cross(points[3] - points[0])) < .0001f) continue;
+            var bounds = new Rect2(points[0], Vector2.Zero);
+            foreach (var point in points.Skip(1)) bounds = bounds.Expand(point);
+            if (!bounds.Intersects(new Rect2(Vector2.Zero, Size))) continue;
+            var fill = preview is null && part.Kind == WallFragmentKind.Grate ? new Color("#343b3e") :
+                preview is null && part.Kind == WallFragmentKind.Door ? new Color("#443d32") : color;
+            // These projected boxes are convex. Explicit triangles avoid the canvas ear-clipper's
+            // precision failures on long, thin distant wall fragments.
+            DrawColoredPolygon([points[0], points[1], points[2]], fill);
+            DrawColoredPolygon([points[0], points[2], points[3]], fill);
         }
     }
 

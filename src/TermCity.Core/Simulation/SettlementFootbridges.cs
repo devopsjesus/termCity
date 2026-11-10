@@ -53,7 +53,8 @@ public static class SettlementFootbridges
         var reached = settlement.ReachableLand(map);
         foreach (var start in reached.OrderBy(p => p.Y).ThenBy(p => p.X))
         {
-            if (!map.TerrainAt(start.X, start.Y).Buildable || !settlement.WallNetwork.Contains(new(start.X + .5f, start.Y + .5f)))
+            if (!map.TerrainAt(start.X, start.Y).Buildable || !HasAdjacentWater(map, start) ||
+                !settlement.WallNetwork.Contains(new(start.X + .5f, start.Y + .5f)))
                 continue;
             foreach (var (dx, dy) in RoadNetwork.Neighbors)
             {
@@ -74,6 +75,17 @@ public static class SettlementFootbridges
                     break;
                 }
             }
+        }
+        return false;
+    }
+
+    private static bool HasAdjacentWater(GameMap map, Pos start)
+    {
+        foreach (var (dx, dy) in RoadNetwork.Neighbors)
+        {
+            var next = start.Offset(dx, dy);
+            if (map.InBounds(next) && map.TerrainAt(next.X, next.Y).Name == DefaultTerrains.WaterName)
+                return true;
         }
         return false;
     }

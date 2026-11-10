@@ -17,7 +17,7 @@ internal static class TowerDefenseSmoke
         VerifyTerraceClipping();
         var session = host.Session;
         var original = session.Game;
-        int zoom = session.ZoomLevel;
+        double zoom = session.ZoomLevel;
         var center = new Pos(session.CameraX + session.ViewWidth * session.Stride / 2,
             session.CameraY + session.ViewHeight * session.Stride / 2);
         var view = host.Map.Perspective!;

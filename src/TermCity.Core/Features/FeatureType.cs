@@ -42,6 +42,7 @@ public sealed class ScatterFeatureGenerator : IFeatureGenerator
     public double ClusterDensity { get; init; }
 
     public double ClusterFrequency { get; init; } = 0.07;
+    public bool GeographicRegions { get; init; }
 
     /// <summary>Minimum center-to-center distance in map cells; zero keeps unrestricted scatter.</summary>
     public double MinimumSpacing { get; init; }
@@ -55,8 +56,10 @@ public sealed class ScatterFeatureGenerator : IFeatureGenerator
         double[]? cluster = null;
         double threshold = 0;
         List<Pos>? candidates = MinimumSpacing > 0 ? [] : null;
+        var regions = GeographicRegions
+            ? LandscapeRegions.Create(context, "forest:" + feature.Name, ClusterCoverage, ClusterFrequency).Mask : null;
 
-        if (ClusterCoverage > 0)
+        if (ClusterCoverage > 0 && regions is null)
         {
             var noise = new PerlinNoise(context.CreateRandom("cluster:" + feature.Name));
             cluster = new double[map.Width * map.Height];
@@ -81,7 +84,9 @@ public sealed class ScatterFeatureGenerator : IFeatureGenerator
                     continue;
                 }
 
-                double density = cluster is not null && cluster[y * map.Width + x] >= threshold ? ClusterDensity : BaseDensity;
+                bool clustered = regions is not null ? regions[map.Index(x, y)] :
+                    cluster is not null && cluster[y * map.Width + x] >= threshold;
+                double density = clustered ? ClusterDensity : BaseDensity;
                 if (rng.Chance(density * terrain.DensityFor(feature.Name)) && ShorelineLayout.NaturalFeatureFits(map, x, y))
                 {
                     if (candidates is null) map.SetFeature(x, y, feature);
@@ -138,9 +143,10 @@ public static class DefaultFeatures
         Generator = new ScatterFeatureGenerator
         {
             Order = 10,
-            BaseDensity = 0.012,
-            ClusterCoverage = 0.22,
+            BaseDensity = 0.001,
+            ClusterCoverage = 0.125,
             ClusterDensity = 0.55,
+            GeographicRegions = true,
             MinimumSpacing = WorldScale.NaturalTreeSpacing,
         },
         Description = "Woodland (cleared when built over)",

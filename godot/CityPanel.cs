@@ -3,7 +3,6 @@ using TermCity.Core.Rendering;
 using TermCity.Core.Session;
 using TermCity.Core.Simulation;
 using TermCity.Core.Util;
-using TermCity.Core.World;
 
 namespace TermCity.GodotApp;
 
@@ -15,10 +14,9 @@ public partial class CityPanel : Control
     public Action RotateMap { get; set; } = null!;
     public Func<(float Azimuth, float Elevation)?> CameraOrientation { get; set; } = () => null;
     public Func<Vector2[]?> CameraFootprint { get; set; } = () => null;
+    public Func<Vector2[]?> PendingCameraFootprint { get; set; } = () => null;
+    public Action<Pos>? JumpFromMinimap { get; set; }
     public CityMinimap Minimap { get; private set; } = null!;
-    private readonly Dictionary<ZoneType, ProgressBar> _demand = [];
-    private readonly Dictionary<ZoneType, Control[]> _demandHover = [];
-    private (CityGame Game, CityStats Stats, CityIndicators Indicators, bool Paused, Season Season)? _demandState;
     private readonly List<Label> _cityCells = [];
     private GridContainer _cityTable = null!;
     private Label _zoom = null!;
@@ -36,9 +34,7 @@ public partial class CityPanel : Control
     private float _fittedWidth = -1;
     private int _fittedCells = -1;
     private static readonly Color HeadingColor = new("#70b7ff");
-    private const int TableFontSize = 13;
-    private const int CityFontSize = 18;
-    private const int DemandSize = 18;
+    private const int CityFontSize = 22;
 
     public override void _Ready()
     {
@@ -58,7 +54,9 @@ public partial class CityPanel : Control
         _top.AddThemeConstantOverride("v_separation", 4);
         _content.AddChild(_top);
         var overview = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        Minimap = new CityMinimap { Session = Session, CameraOrientation = CameraOrientation, CameraFootprint = CameraFootprint };
+        Minimap = new CityMinimap { Session = Session, CameraOrientation = CameraOrientation,
+            CameraFootprint = CameraFootprint, PendingCameraFootprint = PendingCameraFootprint,
+            JumpRequested = JumpFromMinimap };
         Minimap.SetHeight(120);
         var cameraControls = new HBoxContainer
         {
@@ -86,6 +84,8 @@ public partial class CityPanel : Control
         cameraControls.AddChild(tilt);
         cameraControls.AddChild(rotate);
         foreach (var button in new[] { tilt, rotate })
+        {
+            button.AddThemeFontSizeOverride("font_size", 22);
             foreach (string state in new[] { "normal", "hover", "pressed", "hover_pressed", "disabled", "focus" })
             {
                 var style = new StyleBoxFlat { BgColor = Colors.Black, BorderColor = Colors.White };
@@ -93,6 +93,7 @@ public partial class CityPanel : Control
                 style.SetContentMarginAll(4);
                 button.AddThemeStyleboxOverride(state, style);
             }
+        }
         overview.AddChild(cameraControls);
         var zoomControls = new HBoxContainer { Alignment = BoxContainer.AlignmentMode.Center };
         var zoomOut = new Button { Name = "MinimapZoomOut", Text = "[-]", FocusMode = FocusModeEnum.None };
@@ -103,7 +104,7 @@ public partial class CityPanel : Control
             HorizontalAlignment = HorizontalAlignment.Center,
             SizeFlagsHorizontal = SizeFlags.ExpandFill
         };
-        _zoom.AddThemeFontSizeOverride("font_size", 20);
+        _zoom.AddThemeFontSizeOverride("font_size", 24);
         var zoomIn = new Button { Name = "MinimapZoomIn", Text = "[+]", FocusMode = FocusModeEnum.None };
         zoomIn.Pressed += () => { if (Session.MapNavigationAllowed) ZoomBy(1); };
         zoomControls.AddChild(zoomOut);
@@ -113,7 +114,7 @@ public partial class CityPanel : Control
         foreach (var button in _zoomButtons)
         {
             button.Alignment = HorizontalAlignment.Center;
-            button.AddThemeFontSizeOverride("font_size", 22);
+            button.AddThemeFontSizeOverride("font_size", 24);
             foreach (string state in new[] { "normal", "hover", "pressed", "hover_pressed", "disabled", "focus" })
             {
                 var style = (StyleBox)button.GetThemeStylebox(state).Duplicate();
@@ -130,40 +131,6 @@ public partial class CityPanel : Control
         overview.AddChild(zoomFrame);
         overview.AddChild(Minimap);
         _top.AddChild(overview);
-        var demand = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
-        demand.AddChild(Heading("DEMAND"));
-        foreach (var zone in Zones.Placeable)
-        {
-            var row = new HBoxContainer { Name = $"Demand{Zones.Get(zone).Letter}Row", MouseFilter = MouseFilterEnum.Stop };
-            var letter = new Label
-            {
-                Name = $"Demand{Zones.Get(zone).Letter}",
-                Text = Zones.Get(zone).Letter.ToString(),
-                MouseFilter = MouseFilterEnum.Stop,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            letter.AddThemeFontSizeOverride("font_size", DemandSize);
-            row.AddChild(letter);
-            var bar = new ProgressBar
-            {
-                MaxValue = 1,
-                ShowPercentage = false,
-                SizeFlagsHorizontal = SizeFlags.ExpandFill,
-                SizeFlagsVertical = SizeFlags.ShrinkCenter,
-                CustomMinimumSize = new Vector2(0, DemandSize),
-                MouseFilter = MouseFilterEnum.Stop
-            };
-            var style = new StyleBoxFlat();
-            var color = Zones.Get(zone).Foreground;
-            style.BgColor = new Color(color.R / 255f, color.G / 255f, color.B / 255f);
-            letter.AddThemeColorOverride("font_color", style.BgColor);
-            bar.AddThemeStyleboxOverride("fill", style);
-            row.AddChild(bar);
-            demand.AddChild(row);
-            _demand[zone] = bar;
-            _demandHover[zone] = [row, letter, bar];
-        }
-        _top.AddChild(demand);
         _nextWave = new VBoxContainer
         {
             Name = "NextWaveSection", Visible = false, SizeFlagsHorizontal = SizeFlags.ExpandFill,
@@ -171,10 +138,12 @@ public partial class CityPanel : Control
         _nextWave.AddChild(Heading("NEXT WAVE"));
         _nextWaveCountdown = new Label
         {
-            Name = "NextWaveCountdown", AutowrapMode = TextServer.AutowrapMode.WordSmart,
+            Name = "NextWaveCountdown", CustomMinimumSize = new Vector2(0, 28),
             SizeFlagsHorizontal = SizeFlags.ExpandFill,
         };
-        _nextWaveCountdown.AddThemeFontSizeOverride("font_size", 16);
+        _nextWaveCountdown.AddThemeFontSizeOverride("font_size", 22);
+        _nextWaveCountdown.ClipText = true;
+        _nextWaveCountdown.TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis;
         _nextWave.AddChild(_nextWaveCountdown);
         _nextWaveProgress = new ProgressBar
         {
@@ -194,7 +163,7 @@ public partial class CityPanel : Control
         city.AddChild(Heading("CITY"));
         city.AddChild(_cityTable);
         _content.AddChild(city);
-        _groups.AddRange([overview, demand, _nextWave, city]);
+        _groups.AddRange([overview, _nextWave, city]);
         Resized += FitContents;
         Refresh();
         FitContents();
@@ -204,7 +173,7 @@ public partial class CityPanel : Control
     private PanelContainer Heading(string text)
     {
         var label = new Label { Name = text[0] + text[1..].ToLowerInvariant() + "Heading", Text = text };
-        label.AddThemeFontSizeOverride("font_size", 22);
+        label.AddThemeFontSizeOverride("font_size", 24);
         label.AddThemeColorOverride("font_color", HeadingColor);
         var cell = Main.Frame(label);
         var style = cell.GetThemeStylebox("panel");
@@ -295,7 +264,7 @@ public partial class CityPanel : Control
                 ClipText = true,
                 TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
                 HorizontalAlignment = column == 0 ? HorizontalAlignment.Left : HorizontalAlignment.Right,
-                CustomMinimumSize = new Vector2(column == 0 ? 90 : 145, 0),
+                CustomMinimumSize = new Vector2(column == 0 ? 106 : 174, 0),
                 SizeFlagsHorizontal = SizeFlags.ExpandFill,
                 MouseFilter = MouseFilterEnum.Stop,
             };
@@ -342,9 +311,8 @@ public partial class CityPanel : Control
         try
         {
             float mapHeight = Size.X;
-            bool compact = Size.Y < mapHeight + 300;
             _top.Columns = 1;
-            int columns = compact ? 4 : 2;
+            int columns = 2;
             if (_cityTable.Columns != columns)
             {
                 _cityTable.Columns = columns;
@@ -353,25 +321,13 @@ public partial class CityPanel : Control
             }
             for (int index = 0; index < _cityCells.Count; index++)
             {
-                _cityCells[index].CustomMinimumSize = new Vector2(compact
-                    ? index % 2 == 0 ? 45 : 65
-                    : index % 2 == 0 ? 90 : 145, 0);
+                _cityCells[index].CustomMinimumSize = new Vector2(index % 2 == 0 ? 106 : 174, 0);
                 var cellStyle = _cityCells[index].GetParent<Control>().GetThemeStylebox("panel");
-                cellStyle.ContentMarginTop = cellStyle.ContentMarginBottom = compact ? 1 : 2;
+                cellStyle.ContentMarginTop = cellStyle.ContentMarginBottom = 2;
             }
-            float fixedHeight = 0;
-            for (int fontSize = TableFontSize; fontSize >= 8; fontSize--)
-            {
-                foreach (var label in _cityCells)
-                {
-                    SetFont(label, fontSize + CityFontSize - TableFontSize);
-                    FitGauge(label);
-                }
-                foreach (var label in _headings) SetFont(label, 22);
-                foreach (var group in _groups) group.AddThemeConstantOverride("separation", Math.Max(2, fontSize / 3));
-                fixedHeight = _content.GetCombinedMinimumSize().Y - Minimap.CustomMinimumSize.Y;
-                if (fixedHeight + mapHeight <= Size.Y) break;
-            }
+            foreach (var label in _cityCells) FitGauge(label);
+            foreach (var group in _groups) group.AddThemeConstantOverride("separation", 4);
+            float fixedHeight = _content.GetCombinedMinimumSize().Y - Minimap.CustomMinimumSize.Y;
             Minimap.SetHeight(Math.Min(mapHeight, Math.Max(80, Size.Y - fixedHeight)));
             _content.Size = Size;
             _fittedHeight = Size.Y;
@@ -380,28 +336,12 @@ public partial class CityPanel : Control
         }
         finally { _fitting = false; }
 
-        static void SetFont(Control control, int size)
-        {
-            if (control.GetThemeFontSize("font_size") != size) control.AddThemeFontSizeOverride("font_size", size);
-        }
     }
 
     public void Refresh()
     {
         if (_cityTable is null) return;
         var game = Session.Game;
-        var demand = game.Demand;
-        var demandState = (game, game.Stats, game.Indicators, game.Paused, game.Season);
-        foreach (var zone in Zones.Placeable)
-        {
-            _demand[zone].Value = demand.For(zone);
-            if (_demandState != demandState)
-            {
-                string details = CityReport.ZoneDetails(game, zone) + "\nF8: growth and road access report.";
-                foreach (var control in _demandHover[zone]) control.TooltipText = details;
-            }
-        }
-        _demandState = demandState;
         bool waveVisibilityChanged = _nextWave.Visible != (game.Settlement is not null);
         _nextWave.Visible = game.Settlement is not null;
         if (game.Settlement is { } siege)
@@ -417,10 +357,23 @@ public partial class CityPanel : Control
             _nextWaveCountdown.TooltipText = _nextWaveProgress.TooltipText = tooltip;
         }
         int previousCells = _cityCells.Count;
-        RefreshTable(_cityTable, SidebarReport.CityRows(game), _cityCells);
-        _zoom.Text = Session.ZoomLabel;
-        Minimap.QueueRedraw();
+        if (!ReferenceEquals(_cityRowsGame, game) || _cityRowsVersion != game.AnalysisVersion)
+        {
+            RefreshTable(_cityTable, SidebarReport.CityRows(game), _cityCells);
+            _cityRowsGame = game;
+            _cityRowsVersion = game.AnalysisVersion;
+        }
+        RefreshCamera();
         if (waveVisibilityChanged) _fittedHeight = -1;
         if (waveVisibilityChanged || previousCells != _cityCells.Count) FitContents();
     }
+
+    public void RefreshCamera()
+    {
+        _zoom.Text = Session.ZoomLabel;
+        Minimap.QueueRedraw();
+    }
+
+    private CityGame? _cityRowsGame;
+    private int _cityRowsVersion = -1;
 }

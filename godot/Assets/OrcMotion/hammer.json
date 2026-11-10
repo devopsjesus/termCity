@@ -1,0 +1,10 @@
+{
+  "parts": 251,
+  "clips": 11,
+  "rate": 120,
+  "rawBytes": 22183357,
+  "compressedBytes": 5923145,
+  "maxBoneError": 5.551115123125783e-16,
+  "sourceSha256": "4196774c7992869c0d03e3a83d33babcf49e00893ab3fc5ab874bfe5d50f4eae",
+  "assetSha256": "a4916385d26032322169ff80e137b270b59c1a8e62ed569dcea7262ea14a88a8"
+}

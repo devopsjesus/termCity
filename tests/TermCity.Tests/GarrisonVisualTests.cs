@@ -11,6 +11,40 @@ public class GarrisonVisualTests
     [InlineData(WallMaterial.Wood)]
     [InlineData(WallMaterial.Stone)]
     [InlineData(WallMaterial.ReinforcedStone)]
+    public void IdleArchersFaceOutsideEveryOriginalWallAndTower(WallMaterial material)
+    {
+        var state = new SettlementState(new(40, 40, 40, 40));
+        foreach (var wall in state.Walls) wall.BuiltMaterial = material;
+        state.InvalidateWallTopology();
+        foreach (var wall in state.Walls.Where(wall => !wall.IsGateWing))
+        {
+            var normal = new Vector2(-wall.Tangent.Y, wall.Tangent.X);
+            var position = wall.Center + normal * WallDamageLayout.WalkwayOffset(wall);
+            var unit = new SettlementDefender { Kind = DefenderKind.Archer,
+                X = position.X, Y = position.Y, PreviousX = position.X, PreviousY = position.Y,
+                Elevation = WallDamageLayout.WalkHeight(wall), PreviousElevation = WallDamageLayout.WalkHeight(wall) };
+            var forward = SiegeMotion.IdleDefenderForward(state, unit);
+            var expected = wall.IsTower ? -WallDamageLayout.LadderInward(wall) :
+                normal * WallDamageLayout.ExteriorSide(wall);
+            Assert.InRange(Vector2.Dot(forward, expected), .999f, 1.001f);
+            Assert.False(state.WallNetwork.ContainsAny(wall.Center + forward * .2f));
+        }
+    }
+
+    [Fact]
+    public void IdleGroundArchersFaceAwayFromTheSettlementAndGuardsKeepTheirExistingPose()
+    {
+        var state = new SettlementState(new(40, 40, 40, 40));
+        var archer = new SettlementDefender { Kind = DefenderKind.Archer, X = 70, Y = 60, PreviousX = 70, PreviousY = 60 };
+        Assert.Equal(Vector2.UnitX, SiegeMotion.IdleDefenderForward(state, archer));
+        archer.Kind = DefenderKind.Soldier;
+        Assert.Equal(-Vector2.UnitY, SiegeMotion.IdleDefenderForward(state, archer));
+    }
+
+    [Theory]
+    [InlineData(WallMaterial.Wood)]
+    [InlineData(WallMaterial.Stone)]
+    [InlineData(WallMaterial.ReinforcedStone)]
     public void ClimberBodiesStayOnTheExposedSideOfEveryTowerLadder(WallMaterial material)
     {
         var state = new SettlementState(new(40, 40, 40, 40));
@@ -64,6 +98,10 @@ public class GarrisonVisualTests
         Assert.True(game.BuildWallRun(new(10.5f, 110.5f), new(10.5f, 90.5f)).Success);
         Assert.True(WallDamageLayout.HasAccessLadder(tower));
         Assert.True(game.Settlement.WallNetwork.ContainsAny(WallDamageLayout.LadderClimbPosition(tower)));
+        var archer = new SettlementDefender { Kind = DefenderKind.Archer, X = tower.Center.X, Y = tower.Center.Y,
+            PreviousX = tower.Center.X, PreviousY = tower.Center.Y,
+            Elevation = WallDamageLayout.WalkHeight(tower), PreviousElevation = WallDamageLayout.WalkHeight(tower) };
+        Assert.Equal(-WallDamageLayout.LadderInward(tower), SiegeMotion.IdleDefenderForward(game.Settlement, archer));
     }
 
     [Theory]
@@ -125,6 +163,13 @@ public class GarrisonVisualTests
             var deck = WallDamageLayout.Fragments(wall).Single(p => p.Kind == WallFragmentKind.Trim);
             Assert.True(region.Contains(wall.Center + normal * deck.Center.Z));
             Assert.False(region.Contains(wall.Center + normal * side * .2f));
+            var position = wall.Center + normal * WallDamageLayout.WalkwayOffset(wall);
+            var archer = new SettlementDefender { Kind = DefenderKind.Archer, X = position.X, Y = position.Y,
+                PreviousX = position.X, PreviousY = position.Y,
+                Elevation = WallDamageLayout.WalkHeight(wall), PreviousElevation = WallDamageLayout.WalkHeight(wall) };
+            var facing = SiegeMotion.IdleDefenderForward(state, archer);
+            Assert.True(Vector2.Dot(facing, normal * side) > .999f);
+            Assert.False(region.Contains(wall.Center + facing * .2f));
             wall.DefenseFacing *= -1;
             Assert.Equal(side, WallDamageLayout.ExteriorSide(wall));
         }

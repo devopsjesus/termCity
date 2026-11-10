@@ -72,7 +72,8 @@ public partial class Main
         var icons = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
         icons.AddThemeConstantOverride("separation", RailPadding - 1);
         scroll.AddChild(icons);
-        void AddIcon(string name, string icon, Color color, Action action, ServiceKind kind = ServiceKind.None)
+        void AddIcon(string name, string icon, Color color, Action action, ServiceKind kind = ServiceKind.None,
+            bool monument = false)
         {
             var button = new Button
             {
@@ -83,7 +84,7 @@ public partial class Main
             button.AddThemeColorOverride("font_color", color);
             var artwork = new ConstructionIcon
             {
-                Name = "IconArtwork", Glyph = icon, Kind = kind, MainColor = color,
+                Name = "IconArtwork", Glyph = icon, Kind = kind, MainColor = color, Monument = monument,
                 MouseFilter = MouseFilterEnum.Ignore,
             };
             artwork.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
@@ -111,8 +112,7 @@ public partial class Main
             icons.AddChild(iconFrame);
         }
         string roadIcon = Session.Game.Map.Content.Roads.OrderByDescending(r => r.Rank).First().GlyphFor(5);
-        AddIcon("Roads", roadIcon, new Color("#b99a70"), () => ShowConstructionMenu(null));
-        foreach (var service in ServiceKinds.All)
+        foreach (var service in ServiceKinds.All.OrderBy(service => service == ServiceKind.Defence ? 0 : 1))
         {
             var building = Session.Game.Map.Content.Buildings
                 .FirstOrDefault(b => b.PlayerPlaceable && b.Service == service);
@@ -121,7 +121,9 @@ public partial class Main
                 () => ShowConstructionMenu(service), service);
         }
         if (CityGame.DebugToolsAvailable)
-            AddIcon("Monuments", "♙", new Color("#d0c6a6"), () => ShowConstructionMenu(null, monuments: true), ServiceKind.Defence);
+            AddIcon("Monuments", "", new Color("#dfc45f"), () => ShowConstructionMenu(null, monuments: true),
+                monument: true);
+        AddIcon("Roads", roadIcon, new Color("#b99a70"), () => ShowConstructionMenu(null));
         var frame = new TerminalFrame { VisibleContentPadding = RailPadding };
         frame.AddChild(scroll);
         frame.SizeFlagsHorizontal = SizeFlags.Fill;

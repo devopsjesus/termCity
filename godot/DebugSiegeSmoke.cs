@@ -14,6 +14,9 @@ internal static class DebugSiegeSmoke
         var game = session.Game;
         Require(session.DebugSiegeMode, "The debug-control fixture must explicitly enable Debug Siege mode.");
         var strip = Descendants(host.Map).OfType<TerminalFrame>().Single(node => node.Name == "DebugSiegeControls");
+        Require(Descendants(strip).OfType<Control>().Where(control => control is Label or Button or LineEdit)
+            .All(control => control.GetThemeFontSize("font_size") == 20),
+            "Every debug toolbar label, input and button must use readable 20-point text.");
         var size = Descendants(strip).OfType<LineEdit>().Single(node => node.Name == "DebugSwarmSize");
         var wallWidth = Descendants(strip).OfType<LineEdit>().Single(node => node.Name == "DebugWallWidth");
         var wallHeight = Descendants(strip).OfType<LineEdit>().Single(node => node.Name == "DebugWallHeight");

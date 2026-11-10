@@ -6,6 +6,7 @@ namespace TermCity.Core.Simulation;
 
 public sealed partial class SettlementState
 {
+    private const int CrowdSpawnDistance = 6;
     private readonly List<SiegeEnemy> _movementOrder = [];
 
     private bool EnemySpawnClear(CityGame game, double x, double y, double radius) =>
@@ -43,7 +44,7 @@ public sealed partial class SettlementState
         while (queue.TryDequeue(out var cell))
         {
             int d = distance[cell];
-            if (d >= 6) spawns.Add(cell);
+            if (d >= CrowdSpawnDistance) spawns.Add(cell);
             if (d >= 12) continue;
             foreach (var next in Neighbors(cell))
             {
@@ -72,17 +73,24 @@ public sealed partial class SettlementState
     }
 
     private static List<Pos> ChooseCrowdSpawns(List<Pos> candidates, int count, int tier, int wave,
-        SiegeEnemyKind kind = SiegeEnemyKind.Goblin)
+        SiegeEnemyKind kind = SiegeEnemyKind.Goblin, Dictionary<Pos, Pos>? approachRoutes = null)
     {
         var selected = new List<Pos>(count);
         double diameter = SiegeEnemies.Get(kind).CollisionRadius(tier) * 2;
+        var routeDepths = kind == SiegeEnemyKind.Orc && approachRoutes is not null
+            ? candidates.ToDictionary(cell => cell, cell => CrowdRoute(cell, approachRoutes).Count) : null;
+        var depths = routeDepths?.Values.Distinct().Order().ToArray() ?? [];
         for (int n = 0; n < count && candidates.Count > 0; n++)
         {
             int offset = (int)(((long)wave * 37 + n * 97) % candidates.Count);
             bool found = false;
+            int depth = depths.Length > 0 ? depths[(wave + n) % depths.Length] : -1;
+            // Orcs occupy successive approach depths; only fall back when a depth has no free body-sized slot.
+            for (int pass = 0; pass < (depth >= 0 ? 2 : 1) && !found; pass++)
             for (int probe = 0; probe < candidates.Count; probe++)
             {
                 var cell = candidates[(offset + probe) % candidates.Count];
+                if (pass == 0 && depth >= 0 && routeDepths![cell] != depth) continue;
                 bool free = true;
                 foreach (var placed in selected)
                     if (Math.Pow(cell.X - placed.X, 2) + Math.Pow(cell.Y - placed.Y, 2) < diameter * diameter)
@@ -142,17 +150,35 @@ public sealed partial class SettlementState
         return true;
     }
 
-    private void MoveCrowdMember(CityGame game, SiegeEnemy goblin, double x, double y)
+    private bool CrowdGroundStepClear(CityGame game, SiegeEnemy goblin, double px, double py, bool retreating)
+    {
+        if (!EnemyGroundClear(game, px, py, goblin.CollisionRadius, approachingWall: retreating)) return false;
+        if (!retreating) return true;
+        double radiusSquared = goblin.CollisionRadius * goblin.CollisionRadius;
+        foreach (var wall in WallsNear(new((float)px, (float)py), (float)goblin.CollisionRadius + .4f))
+        {
+            if (wall.Health <= 0) continue;
+            var before = WallAttackPoint(wall, goblin.X, goblin.Y);
+            var after = WallAttackPoint(wall, px, py);
+            double oldDistance = Math.Pow(goblin.X - before.X, 2) + Math.Pow(goblin.Y - before.Y, 2);
+            double newDistance = Math.Pow(px - after.X, 2) + Math.Pow(py - after.Y, 2);
+            // Existing close-contact saves may overlap a wall; allow only outward escape, never deeper entry.
+            if (newDistance + 1e-8 < Math.Min(oldDistance, radiusSquared)) return false;
+        }
+        return true;
+    }
+
+    private void MoveCrowdMember(CityGame game, SiegeEnemy goblin, double x, double y, bool retreating = false)
     {
         double fraction = 1;
-        if (!CrowdStepIsFree(goblin, x, y) || !EnemyGroundClear(game, x, y, goblin.CollisionRadius))
+        if (!CrowdStepIsFree(goblin, x, y) || !CrowdGroundStepClear(game, goblin, x, y, retreating))
         {
             double low = 0, high = 1;
             for (int n = 0; n < 12; n++)
             {
                 double middle = (low + high) / 2;
                 double px = goblin.X + (x - goblin.X) * middle, py = goblin.Y + (y - goblin.Y) * middle;
-                if (CrowdStepIsFree(goblin, px, py) && EnemyGroundClear(game, px, py, goblin.CollisionRadius)) low = middle;
+                if (CrowdStepIsFree(goblin, px, py) && CrowdGroundStepClear(game, goblin, px, py, retreating)) low = middle;
                 else high = middle;
             }
             fraction = low;

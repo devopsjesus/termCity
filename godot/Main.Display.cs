@@ -8,6 +8,10 @@ namespace TermCity.GodotApp;
 
 public partial class Main
 {
+    private readonly record struct UiState(CityGame Game, int Analysis, int Money, int Week, int Day,
+        bool Paused, GameSpeed Speed, int Siege, int Wave, int Enemies, int Defenders, bool MessageVisible,
+        Vector2 MapSize, int FontSize, double Zoom);
+    private UiState? _lastUiState;
     public CityMinimap Minimap => _panel.Minimap;
 
     public const int DefaultFontSize = 20, MinFontSize = 16, MaxFontSize = 28;
@@ -57,6 +61,8 @@ public partial class Main
     private int _peasantVariation;
     private int? _peasantStartWeek;
     private CityGame? _peasantGame;
+    private int _peasantVersion = -1, _peasantComplaintIndex = -1;
+    private PeasantNeed? _peasantNeed;
 
     private Label _savePathLabel = null!;
 
@@ -396,9 +402,12 @@ public partial class Main
         city.AddChild(_linePreview);
         _panel = new CityPanel { Session = Session, ZoomBy = delta => Map.ZoomBy(delta),
             TiltMap = Map.TiltMap, RotateMap = Map.RotateMap,
+            JumpFromMinimap = Map.JumpFromMinimap,
             CameraOrientation = () => Map.PerspectiveEnabled && Map.Perspective is { } camera
-                ? (camera.Azimuth, camera.Elevation) : null,
+                ? camera.PresentedOrientation : null,
             CameraFootprint = () => Map.PerspectiveEnabled && Map.Perspective is { } camera
+                ? camera.PresentedGroundCorners() : null,
+            PendingCameraFootprint = () => Map.MinimapJumpPending && Map.Perspective is { } camera
                 ? camera.GroundViewCorners() : null,
             SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsVertical = SizeFlags.ExpandFill };
         var sidebar = new TerminalFrame { VisibleContentPadding = RailPadding };
@@ -534,7 +543,25 @@ public partial class Main
         return border;
     }
 
-    private void UpdateUi()
+    private void UpdateUi(bool force = true)
+    {
+        var game = Session.Game;
+        var siege = game.Settlement;
+        bool inspecting = Session.HasCursor || Session.SelectedEnemy is not null ||
+            Session.SelectedDefenderIds.Count > 0 || Session.FixedPlacementToolActive;
+        var state = new UiState(game, game.AnalysisVersion, game.Money, game.Week, game.Day,
+            Session.ClockSuspended, game.Speed, inspecting ? siege?.Revision ?? -1 : -1,
+            siege?.WaveNumber ?? 0, siege?.Enemies.Count ?? 0, siege?.Defenders.Count ?? 0, Session.MessageVisible,
+            Map.Size, FontSize, Session.ZoomLevel);
+        if (!force && !Session.InputDebug && _lastUiState == state) return;
+        _lastUiState = state;
+        long started = _options.CameraPerformanceTest ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        RefreshUi();
+        if (_options.CameraPerformanceTest)
+            CameraHudMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+    }
+
+    private void RefreshUi()
     {
         var game = Session.Game;
         _hud.Text = Session.Game.CityName;
@@ -554,6 +581,7 @@ public partial class Main
         _hudStats.Modulate = game.Money <= 0 ? new Color("#ff7777") : new Color("#88ee99");
         FitHeaderFonts();
         UpdateMenuSizeControls();
+        long inspectorStarted = _options.CameraPerformanceTest ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         string cellInfo = Session.SelectedEnemySummary ?? (Session.HasCursor ? CellInspector.Summary(game, Session.Cursor,
             Map.PerspectiveEnabled ? Map.Perspective?.SelectedSurfacePoint(Session.Cursor) : null) : "Press F1 for HELP");
         bool gameMenu = Session.Prompt?.Title == GameDialogTitle;
@@ -578,21 +606,31 @@ public partial class Main
         _placementStatus.TooltipText = _placementStatus.Text;
         _placementStatus.Visible = Session.FixedPlacementToolActive && _placementStatus.Text.Length > 0;
         _savePathLabel.Visible = gameMenu || Session.Prompt?.IsSaveDialog == true;
+        if (_options.CameraPerformanceTest)
+            CameraInspectorMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(inspectorStarted).TotalMilliseconds;
+        long peasantStarted = _options.CameraPerformanceTest ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         if (!ReferenceEquals(_peasantGame, game))
         {
             _peasantGame = game;
             _peasantStartWeek = null;
             _peasantReason = null;
+            _peasantVersion = -1;
         }
         if (_peasantStartWeek is null || game.Week < _peasantStartWeek) _peasantStartWeek = game.Week;
         int complaintIndex = game.Week - _peasantStartWeek.Value;
-        var need = game.Config.FullRules ? PeasantNeeds.Describe(game, _peasantVariation, complaintIndex) : null;
-        if (need?.Reason != _peasantReason)
+        if (_peasantVersion != game.AnalysisVersion || _peasantComplaintIndex != complaintIndex)
         {
-            _peasantReason = need?.Reason;
-            _peasantVariation = Random.Shared.Next(4);
-            need = game.Config.FullRules ? PeasantNeeds.Describe(game, _peasantVariation, complaintIndex) : null;
+            _peasantNeed = game.Config.FullRules ? PeasantNeeds.Describe(game, _peasantVariation, complaintIndex) : null;
+            if (_peasantNeed?.Reason != _peasantReason)
+            {
+                _peasantReason = _peasantNeed?.Reason;
+                _peasantVariation = Random.Shared.Next(4);
+                _peasantNeed = game.Config.FullRules ? PeasantNeeds.Describe(game, _peasantVariation, complaintIndex) : null;
+            }
+            _peasantVersion = game.AnalysisVersion;
+            _peasantComplaintIndex = complaintIndex;
         }
+        var need = _peasantNeed;
         if (need is null) _peasantStartWeek = null;
         if (!ConstructionMenuVisible || _constructionChoices.Length == 0 ||
             _constructionChoices[_constructionIndex].Building is null)
@@ -604,13 +642,18 @@ public partial class Main
                 !_placementStatus.Visible && !Session.InputDebug && Session.Prompt is null;
         }
         if (!_savePathLabel.Visible) _modalShield.TooltipText = "";
+        if (_options.CameraPerformanceTest)
+            CameraPeasantMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(peasantStarted).TotalMilliseconds;
         UpdateModal();
         UpdateDebugSiegeControls();
         UpdateConstructionPurchaseState();
         UpdateConstructionCoverage();
         FitStatusRow();
         UpdateViewsBar();
+        long panelStarted = _options.CameraPerformanceTest ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         _panel.Refresh();
+        if (_options.CameraPerformanceTest)
+            CameraPanelMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(panelStarted).TotalMilliseconds;
         if (_modal.Visible)
         {
             _modalError.Text = Session.MessageVisible && Session.MessageKind == MessageKind.Error ? Session.Message : "";

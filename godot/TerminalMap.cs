@@ -50,15 +50,32 @@ public partial class TerminalMap : Control
     public int BuildingsDrawn { get; private set; }
     public bool PerspectiveEnabled { get; private set; }
     public PerspectiveCity? Perspective { get; private set; }
+    internal bool MinimapJumpPending => PerspectiveEnabled && Perspective is { MinimapJumpPending: true };
+    internal void JumpFromMinimap(Pos target)
+    {
+        if (PerspectiveEnabled && Perspective is { } perspective) perspective.BeginMinimapJump(Session);
+        Session.CenterOn(target);
+        QueueRedraw();
+    }
     internal DepthTreatment DepthStudyTreatment { get; init; } = DepthStudyArtwork.DefaultTreatment;
     internal TerrainStudyTreatment TerrainStudyTreatment { get; init; } = TerrainStudyTreatment.Balanced;
+    internal bool OverviewLodEnabled { get; init; }
+    internal bool PersistentResidencyEnabled { get; init; }
+    internal DiagnosticRenderQuality RenderQuality { get; init; }
 
     public void SetPerspective(bool enabled)
     {
         if (enabled && Perspective is null)
         {
-            Perspective = new PerspectiveCity { DepthTreatment = DepthStudyTreatment, TerrainTreatment = TerrainStudyTreatment };
+            Perspective = new PerspectiveCity { DepthTreatment = DepthStudyTreatment, TerrainTreatment = TerrainStudyTreatment,
+                OverviewLodEnabled = OverviewLodEnabled, RenderQuality = RenderQuality };
             AddChild(Perspective);
+            if (PersistentResidencyEnabled)
+            {
+                Perspective.ConfigureCacheExperiment(CacheExperiment.PersistentScene);
+                GD.Print("TERMCITY_PERSISTENT_RESIDENCY_ENABLED policy=bounded cpu=256MiB gpu=128MiB quality=unchanged");
+            }
+            if (OverviewLodEnabled) GD.Print("TERMCITY_OVERVIEW_LOD_ENABLED activation=max-zoom-only previews=detailed");
         }
         PerspectiveEnabled = enabled;
         Session.SetCameraEdgePadding(enabled);
@@ -71,6 +88,7 @@ public partial class TerminalMap : Control
     {
         RefreshCells();
         position = default;
+        if (MinimapJumpPending) return false;
         if (!Grid.TryCell(pointer.X, pointer.Y, out var screen)) return false;
         if (PerspectiveEnabled && Perspective is { } perspective)
         {
@@ -84,6 +102,7 @@ public partial class TerminalMap : Control
     public bool TryPickFeature(Vector2 pointer, out Pos position)
     {
         position = default;
+        if (MinimapJumpPending) return false;
         if (!PerspectiveEnabled || Perspective is not { } perspective) return false;
         RefreshCells();
         perspective.Sync(Session, Size);
@@ -111,7 +130,7 @@ public partial class TerminalMap : Control
         RefreshCells();
         if (Perspective is not { } perspective)
             throw new InvalidOperationException("Perspective panning requires an active perspective renderer.");
-        perspective.Sync(Session, Size);
+        perspective.SyncCamera(Session, Size);
         return perspective.GroundPlanePoint(pointer);
     }
 
@@ -119,7 +138,7 @@ public partial class TerminalMap : Control
     {
         if (!PerspectiveEnabled || Perspective is not { } perspective) return;
         RefreshCells();
-        perspective.Sync(Session, Size);
+        perspective.SyncCamera(Session, Size);
         var current = perspective.GroundPlanePoint(pointer);
         var target = new Vector2(Session.CameraX, Session.CameraY) + perspective.CameraOffset +
             new Vector2(anchor.X - current.X, anchor.Z - current.Z);
@@ -132,7 +151,7 @@ public partial class TerminalMap : Control
         Session.ScrollCamera((int)Math.Round(target.X) - Session.CameraX,
             (int)Math.Round(target.Y) - Session.CameraY);
         perspective.SetCameraOffset(Session, target - new Vector2(Session.CameraX, Session.CameraY));
-        perspective.Sync(Session, Size);
+        perspective.SyncCamera(Session, Size);
         QueueRedraw();
     }
 
@@ -175,13 +194,15 @@ public partial class TerminalMap : Control
 
     public void AdvanceAnimation(double delta, bool focused)
     {
+        Session.AdvancePresentation(delta, focused);
         int siegeRevision = Session.Game.Settlement?.Revision ?? -1;
         bool siegeChanged = siegeRevision != _siegeAnimationRevision;
         _siegeAnimationRevision = siegeRevision;
         bool siegeMoving = focused && !Session.ClockSuspended &&
             Session.Game.Settlement is { } siege && (siege.Enemies.Count > 0 || siege.Projectiles.Count > 0 ||
+                siege.Defenders.Count > 0 || siege.Deaths.Count > 0 ||
                 siege.VisibleRepairingWall is not null || siege.UpgradingWall is not null || siege.Walls.Any(WallDamageLayout.IsBurning));
-        if (Grid.AdvanceAnimation(delta, focused) || siegeChanged || siegeMoving)
+        if (!PerspectiveEnabled && Grid.AdvanceAnimation(delta, focused) || siegeChanged || siegeMoving)
         {
             QueueRedraw();
         }
@@ -200,6 +221,11 @@ public partial class TerminalMap : Control
             return;
         }
 
+        if (PerspectiveEnabled)
+        {
+            Grid.PrepareViewport(Session);
+            return;
+        }
         Grid.Fill(Session);
         _cellsDirty = false;
     }
@@ -207,13 +233,21 @@ public partial class TerminalMap : Control
     public void ZoomBy(int delta, Vector2? pointer = null)
     {
         if (delta == 0) return;
+        ChangeZoom((x, y) => Session.ZoomBy(delta, x, y), pointer);
+    }
+
+    public void SetZoom(double level, Vector2? pointer = null) =>
+        ChangeZoom((x, y) => Session.SetZoom(level, x, y), pointer);
+
+    private void ChangeZoom(Action<int?, int?> change, Vector2? pointer)
+    {
         RefreshCells();
         var anchor = pointer ?? Size / 2;
         if (PerspectiveEnabled && Perspective is { } perspective)
         {
             perspective.Sync(Session, Size);
             var beforeWorld = perspective.GroundCell(anchor);
-            Session.ZoomBy(delta);
+            change(null, null);
             RefreshCells();
             perspective.Sync(Session, Size);
             var afterWorld = perspective.GroundCell(anchor);
@@ -222,7 +256,7 @@ public partial class TerminalMap : Control
         }
         if (!Grid.TryCell(anchor.X, anchor.Y, out var before)) return;
         var world = Session.ScreenToMap(before.X, before.Y);
-        Session.ZoomBy(delta, before.X, before.Y);
+        change(before.X, before.Y);
         RefreshCells();
         if (Grid.TryCell(anchor.X, anchor.Y, out var after))
             Session.PanCamera(world, after.X, after.Y);
@@ -242,12 +276,15 @@ public partial class TerminalMap : Control
         if (PerspectiveEnabled && Perspective is { } perspective)
         {
             perspective.Sync(Session, Size);
+            perspective.PrepareCompleteFrame();
             TextureFilter = TextureFilterEnum.Nearest;
-            if (_perspectiveComposite.DiffuseTexture != perspective.Texture)
-                _perspectiveComposite.DiffuseTexture = perspective.Texture;
+            if (_perspectiveComposite.DiffuseTexture != perspective.PresentedTexture)
+                _perspectiveComposite.DiffuseTexture = perspective.PresentedTexture;
             DrawTextureRect(_perspectiveComposite, new Rect2(Vector2.Zero, Size), false);
+            if (MinimapJumpPending) return;
             DrawPerspectiveAreas(perspective);
             DrawSiegeOverlay();
+            DrawDefenderSelection();
             BuildingsDrawn = perspective.BuildingsDrawn;
             return;
         }
@@ -365,6 +402,7 @@ public partial class TerminalMap : Control
             }
         }
         DrawSetTransform(Vector2.Zero, 0f, Vector2.One);
+        DrawDefenderSelection();
         EffectGlyphsDrawn = drawn;
     }
 
@@ -538,7 +576,8 @@ public partial class TerminalMap : Control
     public bool TryPickSiegeActor(Vector2 pointer, out bool friendly, out int id)
     {
         friendly = false; id = 0;
-        if (!new Rect2(Vector2.Zero, Size).HasPoint(pointer) || Session.Game.Settlement is not { } siege) return false;
+        if (MinimapJumpPending) return false;
+        if (!new Rect2(Vector2.Zero, Size).HasPoint(pointer) || Session.PresentedSiege is not { } siege) return false;
         if (PerspectiveEnabled && Perspective is { } view)
         {
             view.Sync(Session, Size);
@@ -570,6 +609,7 @@ public partial class TerminalMap : Control
     {
         anchor = default;
         PickedWallId = null;
+        if (MinimapJumpPending) return false;
         if (!new Rect2(Vector2.Zero, Size).HasPoint(pointer)) return false;
         RefreshCells();
         if (PerspectiveEnabled && Perspective is { } perspective)

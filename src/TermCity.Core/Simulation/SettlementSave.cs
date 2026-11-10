@@ -29,7 +29,7 @@ internal sealed record SavedSiegeEnemy(
     [property: JsonRequired] double AttackCooldown,
     double BlockedSeconds = 0,
     SiegeEnemyKind Kind = SiegeEnemyKind.Goblin,
-    int AppearanceSeed = 0);
+    int AppearanceSeed = 0, bool OrcAttacking = false, double OrcAttackSeconds = 0);
 internal sealed class SavedSettlement
 {
     public int WallNetworkVersion { get; set; }
@@ -58,6 +58,8 @@ internal sealed class SavedSettlement
     public bool OrcsIntroduced { get; set; }
     public int PlannedOrcWave { get; set; }
     public BaileyGateSide? PlannedOrcSide { get; set; }
+    public BaileyGateSide? FirstAssaultSide { get; set; }
+    public int FirstAssaultLastOrcId { get; set; }
     public bool TrollsIntroduced { get; set; }
     public int PlannedTrollWave { get; set; }
     public SavedGarrison? Garrison { get; set; }
@@ -76,6 +78,8 @@ internal sealed class SavedSettlement
         OrcsIntroduced = state.OrcsIntroduced,
         PlannedOrcWave = state.PlannedOrcWave,
         PlannedOrcSide = state.PlannedOrcSide,
+        FirstAssaultSide = state.ActiveFirstAssaultSide,
+        FirstAssaultLastOrcId = state.ActiveFirstAssaultSide is null ? 0 : state.FirstAssaultLastOrcId,
         TrollsIntroduced = state.TrollsIntroduced,
         PlannedTrollWave = state.PlannedTrollWave,
         Garrison = SavedGarrison.Capture(state),
@@ -91,7 +95,8 @@ internal sealed class SavedSettlement
             w.Start?.X, w.Start?.Y, w.End?.X, w.End?.Y, w.BuiltMaterial, w.SharedSection?.Id,
             w.SectionBounds, w.IsGateWing, w.BelongsToFoundingWall, w.DefenseFacing, w.JunctionTower)).ToList(),
         Enemies = state.Enemies.Select(g => new SavedSiegeEnemy(g.Id, g.X, g.Y, g.Health, g.MaxHealth,
-            g.Tier, new(g.Route), g.RouteIndex, g.AttackCooldown, g.BlockedSeconds, g.Kind, g.AppearanceSeed)).ToList(),
+            g.Tier, new(g.Route), g.RouteIndex, g.AttackCooldown, g.BlockedSeconds, g.Kind, g.AppearanceSeed,
+            g.OrcAttacking, g.OrcAttackSeconds)).ToList(),
     };
 
     public SettlementState Restore(CityGame game)
@@ -119,6 +124,11 @@ internal sealed class SavedSettlement
             (OrcsIntroduced ? game.HighestPopulation >= 250 && PlannedOrcSide is null :
                 PlannedOrcWave == 0 ? PlannedOrcSide is null :
                     game.HighestPopulation >= 250 && PlannedOrcWave > WaveNumber && PlannedOrcSide is not null));
+        Require(FirstAssaultSide is null ? FirstAssaultLastOrcId == 0 :
+            Enum.IsDefined(FirstAssaultSide.Value) && OrcsIntroduced && FirstAssaultLastOrcId > 0 &&
+                FirstAssaultLastOrcId < NextEnemyId &&
+                Enemies!.Any(e => e is not null && e.Kind == SiegeEnemyKind.Orc &&
+                    e.Id <= FirstAssaultLastOrcId && e.Health > 0));
         Require(WaveNumber == 0 ? game.HighestPopulation < 100 && Enemies!.Count == 0 : game.HighestPopulation >= 100);
         Require(WaveNumber != 0 || NextWaveSeconds == 120 && Accumulator == 0 && NextEnemyId == 1);
         Require(UpgradeTargetMaterial is null
@@ -133,6 +143,7 @@ internal sealed class SavedSettlement
             Accumulator = Accumulator, UpgradeTargetMaterial = UpgradeTargetMaterial,
             UpgradedSections = UpgradedSections, UpgradeSectionSeconds = UpgradeSectionSeconds,
             OrcsIntroduced = OrcsIntroduced, PlannedOrcWave = PlannedOrcWave, PlannedOrcSide = PlannedOrcSide,
+            FirstAssaultSide = FirstAssaultSide, FirstAssaultLastOrcId = FirstAssaultLastOrcId,
             TrollsIntroduced = TrollsIntroduced, PlannedTrollWave = PlannedTrollWave };
         var template = state.Walls.ToDictionary(w => w.Cell);
         state.ClearWallNetwork();
@@ -226,6 +237,9 @@ internal sealed class SavedSettlement
                 goblin.Route is { Count: > 0 } && goblin.Route.Count <= SettlementState.MaximumRouteLength && goblin.RouteIndex >= 0 &&
                 goblin.RouteIndex < goblin.Route.Count);
             Require(state.WallAt(goblin!.Route[^1]) is not null);
+            Require(Range(goblin.OrcAttackSeconds, 0, OrcCombatAnimation.Duration - 1e-10) &&
+                (!goblin.OrcAttacking || goblin.Kind == SiegeEnemyKind.Orc) &&
+                (goblin.OrcAttacking || goblin.OrcAttackSeconds == 0));
             for (int i = 0; i < goblin.Route.Count; i++)
             {
                 var p = goblin.Route[i];
@@ -244,7 +258,8 @@ internal sealed class SavedSettlement
             state.EnemyList.Add(new SiegeEnemy { Id = goblin.Id, X = goblin.X, Y = goblin.Y, Health = health,
                 MaxHealth = goblinMaxHealth, Tier = goblin.Tier, Route = new(goblin.Route), RouteIndex = goblin.RouteIndex,
                 AttackCooldown = goblin.AttackCooldown, BlockedSeconds = goblin.BlockedSeconds, Kind = goblin.Kind,
-                AppearanceSeed = goblin.AppearanceSeed });
+                AppearanceSeed = goblin.AppearanceSeed, OrcAttacking = goblin.OrcAttacking,
+                OrcAttackSeconds = goblin.OrcAttackSeconds, PreviousOrcAttackSeconds = goblin.OrcAttackSeconds });
         }
         Require(Range(RepairPhase, 0, 1) && RepairPhase < 1 &&
             (RepairTarget is { } repairTarget
